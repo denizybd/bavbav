@@ -155,10 +155,10 @@ enum RichMessageCheck {
         expect(MathAttachmentRenderer.attachment(latex: "x", display: false, fontSize: 12, maxWidth: .infinity) == nil,
                "invalid width is rejected")
 
-        for allowed in ["https://example.com", "http://example.com/a", "mailto:hello@example.com", "/tmp/example.swift:12"] {
+        for allowed in ["https://example.com", "http://example.com/a", "mailto:hello@example.com", "/tmp/example.swift:12", "file:///tmp/Run.app"] {
             expect(MessageLinkPolicy.destination(allowed) != nil, "safe link allowed: \(allowed)")
         }
-        for blocked in ["javascript:alert(1)", "data:text/html,test", "file:///tmp/Run.app", "x-apple.systempreferences:test",
+        for blocked in ["javascript:alert(1)", "data:text/html,test", "file://remote/tmp/Run.app", "x-apple.systempreferences:test",
                         "//example.com", "https://example.com\nmalformed"] {
             expect(MessageLinkPolicy.destination(blocked) == nil, "unsafe link rejected: \(blocked)")
         }

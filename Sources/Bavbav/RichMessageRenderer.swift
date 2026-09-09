@@ -62,14 +62,24 @@ final class RenderedMessage {
 enum MessageLinkPolicy {
     static func destination(_ raw: String) -> URL? {
         guard !raw.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        guard !(raw.removingPercentEncoding ?? raw).unicodeScalars.contains(where: {
+            CharacterSet.controlCharacters.contains($0)
+        }) else { return nil }
         if raw.hasPrefix("/"), !raw.hasPrefix("//") {
             // Codex local references often carry a :line suffix. Reveal these
             // in Finder on click; never execute a linked local app/script.
-            let path = raw.replacingOccurrences(of: #":\d+(?::\d+)?$"#, with: "", options: .regularExpression)
+            let path = raw.replacingOccurrences(of: #"(?::\d+(?::\d+)?|#L\d+(?:C\d+)?(?:-L?\d+(?:C\d+)?)?)$"#, with: "", options: .regularExpression)
             return URL(fileURLWithPath: path.removingPercentEncoding ?? path)
         }
         guard let url = URL(string: raw), let scheme = url.scheme?.lowercased() else { return nil }
         switch scheme {
+        case "file":
+            // Local file URLs are reveal-only, never sent to Workspace.open.
+            guard url.host == nil || url.host == "" || url.host == "localhost",
+                  url.query == nil else { return nil }
+            let path = url.path.replacingOccurrences(of: #":\d+(?::\d+)?$"#, with: "", options: .regularExpression)
+            guard path.hasPrefix("/"), !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+            return URL(fileURLWithPath: path)
         case "http", "https": return url.host?.isEmpty == false ? url : nil
         case "mailto": return url.path.contains("@") ? url : nil
         default: return nil
@@ -77,11 +87,25 @@ enum MessageLinkPolicy {
     }
 
     static func open(_ url: URL) {
-        if url.isFileURL {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } else if let allowed = destination(url.absoluteString) {
-            NSWorkspace.shared.open(allowed)
+        guard let allowed = destination(url.absoluteString) else { return }
+        if allowed.isFileURL {
+            guard FileManager.default.fileExists(atPath: allowed.path) else {
+                showOpenFailure("Dosya artık bu konumda bulunmuyor:\n\(allowed.path)")
+                return
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([allowed])
+        } else if !NSWorkspace.shared.open(allowed) {
+            showOpenFailure("Bu bağlantıyı açabilecek bir uygulama bulunamadı:\n\(allowed.absoluteString)")
         }
+    }
+
+    private static func showOpenFailure(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Bağlantı açılamadı"
+        alert.informativeText = message
+        alert.addButton(withTitle: "Tamam")
+        if let window = NSApp.keyWindow { alert.beginSheetModal(for: window) }
+        else { alert.runModal() }
     }
 }
 

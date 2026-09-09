@@ -27,6 +27,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
+        if environment["BAVBAV_LINK_CHECK"] == "1" {
+            Task { Foundation.exit(await MessageLinkCheck.run() ? 0 : 1) }
+            return
+        }
         if environment["BAVBAV_APP_ICON_CHECK"] == "1" {
             Task { Foundation.exit(await AppIconCheck.run() ? 0 : 1) }
             return

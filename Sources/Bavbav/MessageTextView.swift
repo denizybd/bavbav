@@ -22,6 +22,10 @@ struct MessageTextView: NSViewRepresentable {
 }
 
 final class RichMessageTextView: NSTextView, NSTextViewDelegate {
+    // Injectable dispatch keeps interaction checks from opening external apps.
+    var openLink: (URL) -> Void = MessageLinkPolicy.open
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     private(set) var rendered: RenderedMessage?
     private var latestSource = ""
     private var appliedSource: String?
@@ -175,9 +179,63 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-        if let url = link as? URL { MessageLinkPolicy.open(url) }
-        else if let raw = link as? String, let url = MessageLinkPolicy.destination(raw) { MessageLinkPolicy.open(url) }
+        if let url = linkDestination(link) { openLink(url) }
         return true // Block AppKit's unrestricted default URL dispatch.
+    }
+
+    private func linkDestination(_ value: Any) -> URL? {
+        if let url = value as? URL { return MessageLinkPolicy.destination(url.absoluteString) }
+        if let raw = value as? String { return MessageLinkPolicy.destination(raw) }
+        return nil
+    }
+
+    /// Use the actual glyph, not the nearest insertion position: clicking blank
+    /// space after a line must not activate the last link on that line.
+    func link(at point: NSPoint) -> URL? {
+        guard bounds.contains(point), let layout = layoutManager, let container = textContainer,
+              let storage = textStorage, storage.length > 0 else { return nil }
+        layout.ensureLayout(for: container)
+        let local = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: local, in: container)
+        guard glyph < layout.numberOfGlyphs,
+              layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(local) else { return nil }
+        let character = layout.characterIndexForGlyph(at: glyph)
+        guard character < storage.length, let value = storage.attribute(.link, at: character, effectiveRange: nil) else { return nil }
+        return linkDestination(value)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let url = link(at: convert(event.locationInWindow, from: nil)) else { return super.menu(for: event) }
+        // Capture the clicked destination on each item, not a mutable selection.
+        // Supply explicit actions instead of relying on AppKit's generated menu.
+        let menu = NSMenu(title: "Bağlantı")
+        let open = NSMenuItem(title: url.isFileURL ? "Finder’da göster" : "Bağlantıyı aç",
+                              action: #selector(openContextLink(_:)), keyEquivalent: "")
+        let copy = NSMenuItem(title: url.isFileURL ? "Dosya yolunu kopyala" : "Bağlantıyı kopyala",
+                              action: #selector(copyContextLink(_:)), keyEquivalent: "")
+        for item in [open, copy] {
+            item.target = self
+            item.representedObject = url
+            menu.addItem(item)
+        }
+        if selectedRange().length > 0 {
+            menu.addItem(.separator())
+            let selection = NSMenuItem(title: "Seçili metni kopyala", action: #selector(copy(_:)), keyEquivalent: "")
+            selection.target = self
+            menu.addItem(selection)
+        }
+        return menu
+    }
+
+    @objc private func openContextLink(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject, let url = linkDestination(value) else { return }
+        openLink(url)
+    }
+
+    @objc private func copyContextLink(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject, let url = linkDestination(value) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.isFileURL ? url.path : url.absoluteString, forType: .string)
     }
 
     private func rebuildCopyButtons() {

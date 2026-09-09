@@ -104,6 +104,12 @@ birleştirilir; seçim kaldırılınca veya yazma alanına geçilince hemen uygu
 
 Markdown bağlantıları ve metindeki normal HTTP(S) adresleri tıklanabilir. Yerel
 dosya bağlantıları Finder'da gösterilir; komut/uygulama bağlantıları çalıştırılmaz.
+Bağlantılar pencere odakta değilken de ilk tıklamayı kabul eder. Sağ tık veya
+Control-tık menüsünden bağlantı açılabilir ya da adresi/dosya yolu kopyalanabilir.
+Yerel `file://` adresleri de yalnızca Finder'da gösterilir; `:satır:sütun` ve
+`#Lsatır` ekleri dosya hedefinden ayrılır. Silinmiş dosya sessizce başarısız olmak
+yerine açıklayıcı uyarı gösterir. `BAVBAV_LINK_CHECK=1` gizli gerçek transcript
+hiyerarşisinde tıklama/menü testleri yapar; tarayıcı veya Finder açmaz.
 Ham HTML yürütülmez, mesajdaki uzak görseller otomatik indirilmez.
 
 Biçimlendirme önbelleği 80 kayıt/12 MiB, formül önbelleği 128 kayıt/8 MiB bütçelidir.
