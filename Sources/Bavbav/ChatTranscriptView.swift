@@ -19,6 +19,11 @@ final class ChatScrollController: NSObject, ObservableObject {
     private var adjusting = false
     private var eventMonitor: Any?
     private var scrollEndWork: DispatchWorkItem?
+    private var liveScrolling = false
+    private var touchScrolling = false
+    private var momentumScrolling = false
+    private var interactionGeneration = 0
+    private var gestureActive: Bool { liveScrolling || touchScrolling || momentumScrolling }
 
     func attach(_ scroll: NSScrollView) {
         guard let document = scroll.documentView else { return }
@@ -33,15 +38,19 @@ final class ChatScrollController: NSObject, ObservableObject {
         center.addObserver(self, selector: #selector(layoutChanged), name: NSView.frameDidChangeNotification, object: document)
         center.addObserver(self, selector: #selector(layoutChanged), name: NSView.frameDidChangeNotification, object: scroll.contentView)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
-        center.addObserver(self, selector: #selector(userWillScroll), name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+        center.addObserver(self, selector: #selector(liveScrollBegan), name: NSScrollView.willStartLiveScrollNotification, object: scroll)
         center.addObserver(self, selector: #selector(userDidScroll), name: NSScrollView.didLiveScrollNotification, object: scroll)
-        center.addObserver(self, selector: #selector(userDidScroll), name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+        center.addObserver(self, selector: #selector(liveScrollEnded), name: NSScrollView.didEndLiveScrollNotification, object: scroll)
         center.addObserver(self, selector: #selector(jumpNotification(_:)), name: .chatJumpToBottom, object: nil)
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown]) { [weak self] event in
             guard let self, let scroll = self.scrollView, event.window === scroll.window else { return event }
             if event.type == .scrollWheel {
                 let point = scroll.convert(event.locationInWindow, from: nil)
-                guard scroll.bounds.contains(point) else { return event }
+                // AppKit delivers an entire gesture to its original view even
+                // if the pointer leaves that view during touch or momentum.
+                guard scroll.bounds.contains(point) || self.gestureActive else { return event }
+                self.observeWheel(phase: event.phase, momentum: event.momentumPhase)
+                return event
             } else {
                 guard [115, 116, 121, 125, 126].contains(event.keyCode),
                       let responder = event.window?.firstResponder as? NSView,
@@ -49,11 +58,7 @@ final class ChatScrollController: NSObject, ObservableObject {
                       (responder as? NSTextView)?.isEditable != true else { return event }
             }
             self.userWillScroll()
-            let generation = self.attachmentGeneration
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.attachmentGeneration == generation else { return }
-                self.userDidScroll()
-            }
+            self.observeAfterEvent()
             return event
         }
         contentChanged()
@@ -61,6 +66,10 @@ final class ChatScrollController: NSObject, ObservableObject {
 
     func detach() {
         attachmentGeneration &+= 1
+        interactionGeneration &+= 1
+        liveScrolling = false
+        touchScrolling = false
+        momentumScrolling = false
         correctionScheduled = false
         scrollEndWork?.cancel()
         scrollEndWork = nil
@@ -91,6 +100,10 @@ final class ChatScrollController: NSObject, ObservableObject {
     }
 
     func jumpToBottom() {
+        interactionGeneration &+= 1
+        liveScrolling = false
+        touchScrolling = false
+        momentumScrolling = false
         scrollEndWork?.cancel()
         scrollEndWork = nil
         followingBottom = true
@@ -138,16 +151,22 @@ final class ChatScrollController: NSObject, ObservableObject {
         else { setAwayFromBottom(!isAtBottom) }
     }
     @objc func userWillScroll() {
+        interactionGeneration &+= 1
         scrollEndWork?.cancel()
         scrollEndWork = nil
         followingBottom = false
     }
     @objc func userDidScroll() {
-        setAwayFromBottom(!isAtBottom)
+        if gestureActive { followingBottom = false }
+        setAwayFromBottom(!followingBottom && !isAtBottom)
         scrollEndWork?.cancel()
-        let generation = attachmentGeneration
+        scrollEndWork = nil
+        // No idle timer can prove that fingers have left the trackpad or that
+        // AppKit's live-scroll/momentum animation has ended.
+        guard !gestureActive else { return }
+        let generation = interactionGeneration
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.attachmentGeneration == generation else { return }
+            guard let self, self.interactionGeneration == generation, !self.gestureActive else { return }
             self.scrollEndWork = nil
             // A gesture owns the viewport through its momentum phase. Do not
             // snap a small upward movement back just because it is within 24pt.
@@ -156,6 +175,33 @@ final class ChatScrollController: NSObject, ObservableObject {
         }
         scrollEndWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+    }
+
+    @objc private func liveScrollBegan() {
+        liveScrolling = true
+        userWillScroll()
+    }
+
+    @objc private func liveScrollEnded() {
+        liveScrolling = false
+        userDidScroll()
+    }
+
+    func observeWheel(phase: NSEvent.Phase, momentum: NSEvent.Phase) {
+        if !phase.intersection([.mayBegin, .began, .changed, .stationary]).isEmpty { touchScrolling = true }
+        if !phase.intersection([.ended, .cancelled]).isEmpty { touchScrolling = false }
+        if !momentum.intersection([.began, .changed, .stationary]).isEmpty { momentumScrolling = true }
+        if !momentum.intersection([.ended, .cancelled]).isEmpty { momentumScrolling = false }
+        userWillScroll()
+        observeAfterEvent()
+    }
+
+    private func observeAfterEvent() {
+        let generation = interactionGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.interactionGeneration == generation else { return }
+            self.userDidScroll()
+        }
     }
     @objc private func jumpNotification(_ notification: Notification) {
         guard let target = notification.object as? NSWindow, target === scrollView?.window else { return }

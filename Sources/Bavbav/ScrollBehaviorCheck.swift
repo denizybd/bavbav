@@ -69,6 +69,37 @@ enum ScrollBehaviorCheck {
             controller.jumpToBottom()
             await settle()
 
+            controller.observeWheel(phase: .mayBegin, momentum: [])
+            await settle()
+            try check(!controller.followingBottom, "fingers resting on trackpad do not expire after an idle timeout")
+            controller.observeWheel(phase: .cancelled, momentum: [])
+            await settle()
+            try check(controller.followingBottom, "cancelled stationary gesture releases ownership")
+            controller.observeWheel(phase: .began, momentum: [])
+            let wheel = NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                                                wheelCount: 1, wheel1: 8, wheel2: 0, wheel3: 0)!)!
+            native.scrollWheel(with: wheel) // Native event handling; no global event posting.
+            await settle()
+            try check(!controller.followingBottom && native.contentView.bounds.minY < controller.bottomOffset,
+                      "native pixel-wheel event moves content while touch owns viewport")
+            controller.observeWheel(phase: .ended, momentum: .began)
+            native.contentView.scroll(to: NSPoint(x: 0, y: controller.bottomOffset))
+            controller.userDidScroll()
+            await settle()
+            try check(!controller.followingBottom, "momentum touching the bottom does not re-enable following mid-gesture")
+            let momentumOffset = native.contentView.bounds.minY
+            document.setFrameSize(NSSize(width: 500, height: document.frame.height + 100))
+            await settle()
+            try check(native.contentView.bounds.minY == momentumOffset, "late content cannot move viewport during momentum")
+            controller.observeWheel(phase: [], momentum: .ended)
+            await settle()
+            try check(!controller.followingBottom && controller.awayFromBottom, "momentum ending away from latest message preserves reading")
+            controller.observeWheel(phase: .changed, momentum: [])
+            controller.jumpToBottom()
+            await settle()
+            try check(controller.followingBottom && controller.isAtBottom,
+                      "explicit jump wins over a queued callback from an earlier gesture")
+
             for height in [5_000.0, 5_700.0, 9_000.0] {
                 document.setFrameSize(NSSize(width: 500, height: height))
                 await settle()
@@ -244,6 +275,42 @@ enum ScrollBehaviorCheck {
             await settle(realPanel.contentView)
             realController.jumpToBottom()
             await settle(realPanel.contentView)
+            func pixelWheel(_ delta: Int32, phase: CGScrollPhase) {
+                let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                                 wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0)!
+                cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                let event = NSEvent(cgEvent: cg)!
+                // The same pre-dispatch observation as the local event monitor,
+                // followed by real AppKit scrolling in this hidden transcript.
+                // Synthetic events have no window, so never post them globally.
+                realController.observeWheel(phase: event.phase, momentum: event.momentumPhase)
+                realScroll.scrollWheel(with: event)
+            }
+            pixelWheel(0, phase: .began)
+            await settle(realPanel.contentView) // Fingers still down at the bottom.
+            try check(!realController.followingBottom, "real transcript keeps ownership during bottom pause")
+            pixelWheel(3, phase: .changed)
+            await settle(realPanel.contentView)
+            try check(!realController.followingBottom && !realController.isAtBottom,
+                      "tiny native upward gesture escapes bottom after pause")
+            for step in 0..<40 {
+                pixelWheel(step % 2 == 0 ? -2 : 9, phase: .changed)
+                realController.contentChanged()
+                realPanel.contentView?.layoutSubtreeIfNeeded()
+                try? await Task.sleep(nanoseconds: 20_000_000)
+                try check(!realController.followingBottom && realScroll.contentView.bounds.minY.isFinite,
+                          "rapid direction reversal does not resume automatic scrolling: \(step)")
+            }
+            pixelWheel(0, phase: .ended)
+            await settle(realPanel.contentView)
+            try check(realController.awayFromBottom && !realController.followingBottom,
+                      "alternating native wheel gestures finish above bottom without snapping back")
+            let stoppedOffset = realScroll.contentView.bounds.minY
+            await settle(realPanel.contentView)
+            try check(abs(realScroll.contentView.bounds.minY - stoppedOffset) < 1,
+                      "rapid direction changes settle without continued position oscillation")
+            realController.jumpToBottom()
+            await settle(realPanel.contentView)
             for step in 0..<70 {
                 let visible = descendants(hosted).compactMap { $0 as? RichMessageTextView }.filter {
                     let area = realScroll.contentView.bounds.intersection($0.convert($0.bounds, to: realScroll.contentView))
@@ -280,7 +347,7 @@ enum ScrollBehaviorCheck {
             await settle()
             try check(released == nil, "closing a transcript releases controller and local event monitor")
             try check([panel, otherPanel, realPanel].allSatisfy { !$0.isVisible }, "checks never displayed chat windows")
-            print("BAVBAV SCROLL CHECK PASSED: \(checks) checks; initial/late history, streaming, resize, read position, B/End, window isolation, actual SwiftUI layout")
+            print("BAVBAV SCROLL CHECK PASSED: \(checks) checks; history, streaming, resize, paused gesture, momentum, rapid direction reversals, visible text stability, B/End, window isolation")
             return true
         } catch {
             fputs("BAVBAV SCROLL CHECK FAILED after \(checks) checks: \(error)\n", stderr)

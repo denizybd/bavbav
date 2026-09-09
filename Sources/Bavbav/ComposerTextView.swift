@@ -6,6 +6,7 @@ struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     let focusToken: Int
     let enabled: Bool
+    var onActivate: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -51,6 +52,7 @@ struct ComposerTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CommandTextView else { return }
+        textView.onActivate = onActivate
         textView.isEditable = enabled
         let contrast = ForegroundContrast.strength(backgroundOpacity: backgroundOpacity)
         textView.contrastStrength = contrast
@@ -85,7 +87,13 @@ struct ComposerTextView: NSViewRepresentable {
 }
 
 private final class CommandTextView: NSTextView {
+    var onActivate: () -> Void = {}
     var contrastStrength = 0.0 { didSet { if oldValue != contrastStrength { needsDisplay = true } } }
+
+    override func mouseDown(with event: NSEvent) {
+        onActivate()
+        super.mouseDown(with: event)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         NSGraphicsContext.saveGraphicsState()

@@ -543,15 +543,21 @@ public actor CodexAppServer {
         effort: String? = nil,
         clientUserMessageID: String? = nil,
         cwd: String? = nil,
-        executionMode: CodexExecutionMode = .workspace
+        executionMode: CodexExecutionMode = .workspace,
+        attachments: [ComposerAttachment] = [],
+        collaborationMode: CodexCollaborationMode? = nil
     ) async throws -> CodexTurnStart {
+        // Validate durable attachments before claiming the writer slot. A
+        // missing screenshot must leave the draft recoverable, not send a
+        // successful-looking text-only turn.
+        let userInput = try ComposerInput.items(text: text, attachments: attachments)
         try await ensureConnected()
         _ = try await resumeThread(id: threadID, executionMode: executionMode)
 
         var params: [String: Any] = [
             "threadId": threadID,
             "clientUserMessageId": clientUserMessageID ?? UUID().uuidString,
-            "input": [["type": "text", "text": text]]
+            "input": userInput
         ]
         switch executionMode {
         case .workspace:
@@ -577,6 +583,11 @@ public actor CodexAppServer {
         }
         if let model, !model.isEmpty { params["model"] = model }
         if let effort, !effort.isEmpty { params["effort"] = effort }
+        if let collaborationMode {
+            params["collaborationMode"] = try await collaborationSettings(
+                threadID: threadID, mode: collaborationMode, model: model, effort: effort
+            )
+        }
 
         let result = try await request(method: "turn/start", params: params, timeout: 30)
         guard
@@ -594,13 +605,15 @@ public actor CodexAppServer {
         threadID: String,
         turnID: String,
         text: String,
-        clientUserMessageID: String? = nil
+        clientUserMessageID: String? = nil,
+        attachments: [ComposerAttachment] = []
     ) async throws -> String {
+        let userInput = try ComposerInput.items(text: text, attachments: attachments)
         try await ensureConnected()
         var params: [String: Any] = [
             "threadId": threadID,
             "expectedTurnId": turnID,
-            "input": [["type": "text", "text": text]]
+            "input": userInput
         ]
         if let clientUserMessageID, !clientUserMessageID.isEmpty {
             params["clientUserMessageId"] = clientUserMessageID
@@ -611,6 +624,103 @@ public actor CodexAppServer {
             throw CodexClientError.invalidResponse("turn/steer içinde turnId yok")
         }
         return returnedTurnID
+    }
+
+    private func collaborationSettings(
+        threadID: String,
+        mode: CodexCollaborationMode,
+        model: String?,
+        effort: String?
+    ) async throws -> [String: Any] {
+        let explicitModel = model.flatMap { $0.isEmpty ? nil : $0 }
+        let explicitEffort = effort.flatMap { $0.isEmpty ? nil : $0 }
+        let runtime: CodexThreadRuntime
+        if explicitModel != nil, explicitEffort != nil {
+            // Both settings are already authoritative. In particular, a new
+            // chat may not have a turn_context yet: do not scan its rollout or
+            // the entire sessions directory just to discard the result.
+            runtime = .unknown
+        } else {
+            runtime = try await readPersistedRuntime(threadID: threadID)
+        }
+        var resolvedModel = explicitModel ?? runtime.model
+        var resolvedEffort = explicitEffort
+        if resolvedEffort == nil, resolvedModel == runtime.model {
+            resolvedEffort = runtime.effort
+        }
+        if resolvedModel == nil || resolvedEffort == nil {
+            let models = try await listModels()
+            if resolvedModel == nil { resolvedModel = models.first(where: \.isDefault)?.model }
+            if resolvedEffort == nil,
+               let descriptor = models.first(where: { $0.model == resolvedModel || $0.id == resolvedModel }) {
+                resolvedEffort = descriptor.defaultReasoningEffort
+            }
+        }
+        guard let resolvedModel, !resolvedModel.isEmpty else {
+            throw CodexClientError.invalidResponse("Mod için geçerli model bulunamadı; önce model seç.")
+        }
+        return [
+            "mode": mode.rawValue,
+            "settings": [
+                "model": resolvedModel,
+                "reasoning_effort": resolvedEffort as Any? ?? NSNull(),
+                // Explicit null asks Codex to supply the mode's own built-in
+                // instructions. An empty string would not mean the same thing.
+                "developer_instructions": NSNull()
+            ] as [String: Any]
+        ]
+    }
+
+    /// Reads stored goal state without resuming the chat or claiming its writer.
+    public func readThreadGoal(threadID: String) async throws -> CodexThreadGoal? {
+        try await ensureConnected()
+        let result = try await request(method: "thread/goal/get", params: ["threadId": threadID], timeout: 15)
+        guard let raw = result["goal"], !(raw is NSNull) else { return nil }
+        return try Self.parseGoal(raw, threadID: threadID)
+    }
+
+    /// Called only when the user explicitly saves a goal in the composer menu.
+    /// Omission of a token budget deliberately leaves it server-owned.
+    public func setThreadGoal(
+        threadID: String,
+        objective: String,
+        tokenBudget: Int64? = nil
+    ) async throws -> CodexThreadGoal {
+        let objective = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !objective.isEmpty, objective.unicodeScalars.count <= 4_000 else {
+            throw CodexClientError.invalidResponse("Hedef 1–4.000 karakter olmalı.")
+        }
+        if let tokenBudget, tokenBudget <= 0 {
+            throw CodexClientError.invalidResponse("Hedef token sınırı sıfırdan büyük olmalı.")
+        }
+        try await ensureConnected()
+        var params: [String: Any] = ["threadId": threadID, "objective": objective, "status": "active"]
+        if let tokenBudget { params["tokenBudget"] = tokenBudget }
+        let result = try await request(method: "thread/goal/set", params: params, timeout: 15)
+        guard let raw = result["goal"] else {
+            throw CodexClientError.invalidResponse("thread/goal/set içinde hedef yok")
+        }
+        return try Self.parseGoal(raw, threadID: threadID)
+    }
+
+    @discardableResult
+    public func clearThreadGoal(threadID: String) async throws -> Bool {
+        try await ensureConnected()
+        let result = try await request(method: "thread/goal/clear", params: ["threadId": threadID], timeout: 15)
+        guard let cleared = result["cleared"] as? Bool else {
+            throw CodexClientError.invalidResponse("thread/goal/clear içinde sonuç yok")
+        }
+        return cleared
+    }
+
+    private static func parseGoal(_ raw: Any, threadID: String) throws -> CodexThreadGoal {
+        guard JSONSerialization.isValidJSONObject(raw),
+              let data = try? JSONSerialization.data(withJSONObject: raw),
+              let goal = try? JSONDecoder().decode(CodexThreadGoal.self, from: data),
+              goal.threadID == threadID else {
+            throw CodexClientError.invalidResponse("Sohbet hedefi yanıtı geçersiz")
+        }
+        return goal
     }
 
     public func startThread(
@@ -639,6 +749,10 @@ public actor CodexAppServer {
         }
         resumedThreadIDs.insert(thread.id)
         threadMetadata[thread.id] = Self.parseThreadMetadata(row)
+        let runtime = Self.parseRuntime(result)
+        if let model = runtime.model, !model.isEmpty {
+            runtimeByThreadID[thread.id] = runtime
+        }
         return thread
     }
 

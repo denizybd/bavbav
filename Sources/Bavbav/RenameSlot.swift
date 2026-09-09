@@ -39,11 +39,20 @@ struct RenameSlot: View {
 struct RenameNameField: NSViewRepresentable {
     @Binding var text: String
     let enabled: Bool
+    var accessibilityLabel = "Yeni ad"
+    var placeholder = ""
     @Environment(\.panelBackdropOpacity) private var opacity
 
-    func makeNSView(context: Context) -> Field { Field() }
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+    func makeNSView(context: Context) -> Field {
+        let field = Field()
+        field.delegate = context.coordinator
+        return field
+    }
     func updateNSView(_ field: Field, context: Context) {
-        field.onChange = { text = $0 }
+        context.coordinator.text = $text
+        field.setAccessibilityLabel(accessibilityLabel)
+        field.placeholderString = placeholder
         if field.stringValue != text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = text }
         if enabled && !field.isEnabled { field.needsInitialFocus = true }
         field.isEnabled = enabled
@@ -52,8 +61,26 @@ struct RenameNameField: NSViewRepresentable {
         field.requestInitialFocus()
     }
 
-    final class Field: NSTextField, NSTextFieldDelegate {
-        var onChange: ((String) -> Void)?
+    // The field cannot act as its own control-text delegate: AppKit does not
+    // deliver the edit notifications back to that same control. Keep the
+    // delegate separate so native typing updates the binding before Enter.
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        init(text: Binding<String>) { self.text = text }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            text.wrappedValue = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            // Saving/cancelling belongs to the configurable InputRouter; never
+            // let a native Return bypass a remapped save key.
+            selector == #selector(NSResponder.insertNewline(_:)) || selector == #selector(NSResponder.cancelOperation(_:))
+        }
+    }
+
+    final class Field: NSTextField {
         var needsInitialFocus = true
         private var focusScheduled = false
 
@@ -66,7 +93,6 @@ struct RenameNameField: NSViewRepresentable {
             isEditable = true
             isSelectable = true
             usesSingleLineMode = true
-            delegate = self
             setAccessibilityLabel("Yeni ad")
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -92,12 +118,6 @@ struct RenameNameField: NSViewRepresentable {
                 self.needsInitialFocus = false
                 self.currentEditor()?.selectAll(nil)
             }
-        }
-        func controlTextDidChange(_ notification: Notification) { onChange?(stringValue) }
-        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            // Saving/cancelling belongs to the configurable InputRouter; never
-            // let a native Return bypass a remapped save key.
-            selector == #selector(NSResponder.insertNewline(_:)) || selector == #selector(NSResponder.cancelOperation(_:))
         }
     }
 }

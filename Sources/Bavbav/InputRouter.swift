@@ -60,6 +60,9 @@ final class InputRouter {
         if window is JournalPanel { return coordinator?.journalWindow.shortcutScope ?? "calendar.month" }
         if let panel = (window as? OverlayPanel)?.overlayKind {
             if store.renameTarget?.panel == panel { return store.renameScope }
+            if panel == .detail, store.composerVisible, store.composerToolsVisible {
+                return store.composerGoalEditing ? "composer.goal.write" : "composer.tools"
+            }
             if panel == .projects, store.leftCreationActive {
                 let kind: String
                 if case .project = store.leftCreationTarget { kind = "project" } else { kind = "chat" }
@@ -67,7 +70,7 @@ final class InputRouter {
             }
             if store.isInteractionInputPresented(in: panel) { return "interaction.write" }
             if store.isComposerPresented(in: panel) {
-                return "chat.write." + (store.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "empty" : "full")
+                return "chat.write." + (store.composerHasPayload ? "full" : "empty")
             }
             if (window?.firstResponder as? NSTextView)?.isEditable == true { return "text.other" }
             if store.hasInteractionPresented(in: panel) { return "interaction.list" }
@@ -161,7 +164,7 @@ final class InputRouter {
             if !event.isARepeat || tap.repeating { perform(tap, window: window, panel: panel) }
             return nil
         }
-        if [36,76].contains(event.keyCode), (scope.hasPrefix("create.") || scope.hasPrefix("rename.") || scope == "interaction.write" || scope == "calendar.write") {
+        if [36,76].contains(event.keyCode), (scope.hasPrefix("create.") || scope.hasPrefix("rename.") || scope == "interaction.write" || scope == "calendar.write" || scope == "composer.goal.write") {
             return nil
         }
         if text != nil, let old = ShortcutCatalog.all.first(where: {
@@ -228,9 +231,17 @@ final class InputRouter {
             }
         case "bottom": NotificationCenter.default.post(name: .chatJumpToBottom, object: window)
         case "commands": store.toggleDetailActivity()
+        case "composerTools": store.toggleComposerTools()
+        case "composerToolsClose": store.closeComposerTools()
+        case "composerToolOpen": store.activateComposerTool()
+        case "composerAttach": store.chooseComposerFiles()
+        case "composerGoalSave": store.saveComposerGoal()
+        case "composerGoalCancel": store.cancelComposerGoalEditing()
+        case "composerGoalClear": store.clearComposerGoal()
         case "up", "down":
             let delta = op == "up" ? -1 : 1
-            if definition.scope.hasPrefix("queue.") { store.navigateQueue(delta: delta) }
+            if definition.scope == "composer.tools" { store.navigateComposerTools(delta: delta) }
+            else if definition.scope.hasPrefix("queue.") { store.navigateQueue(delta: delta) }
             else if definition.scope == "interaction.list" { store.navigateInteraction(delta: delta) }
             else if let panel { store.navigate(panel, delta: delta) }
         case "open": if let panel { store.activateSelection(panel) }

@@ -31,6 +31,8 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
     private var applying = false
     private var copyButtons: [MessageCodeCopyButton] = []
     private var ownedTextStorage: NSTextStorage?
+    private var measuredHeight: (width: CGFloat, height: CGFloat)?
+    private(set) var fittingLayoutCount = 0
     private(set) var backgroundOpacity = 1.0
 
     func setBackgroundOpacity(_ value: Double) {
@@ -47,7 +49,10 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
             button.contrastStrength = contrast
         }
         let selection = selectedRange()
-        if let rendered { textStorage?.setAttributedString(rendered.textWithBackgroundOpacity(value)) }
+        if let rendered {
+            measuredHeight = nil
+            textStorage?.setAttributedString(rendered.textWithBackgroundOpacity(value))
+        }
         setSelectedRange(selection)
         needsDisplay = true
     }
@@ -101,11 +106,20 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
     }
 
     func fittingSize(width: CGFloat) -> CGSize {
-        updateRendering(width: max(80, floor(width)))
+        let layoutWidth = max(80, floor(width))
+        updateRendering(width: layoutWidth)
+        if let measuredHeight, measuredHeight.width == layoutWidth {
+            return NSSize(width: width, height: measuredHeight.height)
+        }
         guard let container = textContainer, let layout = layoutManager else { return NSSize(width: width, height: 20) }
-        container.containerSize = NSSize(width: max(80, width), height: .greatestFiniteMagnitude)
+        let size = NSSize(width: layoutWidth, height: .greatestFiniteMagnitude)
+        // SwiftUI probes the same message repeatedly while scrolling. Assigning
+        // containerSize every time invalidates TextKit's already measured lines.
+        if container.containerSize != size { container.containerSize = size }
         layout.ensureLayout(for: container)
+        fittingLayoutCount &+= 1
         let height = max(messageFontSize + 5, ceil(layout.usedRect(for: container).height) + 8)
+        measuredHeight = (layoutWidth, height)
         return NSSize(width: width, height: height)
     }
 
@@ -120,6 +134,7 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         defer { applying = false }
         let selection = selectedRange()
         let next = RichMessageRenderer.render(source, fontSize: messageFontSize, width: width, markdown: usesMarkdown)
+        measuredHeight = nil
         textStorage?.setAttributedString(next.textWithBackgroundOpacity(backgroundOpacity))
         rendered = next
         appliedSource = source

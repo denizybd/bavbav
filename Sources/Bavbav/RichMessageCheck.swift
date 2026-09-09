@@ -242,6 +242,20 @@ enum RichMessageCheck {
         let contrastView = RichMessageTextView()
         contrastView.configure(text: fixture, fontSize: 12, markdown: true)
         let originalSize = contrastView.fittingSize(width: 500)
+        let layoutCount = contrastView.fittingLayoutCount
+        for index in 0..<100 {
+            let size = contrastView.fittingSize(width: 500 + CGFloat(index % 9) / 10)
+            expect(size.height == originalSize.height, "fractional width probes keep stable text height")
+        }
+        expect(contrastView.fittingLayoutCount == layoutCount, "unchanged messages reuse TextKit measurement while scrolling")
+        _ = contrastView.fittingSize(width: 320)
+        expect(contrastView.fittingLayoutCount == layoutCount + 1, "real width change recomputes measurement")
+        _ = contrastView.fittingSize(width: 500)
+        contrastView.configure(text: fixture + "\nNew streamed text", fontSize: 12, markdown: true)
+        _ = contrastView.fittingSize(width: 500)
+        expect(contrastView.fittingLayoutCount == layoutCount + 3, "streamed text invalidates cached height")
+        contrastView.configure(text: fixture, fontSize: 12, markdown: true)
+        _ = contrastView.fittingSize(width: 500)
         contrastView.setSelectedRange(NSRange(location: 2, length: 8))
         for opacity in [0.0, 0.5, 1.0, 0.0] {
             contrastView.setBackgroundOpacity(opacity)

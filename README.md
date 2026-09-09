@@ -5,6 +5,79 @@ ile çizilir ve Codex App Server'a yerel stdio bağlantısı kurar. Ayrı CHAT b
 aynı native mesaj ekranını kullanır; proje dışı sohbetler `CHANNEL / ChatGPT`
 başlığıyla açılır. Web sitesi, Safari veya ChatGPT masaüstü uygulaması açılmaz.
 
+## macOS uygulama simgesi
+
+Simgenin dışı gerçek alfa saydamlığıdır; her iki görünüm aynı yuvarlatılmış
+macOS ölçüsünde hazırlanır. Açık sistem görünümünde beyaz, koyu görünümde siyaha
+yakın zemin kullanılır; Bavbav B işareti ve mint vurgusu korunur. Uygulama açıkken
+`NSApp.effectiveAppearance` değişimleri izlenir; iki resim bir kez yüklenir,
+gereksiz yenileme ve periyodik tarama yapılmaz. Sohbetlerin koyu teması değişmez.
+Menü çubuğundaki küçük simge macOS'un renklendirdiği bir template simgedir.
+
+İmzalı pakete çalışma sırasında yazılmaz. `Bavbav-v3.icns`, 16–1024 piksel
+çözünürlükler için yuvarlatılmış açık simgeyi içerir. Finder ve yalnız paket
+simgesini okuyan başlatıcılarda bu sabit sürüm kullanılır. Çalışan uygulama
+simgesi [AppKit'in desteklenen geçici simge API'si](https://developer.apple.com/documentation/appkit/nsapplication/applicationiconimage)
+ile güncellenir; üçüncü taraf uygulama değiştiricilerinin önbellekleri ayrıca
+davranabilir. Safari'nin Icon Composer/Assets.car tabanlı clear/tinted gibi tüm
+yerel simge biçimleriyle eşdeğerlik iddiası yoktur; bu makinede tam Xcode/Icon
+Composer bulunmadığından açık/koyu çalışma zamanı uyarlaması kullanılır.
+
+`zsh scripts/build-icons.sh` kaynak görselleri sabit maskeyle RGBA simgelere ve
+ICNS'e dönüştürür; ana paketleme bunu otomatik çağırır. Kaynaklar, üretim istemleri
+ve düzenleme notları [AppResources/IconSources.md](AppResources/IconSources.md)
+dosyasındadır. Yerel kontrol, gerçek süreç-içi görünüm değişikliklerini sınar;
+global macOS temasını, Dock'u veya kullanıcının açık pencerelerini değiştirmez.
+
+```sh
+BAVBAV_APP_ICON_CHECK=1 BAVBAV_ICON_RESOURCE_DIR="$PWD/AppResources" .build/debug/Bavbav
+```
+
+## Yazma alanı: ekler, Plan ve Goal
+
+`Enter` ile yazmayı açınca sağ kenardaki `+` (varsayılan `⌘K`), sohbetin içinde
+koyu bir özellik kartı açar. `W/S`, oklar ve `Space/Enter` ile seçilir; `Q` menüyü
+kapatıp yazmaya döner. Metin yazarken `Q` normal harftir. Bu yeni kısayollar da
+Ayarlar → Shortcuts içinde ayrı ayrı değiştirilebilir.
+
+- **Fotoğraf veya belge:** `+` içinden veya `⌘O` ile yerel dosya seçilir. Dosya,
+  görsel veya macOS ekran görüntüsü küçük resmi doğrudan sohbetin herhangi bir
+  yerine bırakılabilir. Finder dosya URL'leri, PNG/TIFF pano verisi ve AppKit
+  `NSFilePromiseReceiver` ile henüz dosyası oluşmamış ekran görüntüleri desteklenir.
+- Bırakmak yalnızca ilgili sohbetin taslağına ekler; göndermez. Küçük önizleme,
+  dosya adı ve kaldırma düğmesi görünür. Yazısız, yalnız ekli mesaj gönderilebilir.
+  Aktarım sürerken `Enter` eksik mesaj göndermez. Odak değişse veya sohbet `Q` ile
+  kapansa bile dosya başladığı taslağa gider. Kaynak taşınmaz/değiştirilmez;
+  `~/Library/Application Support/Bavbav/Attachments/<uuid>/` altında özel kopya
+  tutulur. Yerel taslak ekleri yeniden açılışta korunur; çalışma kuyruğu hâlâ
+  süreç içidir, tam uygulama çıkışında kuyruk kurtarma garantisi verilmez.
+- Bir mesajda en fazla **12 dosya**, dosya başına **25 MB**. Görseller yerel görüntü
+  girdisi olarak, belgeler açık dosya yolları içeren bağlam olarak Codex'e iletilir;
+  genel bir bulut belge-yükleme API'si kullanılmaz. Belgenin okunabilmesi Codex'in
+  dosya türüne uygun araçlarına bağlıdır. Desteklenen HEIC/TIFF görseller PNG'ye
+  çevrilir. Göndermeden önce yalnız yerel kopyalama/önizleme yapılır.
+- **Normal / Plan:** seçilen mod sohbet taslağında kalır; her yeni tur gerçek
+  `collaborationMode` parametresiyle başlar. Çalışan bir turun modu ara mesajla
+  değiştirilemez; farklı mod seçilen mesaj sonraki turda gönderilir.
+- **Goal:** mevcut sohbetin gerçek `thread/goal/get/set/clear` işlemleri kullanılır.
+  Hedefi yazıp `Enter` ile kaydet; sonraki mesajda hedef üzerinde çalışmaya başlar.
+  Kullanım/durum gösterilir. Hedef kutusunda `⌘.` geri döner. Goal desteği olmayan
+  sunucu bir hata gösterir; başarılıymış gibi yerel etiket oluşturulmaz.
+
+Önizlemeler en çok 96 piksel, 8 MiB/96 öğe önbellek ve iki arka plan işiyle
+sınırlıdır. Dosya içe aktarma seri çalışır; kaldırılan taslak referansı, gönderilmiş
+veya sıradaki başka bir mesajın kullandığı dosyayı silmez.
+
+Yerel/sahte sunucu kontrolleri (gerçek hesaba mesaj göndermez):
+
+```sh
+BAVBAV_ATTACHMENT_INTAKE_CHECK=1 .build/debug/Bavbav
+BAVBAV_COMPOSER_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav
+```
+
+Gizli pencere/pano testleri gerçek macOS köşe küçük resminin canlı fareyle
+sürüklenmesinin kanıtı değildir; bu hareket yeni paketle ayrıca denenmelidir.
+
 ## Zengin mesaj görünümü
 
 Codex sohbet mesajları yerel TextKit ile biçimlendirilir: başlıklar, kalın/italik
@@ -117,6 +190,7 @@ sisteme ait olduğu için bunun dışındadır.
 - `Enter`: Açık sohbet penceresinde yazma alanını göster; proje seçiliyken yeni sohbet aç
 - Sohbet içindeyken `Shift+Tab`: Komut, plan, dosya değişikliği ve araç mesajlarını göster/gizle. Senin mesajların, Codex yanıtları, düşünce özetleri ve alt ajan mesajları her iki görünümde de kalır. Yazarken de çalışır; taslağı değiştirmez.
 - Sohbet ilk açıldığında son mesajdan başlar; geçmiş geç yüklense veya yanıt uzasa da alt konum korunur. Küçük trackpad hareketleri ve momentum dahil, yukarı kaydırıp okurken yeni mesajlar konumunu değiştirmez.
+- Trackpad hareketinin sonu bir sessizlik süresiyle tahmin edilmez: parmaklar hâlâ yüzeydeyken duraklamak veya hızla yön değiştirmek otomatik alta takibi yeniden açmaz. Değişmeyen mesajların metin ölçümü kaydırma sırasında tekrar kullanılabilir.
 - Açık sohbetler arasında geçişte mevcut görünüm, okuma konumu ve metin seçimi korunur; geçmiş yenilenirken boş ekran gösterilmez. Q ile kapatmak görünümü ve pencere önbelleğini bırakır, arka plandaki Codex işini sonlandırmaz. Q sonrası yeniden açılış son mesajdan başlar.
 - `B` / `End` (`Fn+→`): Yazmıyorken etkin sohbetin en altına git. Yukarı kaydırınca sağ altta çıkan küçük `↓` düğmesi de aynı işi yapar; diğer sohbetleri etkilemez.
 - Yazarken `Enter`: Gönder; `Shift+Enter`: Yeni satır; `⌘.`: Yazma alanını gizle
@@ -300,8 +374,11 @@ gerçek sohbete mesaj göndermez. Son komut 320/700 punto genişliğinde PNG ör
 geliştirme klasöründen değil uygulamanın içinden yüklendiğini doğrular.
 
 Sohbet kaydırmanın çevrimdışı regresyon kontrolü (geç yüklenen geçmiş, canlı yanıt,
-yeniden boyutlandırma, okuma konumu, B/End ve pencere ayrımı; gizli SwiftUI/AppKit
-pencereleri, gerçek hesaba veya açık uygulamaya dokunmaz):
+yeniden boyutlandırma, okuma konumu, B/End ve pencere ayrımı; en altta parmakları
+kaldırmadan duraklama, küçük yukarı hareketler, hızlı yön değişimleri, momentum ve
+değişken boylu mesajlarda görünür metin konumunun korunması). Gizli SwiftUI/AppKit
+pencerelerinde native kaydırma olayları kullanır; gerçek hesaba veya açık
+uygulamaya dokunmaz:
 
 ```sh
 BAVBAV_SCROLL_CHECK=1 .build/debug/Bavbav
@@ -322,6 +399,11 @@ kontrol de paketleme sırasında imzalı uygulamada tekrar çalışır.
 Ad düzenlemenin çevrimdışı kontrolü (proje adı kalıcılığı, sohbet adı kaydı,
 aktif ve arka plandaki başlıklar, eski katalog yanıtları, sunucu hatası, native
 metin düzenleme ve bağımsız kısayollar; gizli pencereler ve yerel sahte sunucu):
+
+Kontrol, ⌘1/2/3'te adı doğrudan uygulama durumuna atamak yerine gerçek native
+ad kutusuna yazar; Enter'dan önce metnin duruma aktarıldığını, SwiftUI yenilenince
+korunduğunu ve kaydedildikten sonra katalogda kaldığını doğrular. Boş ad, vazgeçme,
+sunucu hatasından sonra tekrar yazma ve özel kaydetme kısayolu da bu yoldan sınanır.
 
 ```sh
 BAVBAV_RENAME_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav

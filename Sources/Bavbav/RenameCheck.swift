@@ -62,6 +62,23 @@ enum RenameCheck {
             _ = router.handle(key(code, flags, in: window, type: .keyUp))
         }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func typeName(_ value: String, in window: NSWindow) async throws {
+            await frame(window)
+            guard let field = descendants(window.contentView!).compactMap({ $0 as? RenameNameField.Field }).first else {
+                throw Failure(message: "missing native name field")
+            }
+            window.makeFirstResponder(field)
+            guard let editor = field.currentEditor() as? NSTextView else {
+                throw Failure(message: "name field has no native editor")
+            }
+            let scope = store.renameTarget?.scope ?? "missing"
+            editor.selectAll(nil)
+            editor.insertText(value, replacementRange: editor.selectedRange())
+            try check(store.renameName == value, "native input reaches rename state before Enter: \(scope)")
+            await frame(window)
+            try check(field.stringValue == value && editor.string == value && store.renameName == value,
+                      "SwiftUI update preserves native input: \(scope)")
+        }
         do {
             await store.connectAndLoad()
             let projects = try panel(.projects), recents = try panel(.recents), standalone = try panel(.chatgpt)
@@ -92,16 +109,18 @@ enum RenameCheck {
                       "native Command A/C/V are routed while renaming; actual clipboard untouched")
             projects.makeFirstResponder(nil)
             editor.removeFromSuperview()
-            store.renameName = "   "
+            try await typeName("   ", in: projects)
             tap(36, in: projects)
             try check(store.renameTarget == nil && store.projects.contains { $0.id == project.id && $0.name == project.name },
                       "empty Enter cancels without renaming")
+            await frame(projects)
             tap(49, .option, in: projects)
-            store.renameName = "Taslak"
+            try await typeName("Taslak", in: projects)
             tap(47, .command, in: projects)
             try check(store.renameTarget == nil, "Command period explicitly cancels")
+            await frame(projects)
             tap(49, .option, in: projects)
-            store.renameName = "İsim / görünen ad"
+            try await typeName("İsim / görünen ad", in: projects)
             tap(76, in: projects)
             try check(store.projects.contains { $0.id == project.id && $0.name == "İsim / görünen ad" && $0.path == project.path },
                       "keypad Enter changes project display name, never its folder path/identity")
@@ -124,7 +143,7 @@ enum RenameCheck {
             let order = store.recentChats.map(\.id)
             tap(49, .option, in: projects)
             try check(store.renameTarget?.scope == "projects.chats", "inside a project renames the selected chat")
-            store.renameName = "Yorum (3) · yeni"
+            try await typeName("Yorum (3) · yeni", in: projects)
             tap(36, in: projects)
             tap(36, in: projects) // A second Enter cannot submit twice.
             try await waitUntil { !store.renameSubmitting }
@@ -141,7 +160,7 @@ enum RenameCheck {
             store.focusDetailWindow(other)
             store.selectRecent(id: thread.id)
             tap(49, .option, in: recents)
-            store.renameName = "Son sohbet adı"
+            try await typeName("Son sohbet adı", in: recents)
             store.selectRecent(id: other.id) // Selection changes cannot retarget an in-progress edit.
             tap(36, in: recents)
             try await waitUntil { !store.renameSubmitting }
@@ -151,13 +170,13 @@ enum RenameCheck {
 
             store.selectRecent(id: thread.id)
             tap(49, .option, in: recents)
-            store.renameName = "RENAME_FAIL"
+            try await typeName("RENAME_FAIL", in: recents)
             tap(36, in: recents)
             try await waitUntil { !store.renameSubmitting }
             try check(store.renameError != nil && store.renameName == "RENAME_FAIL" && store.renameTarget != nil,
                       "server failure retains edit text and exposes error")
             try check(store.recentChats.contains { $0.id == thread.id && $0.title == "Son sohbet adı" }, "failed save leaves old title intact")
-            store.renameName = "Geç yanıt yarışı"
+            try await typeName("Geç yanıt yarışı", in: recents)
             let refresh = Task { await store.refresh() }
             try? await Task.sleep(nanoseconds: 50_000_000)
             tap(36, in: recents)
@@ -172,7 +191,7 @@ enum RenameCheck {
             store.selectChatGPT(id: standaloneThread.id)
             tap(49, .option, in: standalone)
             try check(store.renameTarget?.scope == "standalone.list", "Command 3 saved chats support rename")
-            store.renameName = "Günlük sohbet"
+            try await typeName("Günlük sohbet", in: standalone)
             tap(36, in: standalone)
             try await waitUntil { !store.renameSubmitting }
             await store.refresh()
@@ -187,7 +206,7 @@ enum RenameCheck {
             tap(15, .option, in: standalone)
             try check(store.renameTarget?.id == standaloneThread.id, "custom rename shortcut works")
             try check(bindings.set("rename.standalone.list.full.commitRename.key", .init(strokes: [.init(36, .command)])), "rename save is independently configurable")
-            store.renameName = "Kaydetme tuşu"
+            try await typeName("Kaydetme tuşu", in: standalone)
             tap(36, in: standalone)
             try check(store.renameTarget != nil && !store.renameSubmitting, "plain Enter cannot bypass remapped save")
             tap(36, .command, in: standalone)
@@ -195,7 +214,7 @@ enum RenameCheck {
             try check(store.renameTarget == nil, "custom save key commits")
             store.selectRecent(id: thread.id)
             _ = router.handle(key(49, .option, in: recents))
-            store.renameName = "keep draft"
+            try await typeName("keep draft", in: recents)
             _ = router.handle(key(49, .option, in: recents, repeated: true))
             try check(store.renameName == "keep draft" && !store.recentIsReordering, "held Option Space cannot reset draft or reorder")
             _ = router.handle(key(49, in: recents, type: .keyUp))

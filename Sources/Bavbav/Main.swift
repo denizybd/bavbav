@@ -7,7 +7,7 @@ enum BavbavMain {
         let app = NSApplication.shared
         let delegate = BavbavAppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(.regular)
+        app.setActivationPolicy(ProcessInfo.processInfo.environment["BAVBAV_APP_ICON_CHECK"] == "1" ? .prohibited : .regular)
         app.run()
         withExtendedLifetime(delegate) {}
     }
@@ -20,12 +20,25 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeys: HotKeyCenter?
     private var inputRouter: InputRouter!
     private var statusItem: NSStatusItem!
+    private var appIconController: AppIconController?
     private var refreshTimer: Timer?
     private var conversationSyncTimer: Timer?
     private var terminationRequested = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
+        if environment["BAVBAV_APP_ICON_CHECK"] == "1" {
+            Task { Foundation.exit(await AppIconCheck.run() ? 0 : 1) }
+            return
+        }
+        if environment["BAVBAV_ATTACHMENT_INTAKE_CHECK"] == "1" {
+            Task { Foundation.exit(await AttachmentIntakeCheck.run() ? 0 : 1) }
+            return
+        }
+        if environment["BAVBAV_COMPOSER_CHECK"] == "1" {
+            Task { Foundation.exit(await ComposerActionsCheck.run() ? 0 : 1) }
+            return
+        }
         if environment["BAVBAV_RENAME_CHECK"] == "1" {
             Task { Foundation.exit(await RenameCheck.run() ? 0 : 1) }
             return
@@ -136,8 +149,9 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         if environment["BAVBAV_TEXT_SHORTCUT_CHECK"] == "1" {
             Foundation.exit(TextShortcutCheck.run(router: inputRouter) ? 0 : 1)
         }
-        if let brandImage = loadBrandImage() {
-            NSApp.applicationIconImage = brandImage
+        if !isCheckRun {
+            appIconController = AppIconController()
+            appIconController?.start()
         }
 
         if windowLevelCheck {
@@ -671,6 +685,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        appIconController?.stop()
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
     }
@@ -719,14 +734,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     private func installStatusMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            if let brandImage = loadBrandImage() {
-                brandImage.size = NSSize(width: 18, height: 18)
-                brandImage.accessibilityDescription = "Bavbav"
-                button.image = brandImage
-                button.imageScaling = .scaleProportionallyDown
-            } else {
-                button.image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Bavbav")
-            }
+            let image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Bavbav")
+            image?.isTemplate = true
+            button.image = image
+            button.imageScaling = .scaleProportionallyDown
         }
 
         let menu = NSMenu()
@@ -743,13 +754,6 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         menu.items.forEach { $0.target = self }
         statusItem.menu = menu
         ApplicationMenu.update(menu, bindings: panels.appPreferences.keyBindings)
-    }
-
-    private func loadBrandImage() -> NSImage? {
-        guard let url = Bundle.main.url(forResource: "BavbavIcon-v2", withExtension: "png") else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
     }
 
     private func showShortcutError(_ message: String) {

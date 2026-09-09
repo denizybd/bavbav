@@ -12,7 +12,32 @@ private var turnCounter = 0
 private var recordedItems: [String: [[String: Any]]] = [:]
 private var standaloneRows: [String: [String: Any]] = [:]
 private var threadNames: [String: String] = [:]
+private var composerGoals: [String: [String: Any]] = [:]
 private let outputLock = NSLock()
+
+private func recordComposerRequest(_ message: [String: Any]) {
+    guard ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1",
+          let path = ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_REQUEST_LOG"],
+          var data = try? JSONSerialization.data(withJSONObject: message) else { return }
+    data.append(0x0A)
+    if !FileManager.default.fileExists(atPath: path) {
+        FileManager.default.createFile(atPath: path, contents: nil)
+    }
+    guard let handle = FileHandle(forWritingAtPath: path) else { return }
+    defer { try? handle.close() }
+    _ = try? handle.seekToEnd()
+    try? handle.write(contentsOf: data)
+}
+
+private func completeComposerTurn(threadID: String, turnID: String, input: [[String: Any]], marker: String) {
+    send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+        "item": ["id": "\(turnID)-\(marker)-user", "type": "userMessage", "content": input]]])
+    send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+        "item": ["id": "\(turnID)-\(marker)-agent", "type": "agentMessage", "text": "BAVBAV_COMPOSER_\(marker)_OK", "phase": "final_answer"]]])
+    send(["method": "turn/completed", "params": ["threadId": threadID,
+        "turn": ["id": turnID, "status": "completed", "items": [], "error": NSNull()]]])
+    activeTurns.removeValue(forKey: threadID)
+}
 
 private let visibilityItems: [[String: Any]] = [
     ["id": "v-user", "type": "userMessage", "content": [["type": "text", "text": "Hello"]]],
@@ -191,7 +216,24 @@ while let line = readLine() {
     if let method = message["method"] as? String {
         guard let id = requestID(message["id"]) else { continue }
         let params = message["params"] as? [String: Any] ?? [:]
+        recordComposerRequest(message)
         switch method {
+        case "thread/goal/set" where ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            let goal: [String: Any] = ["threadId": threadID, "objective": params["objective"] as? String ?? "",
+                "status": params["status"] as? String ?? "active", "tokenBudget": params["tokenBudget"] ?? NSNull(),
+                "tokensUsed": 0, "timeUsedSeconds": 0, "createdAt": 1_788_000_000, "updatedAt": 1_788_000_000]
+            composerGoals[threadID] = goal
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.15) {
+                send(["id": id, "result": ["goal": goal]])
+            }
+        case "thread/goal/get" where ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            send(["id": id, "result": ["goal": composerGoals[threadID] as Any? ?? NSNull()]])
+        case "thread/goal/clear" where ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            let existed = composerGoals.removeValue(forKey: threadID) != nil
+            send(["id": id, "result": ["cleared": existed]])
         case "initialize":
             send(["id": id, "result": [
                 "codexHome": "/tmp/bavbav-fixture-home",
@@ -299,6 +341,15 @@ while let line = readLine() {
         case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_STANDALONE_CHECK"] == "1":
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             send(["id": id, "result": ["thread": standaloneRows[threadID] ?? threadRow(id: threadID, cwd: "/tmp/fixture")]])
+        case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            send(["id": id, "result": ["thread": threadRow(id: threadID, cwd: "/tmp/fixture")]])
+        case "thread/turns/list" where ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            send(["id": id, "result": ["data": [["id": "composer-history", "items": recordedItems[threadID] ?? []]], "nextCursor": NSNull()]])
+        case "thread/items/list" where ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            send(["id": id, "result": ["data": (recordedItems[threadID] ?? []).reversed().map { ["item": $0] }, "nextCursor": NSNull()]])
         case "thread/turns/list" where ProcessInfo.processInfo.environment["BAVBAV_STANDALONE_CHECK"] == "1":
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             send(["id": id, "result": ["data": [["id": "standalone-turn", "items": recordedItems[threadID] ?? []]], "nextCursor": NSNull()]])
@@ -346,6 +397,35 @@ while let line = readLine() {
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             let input = params["input"] as? [[String: Any]] ?? []
             let scenario = input.first?["text"] as? String ?? "COMMAND"
+            if ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1" {
+                let text = input.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                if text.contains("COMPOSER_FAIL") {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+                        send(["id": id, "error": ["code": -32000, "message": "fixture composer failure"]])
+                    }
+                    continue
+                }
+                activeTurns[threadID] = turnID
+                let startedReply: [String: Any] = ["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]]
+                if text.contains("COMPOSER_DELAY_ACK_HOLD") {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { send(startedReply) }
+                } else { send(startedReply) }
+                send(["method": "turn/started", "params": ["threadId": threadID,
+                    "turn": ["id": turnID, "status": "inProgress", "items": []]]])
+                if text.contains("COMPOSER_INTERACTION_HELD") {
+                    let requestID = "composer-question-\(turnCounter)"
+                    pending[requestID] = PendingFixture(scenario: "QUESTION", threadID: threadID, turnID: turnID)
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+                        send(fixtureRequest(scenario: "QUESTION", requestID: requestID, threadID: threadID, turnID: turnID))
+                    }
+                } else if text.contains("COMPOSER_HOLD") || text.contains("COMPOSER_DELAY_ACK_HOLD") {
+                    send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+                        "item": ["id": "\(turnID)-hold-user", "type": "userMessage", "content": input]]])
+                } else {
+                    completeComposerTurn(threadID: threadID, turnID: turnID, input: input, marker: "START")
+                }
+                continue
+            }
             if ProcessInfo.processInfo.environment["BAVBAV_JOURNAL_CHECK"] == "1", threadID == "ephemeral-journal" {
                 guard let schema = params["outputSchema"] as? [String: Any], schema["additionalProperties"] as? Bool == false,
                       params["approvalPolicy"] as? String == "never",
@@ -494,6 +574,15 @@ while let line = readLine() {
             }
             let input = params["input"] as? [[String: Any]] ?? []
             let text = input.first?["text"] as? String ?? ""
+            if ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1" {
+                if input.compactMap({ $0["text"] as? String }).joined().contains("COMPOSER_FAIL") {
+                    send(["id": id, "error": ["code": -32000, "message": "fixture composer steer failure"]])
+                } else {
+                    send(["id": id, "result": ["turnId": expectedTurnID]])
+                    completeComposerTurn(threadID: threadID, turnID: expectedTurnID, input: input, marker: "STEER")
+                }
+                continue
+            }
             let userItem: [String: Any] = [
                 "type": "userMessage",
                 "id": "server-steer-user-\(turnCounter)",

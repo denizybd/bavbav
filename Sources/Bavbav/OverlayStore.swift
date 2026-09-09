@@ -96,6 +96,15 @@ struct QueuedPrompt: Identifiable, Equatable {
     let text: String
     let model: String?
     let effort: String?
+    var attachments: [ComposerAttachment] = []
+    var collaborationMode: CodexCollaborationMode = .default
+    var requiresRetry = false
+    var displayText: String { ComposerInput.displayText(text: text, attachments: attachments) }
+}
+
+private struct ComposerDraftExtras: Codable, Equatable {
+    var attachments: [ComposerAttachment] = []
+    var mode: CodexCollaborationMode = .default
 }
 
 struct ChatWindowSnapshot {
@@ -177,6 +186,18 @@ final class OverlayStore: ObservableObject {
     @Published private(set) var messageSending = false
     @Published private(set) var steerSending = false
     @Published private(set) var composerError: String?
+    @Published private var composerExtras: [String: ComposerDraftExtras] = [:]
+    @Published private var attachmentImports: [String: Int] = [:]
+    @Published private var attachmentErrors: [String: String] = [:]
+    @Published private(set) var composerToolsVisible = false
+    @Published private(set) var composerToolIndex = 0
+    @Published private(set) var composerGoalEditing = false
+    @Published var goalObjective = ""
+    @Published private var goalsByThreadID: [String: CodexThreadGoal] = [:]
+    @Published private var goalBusyThreadIDs: Set<String> = []
+    @Published private var goalErrorsByThreadID: [String: String] = [:]
+    private var goalReadGeneration: [String: Int] = [:]
+    private var turnModesByThreadID: [String: CodexCollaborationMode] = [:]
     @Published private(set) var queuedPromptsByThreadID: [String: [QueuedPrompt]] = [:]
     @Published private(set) var queueModeVisible = false
     @Published var queueInteraction = ListInteractionState()
@@ -197,6 +218,7 @@ final class OverlayStore: ObservableObject {
     var onChatGPTLayoutChanged: ((Bool) -> Void)?
 
     private let client = CodexAppServer()
+    private let attachmentIntake: AttachmentIntake
     private var cachedDetailItems: [CodexMessage]?
     private(set) var timelineBuildCount = 0
     private let defaults: UserDefaults
@@ -232,8 +254,10 @@ final class OverlayStore: ObservableObject {
 
     static let chatGPTLauncherID = "chatgpt.launcher"
 
-    init(defaults: UserDefaults = .standard, standaloneDirectory: URL? = nil, journal: JournalService? = nil) {
+    init(defaults: UserDefaults = .standard, standaloneDirectory: URL? = nil, journal: JournalService? = nil,
+         attachmentIntake: AttachmentIntake? = nil) {
         self.defaults = defaults
+        self.attachmentIntake = attachmentIntake ?? .shared
         self.journal = journal ?? JournalService()
         self.standaloneDirectory = standaloneDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Bavbav/StandaloneChats", isDirectory: true)
@@ -861,6 +885,204 @@ final class OverlayStore: ObservableObject {
         true
     }
 
+    var composerAttachments: [ComposerAttachment] { detailThread.map { composerAttachments(for: $0.id) } ?? [] }
+    var composerHasPayload: Bool { !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !composerAttachments.isEmpty }
+    var composerImporting: Bool {
+        guard let id = detailThread?.id else { return false }
+        return attachmentImports.contains { $0.value > 0 && attachmentDestination($0.key) == id }
+    }
+    var composerAttachmentError: String? { detailThread.flatMap { attachmentErrors[$0.id] } }
+    var composerMode: CodexCollaborationMode { detailThread.map { draftExtras(for: $0.id).mode } ?? .default }
+    var composerGoal: CodexThreadGoal? { detailThread.flatMap { goalsByThreadID[$0.id] } }
+    var composerGoalBusy: Bool { detailThread.map { goalBusyThreadIDs.contains($0.id) } ?? false }
+    var composerGoalError: String? { detailThread.flatMap { goalErrorsByThreadID[$0.id] } }
+
+    private func draftExtras(for id: String) -> ComposerDraftExtras {
+        if let cached = composerExtras[id] { return cached }
+        return defaults.data(forKey: "composer.extras.\(id)")
+            .flatMap { try? JSONDecoder().decode(ComposerDraftExtras.self, from: $0) } ?? ComposerDraftExtras()
+    }
+    private func saveExtras(_ extras: ComposerDraftExtras, for id: String) {
+        composerExtras[id] = extras
+        if let data = try? JSONEncoder().encode(extras) { defaults.set(data, forKey: "composer.extras.\(id)") }
+    }
+    func composerAttachments(for threadID: String) -> [ComposerAttachment] { draftExtras(for: threadID).attachments }
+    private func setComposerAttachments(_ attachments: [ComposerAttachment], for id: String) {
+        var extras = draftExtras(for: id)
+        extras.attachments = attachments
+        saveExtras(extras, for: id)
+    }
+    func addComposerAttachments(_ attachments: [ComposerAttachment], to threadID: String) {
+        var items = composerAttachments(for: threadID)
+        var seen = Set(items.map(\.path))
+        for item in attachments where seen.insert(item.path).inserted { items.append(item) }
+        if items.count > AttachmentIntake.maximumCount {
+            attachmentErrors[threadID] = "Bir mesaja en fazla \(AttachmentIntake.maximumCount) dosya ekleyebilirsin."
+        }
+        setComposerAttachments(Array(items.prefix(AttachmentIntake.maximumCount)), for: threadID)
+    }
+    func removeComposerAttachment(id: String) {
+        guard let threadID = detailThread?.id else { return }
+        setComposerAttachments(composerAttachments.filter { $0.id != id }, for: threadID)
+        attachmentErrors[threadID] = nil
+        // Only remove the reference. A sent/queued message may still own this
+        // same durable file; never delete it while background work can use it.
+    }
+    func setComposerMode(_ mode: CodexCollaborationMode) {
+        guard let id = detailThread?.id else { return }
+        setComposerMode(mode, for: id)
+    }
+    private func setComposerMode(_ mode: CodexCollaborationMode, for id: String) {
+        var extras = draftExtras(for: id)
+        extras.mode = mode
+        saveExtras(extras, for: id)
+    }
+    @discardableResult
+    func importComposerPasteboard(_ pasteboard: NSPasteboard, for thread: CodexThread) -> Bool {
+        guard AttachmentIntake.accepts(pasteboard) else { return false }
+        let id = thread.id
+        // Capture the destination now, not when a promised screenshot arrives.
+        focusDetailWindow(thread)
+        closeComposerTools(restoreFocus: false)
+        beginWriting(from: .detail)
+        attachmentImports[id, default: 0] += 1
+        attachmentErrors[id] = nil
+        let accepted = attachmentIntake.importPasteboard(pasteboard) { [weak self] result in
+            self?.finishAttachmentImport(result, for: id)
+        }
+        if !accepted { attachmentImports[id, default: 0] -= 1 }
+        return accepted
+    }
+    func chooseComposerFiles() {
+        guard let thread = detailThread, let window = NSApp.keyWindow else { return }
+        closeComposerTools(restoreFocus: false)
+        let panel = NSOpenPanel()
+        panel.title = "Fotoğraf veya belge ekle"
+        panel.prompt = "Ekle"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.beginSheetModal(for: window) { [weak self] response in
+            // The sheet is still resigning key status inside its completion.
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, self.detailThread?.id == thread.id, self.composerVisible,
+                      self.activeInteraction == nil, window?.isKeyWindow == true else { return }
+                self.requestComposerFocus(threadID: thread.id)
+            }
+            guard response == .OK else { return }
+            let urls = panel.urls
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                attachmentImports[thread.id, default: 0] += 1
+                attachmentErrors[thread.id] = nil
+                let result = await attachmentIntake.ingest(urls: urls)
+                finishAttachmentImport(result, for: thread.id)
+            }
+        }
+    }
+    private func finishAttachmentImport(_ result: AttachmentIntakeResult, for id: String) {
+        attachmentImports[id] = max(0, attachmentImports[id, default: 0] - 1)
+        let target = attachmentDestination(id)
+        if !result.errors.isEmpty { attachmentErrors[target] = result.errors.joined(separator: "\n") }
+        addComposerAttachments(result.attachments, to: target)
+    }
+    private func attachmentDestination(_ id: String) -> String {
+        var target = id
+        let redirects = defaults.dictionary(forKey: "thread.redirects") as? [String: String] ?? [:]
+        var visited = Set<String>()
+        while let next = redirects[target], visited.insert(target).inserted { target = next }
+        return target
+    }
+
+    func toggleComposerTools() {
+        guard detailThread != nil, composerVisible else { return }
+        if composerToolsVisible { closeComposerTools(); return }
+        composerToolsVisible = true
+        composerGoalEditing = false
+        composerToolIndex = 0
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        refreshComposerGoal()
+    }
+    func closeComposerTools(restoreFocus: Bool = true) {
+        let wasOpen = composerToolsVisible
+        composerToolsVisible = false
+        composerGoalEditing = false
+        if wasOpen && restoreFocus, let id = detailThread?.id { requestComposerFocus(threadID: id) }
+    }
+    func navigateComposerTools(delta: Int) { composerToolIndex = min(3, max(0, composerToolIndex + delta)) }
+    func activateComposerTool() {
+        switch composerToolIndex {
+        case 0: chooseComposerFiles()
+        case 1: setComposerMode(.default); closeComposerTools()
+        case 2: setComposerMode(.plan); closeComposerTools()
+        default: beginComposerGoalEditing()
+        }
+    }
+    func beginComposerGoalEditing() {
+        guard let id = detailThread?.id else { return }
+        goalObjective = defaults.string(forKey: "composer.goal-draft.\(id)") ?? composerGoal?.objective ?? ""
+        composerToolsVisible = true
+        composerGoalEditing = true
+    }
+    func updateGoalObjective(_ value: String) {
+        goalObjective = value
+        if let id = detailThread?.id { defaults.set(value, forKey: "composer.goal-draft.\(id)") }
+    }
+    func cancelComposerGoalEditing() {
+        composerGoalEditing = false
+        NSApp.keyWindow?.makeFirstResponder(nil)
+    }
+    func refreshComposerGoal() {
+        guard let id = detailThread?.id, !goalBusyThreadIDs.contains(id) else { return }
+        goalReadGeneration[id, default: 0] += 1
+        let generation = goalReadGeneration[id]!
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let goal = try await client.readThreadGoal(threadID: id)
+                guard goalReadGeneration[id] == generation else { return }
+                goalsByThreadID[id] = goal
+                goalErrorsByThreadID[id] = nil
+            } catch {
+                guard goalReadGeneration[id] == generation else { return }
+                goalErrorsByThreadID[id] = "Goal okunamadı: \(error.localizedDescription)"
+            }
+        }
+    }
+    func saveComposerGoal() {
+        guard let id = detailThread?.id, !goalBusyThreadIDs.contains(id) else { return }
+        let objective = goalObjective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !objective.isEmpty else { cancelComposerGoalEditing(); return }
+        goalBusyThreadIDs.insert(id)
+        goalReadGeneration[id, default: 0] += 1
+        goalErrorsByThreadID[id] = nil
+        Task { [weak self] in
+            guard let self else { return }
+            defer { goalBusyThreadIDs.remove(id) }
+            do {
+                let goal = try await client.setThreadGoal(threadID: id, objective: objective)
+                goalsByThreadID[id] = goal
+                defaults.removeObject(forKey: "composer.goal-draft.\(id)")
+                if detailThread?.id == id { cancelComposerGoalEditing() }
+            } catch { goalErrorsByThreadID[id] = "Goal kaydedilemedi: \(error.localizedDescription)" }
+        }
+    }
+    func clearComposerGoal() {
+        guard let id = detailThread?.id, !goalBusyThreadIDs.contains(id) else { return }
+        goalBusyThreadIDs.insert(id)
+        goalReadGeneration[id, default: 0] += 1
+        goalErrorsByThreadID[id] = nil
+        Task { [weak self] in
+            guard let self else { return }
+            defer { goalBusyThreadIDs.remove(id) }
+            do {
+                _ = try await client.clearThreadGoal(threadID: id)
+                goalsByThreadID[id] = nil
+                defaults.removeObject(forKey: "composer.goal-draft.\(id)")
+            } catch { goalErrorsByThreadID[id] = "Goal kaldırılamadı: \(error.localizedDescription)" }
+        }
+    }
+
     var currentQueuedPrompts: [QueuedPrompt] {
         guard let threadID = detailThread?.id else { return [] }
         return queuedPromptsByThreadID[threadID] ?? []
@@ -947,14 +1169,23 @@ final class OverlayStore: ObservableObject {
               let index = queue.firstIndex(where: { $0.id == selectedID })
         else { return }
         let prompt = queue.remove(at: index)
+        let hadDraft = composerHasPayload
+        if hadDraft {
+            // Editing a queued item must not erase a newer text/image draft.
+            queue.insert(QueuedPrompt(id: "bavbav-draft-\(UUID().uuidString)", threadID: threadID,
+                text: composerText, model: activeOverrides.model, effort: activeOverrides.effort,
+                attachments: composerAttachments, collaborationMode: composerMode, requiresRetry: true), at: index)
+        }
         queuedPromptsByThreadID[threadID] = queue
         updateQueuedThreadRegistration(threadID)
         queueModeVisible = false
         queueInteraction = ListInteractionState()
         composerText = prompt.text
+        setComposerAttachments(prompt.attachments, for: threadID)
+        setComposerMode(prompt.collaborationMode, for: threadID)
         persistDraft(prompt.text, for: threadID)
         composerVisible = true
-        composerError = nil
+        composerError = hadDraft ? "Önceki taslağın kuyrukta korundu; kendiliğinden gönderilmez." : nil
         DispatchQueue.main.async { [weak self] in self?.composerFocusToken &+= 1 }
     }
 
@@ -980,6 +1211,7 @@ final class OverlayStore: ObservableObject {
 
     func clearCurrentDetail(threadID: String) {
         guard detailThread?.id == threadID else { return }
+        closeComposerTools(restoreFocus: false)
         detailFocusGeneration &+= 1
         defaults.set(detailShowsActivity, forKey: "commands-visible.\(threadID)")
         detailLoadTask?.cancel()
@@ -1402,17 +1634,23 @@ final class OverlayStore: ObservableObject {
             persistDraft(composerText, for: threadID)
         }
         composerVisible = false
+        closeComposerTools(restoreFocus: false)
         composerError = nil
         NSApp.keyWindow?.makeFirstResponder(nil)
     }
 
     func submitMessage() {
-        if composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        guard !composerImporting else {
+            composerError = "Dosyalar hazırlanıyor; bitince gönderebilirsin."
+            return
+        }
+        if !composerHasPayload {
             if let threadID = detailThread?.id {
                 persistDraft("", for: threadID)
             }
             composerText = ""
             composerVisible = false
+            closeComposerTools(restoreFocus: false)
             composerError = nil
             NSApp.keyWindow?.makeFirstResponder(nil)
             return
@@ -1424,30 +1662,38 @@ final class OverlayStore: ObservableObject {
 
         let text = composerText
         let overrides = activeOverrides
+        let attachments = composerAttachments
+        let mode = composerMode
+        setComposerAttachments([], for: thread.id)
         composerText = ""
         persistDraft("", for: thread.id)
         composerVisible = false
+        closeComposerTools(restoreFocus: false)
         composerError = nil
         NSApp.keyWindow?.makeFirstResponder(nil)
 
         if shouldQueueCurrentMessage {
-            enqueuePrompt(text: text, thread: thread, overrides: overrides)
+            enqueuePrompt(text: text, thread: thread, overrides: overrides, attachments: attachments, mode: mode)
             return
         }
-        startNewTurn(thread: thread, text: text, overrides: overrides)
+        startNewTurn(thread: thread, text: text, overrides: overrides, attachments: attachments, mode: mode)
     }
 
     private func enqueuePrompt(
         text: String,
         thread: CodexThread,
-        overrides: ThreadRuntimeOverrides
+        overrides: ThreadRuntimeOverrides,
+        attachments: [ComposerAttachment] = [],
+        mode: CodexCollaborationMode = .default
     ) {
         let prompt = QueuedPrompt(
             id: "bavbav-queue-\(UUID().uuidString)",
             threadID: thread.id,
             text: text,
             model: overrides.model,
-            effort: overrides.effort
+            effort: overrides.effort,
+            attachments: attachments,
+            collaborationMode: mode
         )
         var queue = queuedPromptsByThreadID[thread.id] ?? []
         queue.append(prompt)
@@ -1460,23 +1706,29 @@ final class OverlayStore: ObservableObject {
         thread: CodexThread,
         text: String,
         overrides: ThreadRuntimeOverrides,
-        queuedOnFailure: QueuedPrompt? = nil
+        queuedOnFailure: QueuedPrompt? = nil,
+        attachments: [ComposerAttachment] = [],
+        mode: CodexCollaborationMode = .default
     ) {
         let localID = "bavbav-user-\(UUID().uuidString)"
         let threadID = thread.id
+        let displayText = ComposerInput.displayText(text: text, attachments: attachments)
         if detailThread?.id == threadID {
             detailLoadTask?.cancel()
             detailLoadGeneration &+= 1
             detailLoading = false
             composerError = nil
             detailMessages.removeAll { $0.id == "read-error" }
-            detailMessages.append(CodexMessage(id: localID, role: .user, text: text, timestamp: Date()))
+            detailMessages.append(CodexMessage(id: localID, role: .user, text: displayText, timestamp: Date()))
         }
+        // Notifications may precede the start RPC response. Capture the mode
+        // before exposing a running turn, and never overwrite it with a late ack.
+        turnModesByThreadID[threadID] = mode
         markThreadSending(threadID)
         optimisticUserMessages.append(OptimisticUserMessage(
             threadID: threadID,
             localID: localID,
-            text: text
+            text: displayText
         ))
 
         Task {
@@ -1491,7 +1743,9 @@ final class OverlayStore: ObservableObject {
                         effort: overrides.effort,
                         clientUserMessageID: localID,
                         cwd: thread.cwd,
-                        executionMode: .fullAccess
+                        executionMode: .fullAccess,
+                        attachments: attachments,
+                        collaborationMode: mode
                     )
                 } catch let clientError as CodexClientError where clientError.isActiveWriterConflict {
                     let previousRuntime = inheritedRuntime
@@ -1510,6 +1764,7 @@ final class OverlayStore: ObservableObject {
                         fallbackRuntime: previousRuntime
                     )
                     moveSendingState(from: threadID, to: fork.thread.id)
+                    turnModesByThreadID[fork.thread.id] = mode
                     if let index = optimisticUserMessages.firstIndex(where: { $0.localID == localID }) {
                         optimisticUserMessages[index].threadID = fork.thread.id
                     }
@@ -1520,7 +1775,9 @@ final class OverlayStore: ObservableObject {
                         effort: overrides.effort,
                         clientUserMessageID: localID,
                         cwd: fork.thread.cwd,
-                        executionMode: .fullAccess
+                        executionMode: .fullAccess,
+                        attachments: attachments,
+                        collaborationMode: mode
                     )
                 }
                 let destinationID = destinationThread.id
@@ -1554,13 +1811,27 @@ final class OverlayStore: ObservableObject {
                 }
                 if var queuedOnFailure {
                     queuedOnFailure.threadID = destinationID
+                    queuedOnFailure.requiresRetry = true
                     insertQueuedPrompt(queuedOnFailure, at: 0)
                     if detailThread?.id == destinationID {
                         composerError = "Sıradaki prompt başlatılamadı: \(error.localizedDescription)"
                         reloadDetail(threadID: destinationID)
                     }
                 } else {
+                    // A late error must not overwrite a newer draft, including
+                    // screenshots dropped while the original request was pending.
+                    if !savedDraft(for: destinationID).isEmpty || !composerAttachments(for: destinationID).isEmpty {
+                        insertQueuedPrompt(QueuedPrompt(id: localID, threadID: destinationID, text: text,
+                            model: overrides.model, effort: overrides.effort, attachments: attachments,
+                            collaborationMode: mode, requiresRetry: true), at: 0)
+                        if detailThread?.id == destinationID {
+                            composerError = "Gönderilemeyen mesaj kuyrukta korundu. Yeni taslağın değişmedi; Q ile kuyruğun içinden düzenleyebilirsin."
+                        }
+                        return
+                    }
                     persistDraft(text, for: destinationID)
+                    setComposerAttachments(attachments, for: destinationID)
+                    setComposerMode(mode, for: destinationID)
                     if detailThread?.id == destinationID {
                         composerText = text
                         composerVisible = true
@@ -1580,6 +1851,10 @@ final class OverlayStore: ObservableObject {
               let originalIndex = currentQueuedPrompts.firstIndex(where: { $0.id == id })
         else { return }
         let prompt = currentQueuedPrompts[originalIndex]
+        guard prompt.collaborationMode == turnModesByThreadID[thread.id] else {
+            composerError = "Çalışma modu tur ortasında değişmez. Bu mesaj seçtiğin modla sıradaki turda gönderilecek."
+            return
+        }
         var queue = currentQueuedPrompts
         queue.remove(at: originalIndex)
         queuedPromptsByThreadID[thread.id] = queue
@@ -1589,6 +1864,7 @@ final class OverlayStore: ObservableObject {
             : queue.last?.id
 
         let text = prompt.text
+        let displayText = prompt.displayText
         let localID = "bavbav-steer-\(UUID().uuidString)"
         let threadID = thread.id
         detailLoadTask?.cancel()
@@ -1599,10 +1875,10 @@ final class OverlayStore: ObservableObject {
         optimisticUserMessages.append(OptimisticUserMessage(
             threadID: threadID,
             localID: localID,
-            text: text
+            text: displayText
         ))
         detailMessages.removeAll { $0.id == "read-error" }
-        detailMessages.append(CodexMessage(id: localID, role: .user, text: text, timestamp: Date()))
+        detailMessages.append(CodexMessage(id: localID, role: .user, text: displayText, timestamp: Date()))
         Task {
             defer { steerSending = false }
             do {
@@ -1610,7 +1886,8 @@ final class OverlayStore: ObservableObject {
                     threadID: threadID,
                     turnID: turnID,
                     text: text,
-                    clientUserMessageID: localID
+                    clientUserMessageID: localID,
+                    attachments: prompt.attachments
                 )
                 guard returnedTurnID == turnID else {
                     throw CodexClientError.invalidResponse("turn/steer farklı bir tur döndürdü")
@@ -1655,6 +1932,7 @@ final class OverlayStore: ObservableObject {
             return
         }
         guard var queue = queuedPromptsByThreadID[nextThreadID], !queue.isEmpty else { return }
+        guard !queue[0].requiresRetry else { return }
         let prompt = queue.removeFirst()
         queuedPromptsByThreadID[nextThreadID] = queue
         updateQueuedThreadRegistration(nextThreadID)
@@ -1669,7 +1947,9 @@ final class OverlayStore: ObservableObject {
             thread: thread,
             text: prompt.text,
             overrides: ThreadRuntimeOverrides(model: prompt.model, effort: prompt.effort),
-            queuedOnFailure: prompt
+            queuedOnFailure: prompt,
+            attachments: prompt.attachments,
+            mode: prompt.collaborationMode
         )
     }
 
@@ -2030,6 +2310,7 @@ final class OverlayStore: ObservableObject {
             if status == "failed" || status == "interrupted" {
                 composerError = error ?? "Codex yanıtı \(status)."
             }
+            refreshComposerGoal()
             Task {
                 if !continuesWithQueue {
                     reloadDetail(threadID: threadID)
@@ -2046,6 +2327,7 @@ final class OverlayStore: ObservableObject {
             pendingInteractions.append(request)
             if detailThread?.id == request.threadID {
                 composerVisible = false
+                closeComposerTools(restoreFocus: false)
                 queueModeVisible = false
                 queueInteraction = ListInteractionState()
                 composerError = nil
@@ -2335,6 +2617,11 @@ final class OverlayStore: ObservableObject {
         fallbackRuntime: ThreadRuntimeOverrides
     ) {
         let target = fork.thread
+        var movedExtras = draftExtras(for: source.id)
+        let targetExtras = draftExtras(for: target.id)
+        movedExtras.attachments += targetExtras.attachments.filter { next in !movedExtras.attachments.contains { $0.id == next.id } }
+        saveExtras(movedExtras, for: target.id)
+        saveExtras(ComposerDraftExtras(), for: source.id)
         if isStandalone(source) {
             standaloneIDs.insert(target.id)
             defaults.set(Array(standaloneIDs), forKey: "chat.standalone-ids")
@@ -2348,7 +2635,10 @@ final class OverlayStore: ObservableObject {
                     threadID: target.id,
                     text: prompt.text,
                     model: prompt.model,
-                    effort: prompt.effort
+                    effort: prompt.effort,
+                    attachments: prompt.attachments,
+                    collaborationMode: prompt.collaborationMode,
+                    requiresRetry: prompt.requiresRetry
                 )
             }
             queuedPromptsByThreadID[target.id, default: []].append(contentsOf: redirected)
@@ -2376,6 +2666,9 @@ final class OverlayStore: ObservableObject {
 
         if detailThread?.id == source.id {
             detailThread = target
+            // Goals belong to server thread identities; do not display a source
+            // goal as active on a fork without reading the actual destination.
+            refreshComposerGoal()
             activeOverrides = overrides
             let detected = ThreadRuntimeOverrides(model: fork.runtime.model, effort: fork.runtime.effort)
             inheritedRuntime = detected == .inherited ? fallbackRuntime : detected
@@ -2384,8 +2677,13 @@ final class OverlayStore: ObservableObject {
         if let data = try? JSONEncoder().encode(overrides) {
             defaults.set(data, forKey: overridesKey(target.id))
         }
+        let sourceDraft = savedDraft(for: source.id)
+        if !sourceDraft.isEmpty, savedDraft(for: target.id).isEmpty { persistDraft(sourceDraft, for: target.id) }
         persistDraft("", for: source.id)
-        persistDraft("", for: target.id)
+        if let goalDraft = defaults.string(forKey: "composer.goal-draft.\(source.id)"),
+           defaults.string(forKey: "composer.goal-draft.\(target.id)") == nil {
+            defaults.set(goalDraft, forKey: "composer.goal-draft.\(target.id)")
+        }
     }
 
     private func visibleThreads(_ threads: [CodexThread]) -> [CodexThread] {
@@ -2455,6 +2753,8 @@ final class OverlayStore: ObservableObject {
             return
         }
         onWillOpenDetail?(thread, targetHost)
+        closeComposerTools(restoreFocus: false)
+        composerExtras[thread.id] = draftExtras(for: thread.id)
         detailFocusGeneration &+= 1
         let cached = onDetailSnapshotRequested?(thread.id)
         if let currentID = detailThread?.id, currentID != thread.id {

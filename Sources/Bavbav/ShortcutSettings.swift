@@ -175,11 +175,20 @@ enum ShortcutCatalog {
             add(scope,group,"queueToggle","Kuyruk görünürlüğünü değiştir · sayısal Enter",76,alias:"keypad",prefix:.init(49))
         }
         for (scope,group) in [("chat.write.full","Mesaj · yazma"),("chat.write.empty","Mesaj · boş yazma alanı")] {
+            add(scope,group,"composerTools","Ekler ve Codex özelliklerini aç",40,.command)
+            add(scope,group,"composerAttach","Fotoğraf veya belge ekle",31,.command)
             enter(scope,group,"send",scope.hasSuffix("full") ? "Mesajı gönder" : "Boş yazma alanını kapat")
             add(scope,group,"newline","Yeni satır ekle",36,.shift)
             add(scope,group,"newline","Yeni satır ekle · sayısal Enter",76,.shift,alias:"keypad")
             add(scope,group,"cancelWriting","Yazmayı iptal et",47,.command)
         }
+        moves("composer.tools", "Mesaj · ekler ve özellikler")
+        enter("composer.tools", "Mesaj · ekler ve özellikler", "composerToolOpen", "Seçili özelliği aç", space: true)
+        add("composer.tools", "Mesaj · ekler ve özellikler", "composerToolsClose", "Ekler menüsünü kapat",12)
+        add("composer.tools", "Mesaj · ekler ve özellikler", "composerToolsClose", "Ekler menüsünü kapat · Command",40,.command,alias:"command")
+        add("composer.tools", "Mesaj · ekler ve özellikler", "composerGoalClear", "Etkin hedefi kaldır",51,.command)
+        enter("composer.goal.write", "Mesaj · Goal hedefi", "composerGoalSave", "Hedefi kaydet · boşsa vazgeç")
+        add("composer.goal.write", "Mesaj · Goal hedefi", "composerGoalCancel", "Hedefi yazmaktan vazgeç",47,.command)
         moves("queue.list","Mesaj kuyruğu")
         add("queue.list","Mesaj kuyruğu","steer","Seçili mesajı çalışan tura ilet",49)
         add("queue.list","Mesaj kuyruğu","reorder","Kuyruğu sıralamaya başla",49,hold:true)

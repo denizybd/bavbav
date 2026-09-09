@@ -301,12 +301,14 @@ struct ChatWindowRoot: View {
     var body: some View {
         ChatDetailView(store: store, host: .centered,
                        snapshot: presentation.isActive ? nil : presentation.snapshot,
-                       scrollController: presentation.scroll)
+                       scrollController: presentation.scroll, windowThread: presentation.snapshot.thread)
     }
 }
 
 struct ChatDetailView: View {
     @Environment(\.shortcutLabels) private var shortcuts
+    @Environment(\.panelBackdropOpacity) private var backdropOpacity
+    @State private var dropHover = false
     private var commandScope: String {
         if snapshot != nil { return "chat.read" }
         if store.interactionTextVisible { return "interaction.write" }
@@ -315,13 +317,14 @@ struct ChatDetailView: View {
         return store.queueModeVisible ? "queue.list" + (store.queueIsReordering ? ".moving" : "") : "chat.read"
     }
     private var composerScope: String {
-        "chat.write." + (store.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "empty" : "full")
+        "chat.write." + (store.composerHasPayload ? "full" : "empty")
     }
     @ObservedObject var store: OverlayStore
     let host: ChatDetailHost
     var snapshot: ChatWindowSnapshot? = nil
     var scrollController: ChatScrollController? = nil
-    private var displayedThread: CodexThread? { snapshot?.thread ?? store.detailThread }
+    var windowThread: CodexThread? = nil
+    private var displayedThread: CodexThread? { snapshot?.thread ?? windowThread ?? store.detailThread }
     private var displayedItems: [CodexMessage] { snapshot?.items ?? store.visibleDetailItems }
     private var displayedLoading: Bool { snapshot?.loading ?? store.visibleDetailLoading }
     private var displayedCommands: Bool { snapshot?.showsActivity ?? store.detailShowsActivity }
@@ -329,6 +332,30 @@ struct ChatDetailView: View {
     private var displayedRunState: ChatRunDisplayState { displayedThread.map { store.runState(for: $0.id) } ?? .idle }
 
     var body: some View {
+        AttachmentDropRegion(isEnabled: displayedThread != nil, onHoverChanged: { dropHover = $0 }, onDrop: { board in
+            guard let thread = displayedThread else { return false }
+            return store.importComposerPasteboard(board, for: thread)
+        }) {
+            chatSurface.environment(\.panelBackdropOpacity, backdropOpacity).environment(\.shortcutLabels, shortcuts)
+        }
+        .overlay {
+            if dropHover {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10).fill(BavbavTheme.background.opacity(0.92))
+                    RoundedRectangle(cornerRadius: 10).strokeBorder(BavbavTheme.accent, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                    VStack(spacing: 10) {
+                        Image(systemName: "square.and.arrow.down").font(.system(size: 28, weight: .light))
+                        Text("Bu sohbete ekle").font(BavbavTheme.mono(13, weight: .semibold))
+                        Text("Fotoğraf · belge · ekran görüntüsü").font(BavbavTheme.mono(9))
+                        Text("Bırakmak göndermez; önce taslağı görürsün.").font(BavbavTheme.mono(8))
+                    }.foregroundStyle(BavbavTheme.accent)
+                }.allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var chatSurface: some View {
+        GeometryReader { geometry in
         ZStack {
             BavbavTheme.background.panelBackdrop()
             VStack(spacing: 0) {
@@ -364,7 +391,8 @@ struct ChatDetailView: View {
                 }
                 if snapshot == nil, store.composerVisible, store.detailHost == host {
                     Divider().overlay(BavbavTheme.border)
-                    composer
+                    ChatComposerView(store: store, menuHeight: max(96, geometry.size.height - 180))
+                        .layoutPriority(1)
                 }
             }
         }
@@ -372,6 +400,7 @@ struct ChatDetailView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(BavbavTheme.border, lineWidth: 1)
+        }
         }
     }
 
@@ -381,47 +410,6 @@ struct ChatDetailView: View {
         case .centered: return store.detailHost == .centered
         case .dock: return store.detailHost == .dock
         }
-    }
-
-    private var composer: some View {
-        VStack(spacing: 6) {
-            HStack {
-                Text("\(store.shouldQueueCurrentMessage ? "QUEUE" : "WRITE") / \((store.detailThread?.title ?? "CHAT").uppercased())")
-                    .font(BavbavTheme.mono(8, weight: .bold))
-                    .foregroundStyle(BavbavTheme.accent).readableForeground()
-                    .lineLimit(1)
-                Spacer()
-                Text("\(shortcuts.key(composerScope + ".send.key")) \(composerScope.hasSuffix("empty") ? "CLOSE" : (store.shouldQueueCurrentMessage ? "ADD" : "SEND")) · \(shortcuts.key(composerScope + ".newline.key")) LINE")
-                    .font(BavbavTheme.mono(7, weight: .bold))
-                    .foregroundStyle(BavbavTheme.muted).readableForeground()
-            }
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(BavbavTheme.raised).panelBackdrop()
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(BavbavTheme.accent.opacity(0.35), lineWidth: 1)
-                    }
-                if store.composerText.isEmpty {
-                    Text(store.shouldQueueCurrentMessage ? "Add prompt to queue…" : "Message Codex…")
-                        .font(BavbavTheme.mono(11))
-                        .foregroundStyle(BavbavTheme.muted.opacity(0.7)).readableForeground()
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .allowsHitTesting(false)
-                }
-                ComposerTextView(
-                    text: $store.composerText,
-                    focusToken: store.composerFocusToken,
-                    enabled: store.composerInputEnabled
-                )
-                .padding(1)
-            }
-            .frame(height: 72)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(BavbavTheme.surface.opacity(0.72).panelBackdrop())
     }
 
     private var queueHint: some View {
@@ -477,13 +465,13 @@ struct ChatDetailView: View {
                                         .font(BavbavTheme.mono(7, weight: .bold))
                                         .foregroundStyle(selected ? BavbavTheme.text : BavbavTheme.muted).readableForeground()
                                         .frame(width: 30, alignment: .leading)
-                                    Text(prompt.text.replacingOccurrences(of: "\n", with: " "))
+                                    Text((prompt.text.isEmpty ? prompt.attachments.map(\.name).joined(separator: ", ") : prompt.text).replacingOccurrences(of: "\n", with: " "))
                                         .font(BavbavTheme.mono(9, weight: selected ? .semibold : .regular))
                                         .foregroundStyle(selected ? BavbavTheme.text : BavbavTheme.muted).readableForeground()
                                         .lineLimit(1)
                                     Spacer(minLength: 0)
                                     if selected {
-                                        Text(store.queueIsReordering ? "↕" : "STEER")
+                                        Text(prompt.requiresRetry ? "RETRY · Q" : (store.queueIsReordering ? "↕" : "STEER"))
                                             .font(BavbavTheme.mono(7, weight: .bold))
                                             .foregroundStyle(store.queueIsReordering ? BavbavTheme.warning : BavbavTheme.accent).readableForeground()
                                     }
@@ -1052,6 +1040,9 @@ struct MessageBlock: View {
     let message: CodexMessage
 
     var body: some View {
+        let content = message.role == .user
+            ? SentMessageAttachments.parse(text: message.text)
+            : SentMessageAttachments(text: message.text, attachments: [])
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 RoundedRectangle(cornerRadius: 1)
@@ -1080,9 +1071,12 @@ struct MessageBlock: View {
                         .foregroundStyle(BavbavTheme.muted).readableForeground()
                 }
             }
-            if !message.text.isEmpty {
-                MessageTextView(text: message.text, fontSize: message.kind.isConversation ? 12 : 9,
+            if !content.text.isEmpty {
+                MessageTextView(text: content.text, fontSize: message.kind.isConversation ? 12 : 9,
                                 markdown: message.kind.isConversation)
+            }
+            if !content.attachments.isEmpty {
+                AttachmentStrip(attachments: content.attachments)
             }
         }
         .padding(12)
