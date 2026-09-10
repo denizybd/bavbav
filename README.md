@@ -1,509 +1,243 @@
-# Bavbav
+<p align="center">
+  <img src="AppResources/BavbavIcon-v3-dark.png" alt="Bavbav app icon" width="112" />
+</p>
 
-Klavye odaklı, yerel macOS arayüzü. Codex bölümü AppKit pencereleri içinde SwiftUI
-ile çizilir ve Codex App Server'a yerel stdio bağlantısı kurar. Ayrı CHAT bölümü de
-aynı native mesaj ekranını kullanır; proje dışı sohbetler `CHANNEL / ChatGPT`
-başlığıyla açılır. Web sitesi, Safari veya ChatGPT masaüstü uygulaması açılmaz.
+<h1 align="center">Bavbav</h1>
 
-## macOS uygulama simgesi
+<p align="center">
+  <strong>A native macOS workspace for Codex.</strong><br />
+  Keep your projects, conversations, and next steps in view.
+</p>
 
-Simgenin dışı gerçek alfa saydamlığıdır; her iki görünüm aynı yuvarlatılmış
-macOS ölçüsünde hazırlanır. Açık sistem görünümünde beyaz, koyu görünümde siyaha
-yakın zemin kullanılır; Bavbav B işareti ve mint vurgusu korunur. Uygulama açıkken
-`NSApp.effectiveAppearance` değişimleri izlenir; iki resim bir kez yüklenir,
-gereksiz yenileme ve periyodik tarama yapılmaz. Sohbetlerin koyu teması değişmez.
-Menü çubuğundaki küçük simge macOS'un renklendirdiği bir template simgedir.
+<p align="center">
+  macOS 13+ &nbsp;·&nbsp; SwiftUI + AppKit &nbsp;·&nbsp; Keyboard-first
+</p>
 
-İmzalı pakete çalışma sırasında yazılmaz. `Bavbav-v3.icns`, 16–1024 piksel
-çözünürlükler için yuvarlatılmış açık simgeyi içerir. Finder ve yalnız paket
-simgesini okuyan başlatıcılarda bu sabit sürüm kullanılır. Çalışan uygulama
-simgesi [AppKit'in desteklenen geçici simge API'si](https://developer.apple.com/documentation/appkit/nsapplication/applicationiconimage)
-ile güncellenir; üçüncü taraf uygulama değiştiricilerinin önbellekleri ayrıca
-davranabilir. Safari'nin Icon Composer/Assets.car tabanlı clear/tinted gibi tüm
-yerel simge biçimleriyle eşdeğerlik iddiası yoktur; bu makinede tam Xcode/Icon
-Composer bulunmadığından açık/koyu çalışma zamanı uyarlaması kullanılır.
+<p align="center">
+  <a href="#get-started">Get started</a> &nbsp;·&nbsp;
+  <a href="#keyboard-cheat-sheet">Keyboard shortcuts</a> &nbsp;·&nbsp;
+  <a href="#under-the-hood">Architecture</a> &nbsp;·&nbsp;
+  <a href="https://github.com/denizybd/bavbav/issues">Report an issue</a>
+</p>
 
-`zsh scripts/build-icons.sh` kaynak görselleri sabit maskeyle RGBA simgelere ve
-ICNS'e dönüştürür; ana paketleme bunu otomatik çağırır. Kaynaklar, üretim istemleri
-ve düzenleme notları [AppResources/IconSources.md](AppResources/IconSources.md)
-dosyasındadır. Yerel kontrol, gerçek süreç-içi görünüm değişikliklerini sınar;
-global macOS temasını, Dock'u veya kullanıcının açık pencerelerini değiştirmez.
+Bavbav brings Codex conversations into compact, independent macOS windows. Keep a live preview in sight, work across several projects, and line up your next instructions while an agent is still running. Move between them with the keyboard, with each conversation keeping its own draft and queue.
+
+Built in Swift with AppKit and SwiftUI, Bavbav connects to your installed Codex App Server over local stdio. It uses your existing Codex setup for models, authentication, and coding tools.
+
+![Bavbav displaying project navigation, recent conversations, and two native chat windows](docs/assets/screenshots/01-parallel-workspaces.png)
+
+<sub>All three screenshots use Bavbav's actual native interface with fictional projects and English demo conversations.</sub>
+
+## Why Bavbav
+
+- **Keep several conversations open.** Arrange project chats beside one another. Switch focus without replacing the whole workspace, and return to an open conversation with its reading position intact.
+- **Give the next instruction when it occurs to you.** Queue follow-ups for the same conversation, reorder them, or send a selected instruction into the running turn.
+- **Close a window while work continues.** Press `Q` outside text editing to dismiss a chat. Bavbav releases its view while the active Codex turn keeps running; the menu bar shows the number of running chats.
+- **Make room for the work underneath.** Adjust background transparency while text, controls, and focus outlines stay opaque. Resize panels from their corners and keep the dimensions you prefer.
+
+## Queue, reorder, steer
+
+Sending a message while the same conversation is working adds it to that conversation's queue. A different conversation can start its own turn immediately.
+
+Open the queue to change the order, bring an instruction back into the composer, or **steer** the active turn with a selected message. Normal and Plan modes apply to new turns; changing modes does not rewrite the mode of a turn already in progress.
+
+![Bavbav's native message queue with three waiting instructions and an active coding conversation](docs/assets/screenshots/02-message-queue.png)
+
+## Keep the preview in sight
+
+Background transparency runs from fully opaque to fully transparent. Message surfaces and code blocks follow the same setting, while the foreground remains readable. A thin green outline identifies the focused window.
+
+The windows behave like regular macOS windows: bring them forward with shortcuts, arrange them around your editor or preview, and use `⌘Tab` to move between apps.
+
+![Two transparent Bavbav conversation windows showing command activity and an English coding discussion](docs/assets/screenshots/03-transparent-workflow.png)
+
+## Inside the workspace
+
+| Feature | What you can do |
+| --- | --- |
+| **Projects and recents** | Reopen Codex conversations, create project folders and chats, rename entries, and keep a preferred order. |
+| **Rich messages** | Read Markdown, tables, code blocks, mathematical notation, and images in native views. Select message text and copy code directly. |
+| **Visible tool activity** | Toggle commands, file changes, and tool output with `⇧Tab`, independently for each conversation. |
+| **Attachments** | Drop images or documents into a chat, or choose files from the composer. Preview and remove them before sending. |
+| **Normal, Plan, and Goal** | Choose how the next turn should work, and manage a conversation goal when the installed server supports it. |
+| **Models and effort** | Choose from the connected account's model catalog, adjust reasoning effort, or inherit the conversation's settings. |
+| **Standalone chat** | Start a Codex-powered conversation outside your project folders. |
+| **Journal** | Turn new conversations into short, editable notes about events, decisions, and plans, with links back to their sources. |
+| **Custom shortcuts** | Rebind actions by context, search bindings, and tune hold durations. On-screen hints follow your choices. |
+
+Attachments are limited to **12 files per message, 25 MiB per file**. Images are passed to Codex as local image inputs; documents are passed as local file references for its tools to read. Dropping a file adds it to the draft without sending it.
+
+## Get started
+
+### Requirements
+
+- **macOS 13 or later.** A Swift 6 toolchain and macOS SDK are required to build; check your installation with `swift --version`.
+- **Codex installed and signed in.** Follow the [official Codex CLI setup](https://learn.chatgpt.com/docs/codex/cli) and [authentication guide](https://learn.chatgpt.com/docs/auth). Bavbav uses the installed executable and its existing authentication.
+- **Git and internet access** to clone the repository and resolve Swift dependencies. Codex model requests also require a connection.
+
+> **Execution defaults:** Bavbav currently starts and resumes coding turns with full filesystem/network access and `approvalPolicy: never`. Commands can run and files can change without an approval card. Use it with workspaces and instructions you trust. macOS privacy permissions still apply.
+
+### Build and launch
+
+Confirm your Codex CLI is available and authenticated:
 
 ```sh
-BAVBAV_APP_ICON_CHECK=1 BAVBAV_ICON_RESOURCE_DIR="$PWD/AppResources" .build/debug/Bavbav
+codex --version
+codex login status
 ```
 
-## Yazma alanı: ekler, Plan ve Goal
-
-Menü barındaki simge yerine, odak çerçevesiyle aynı yeşilde yalnızca çalışan
-sohbet sayısı görünür (`0` dahil). Q ile kapatılmış arka plan sohbetleri sayılır;
-yalnız sırada duran veya kullanıcıdan yanıt/izin bekleyenler sayılmaz. Sayaç
-yerel çalışma olaylarından anında güncellenir; ek sorgu veya zamanlayıcı kullanmaz.
-Tıklayınca mevcut Bavbav menüsü açılmaya devam eder.
-Sayı, macOS'un siyah/beyaz metin rengiyle değiştirmemesi için template olmayan
-saydam bir görsel olarak çizilir; açık/koyu görünümde çerçeve yeşili korunur.
-
-`Enter` ile yazmayı açınca sağ kenardaki `+` (varsayılan `⌘K`), sohbetin içinde
-koyu bir özellik kartı açar. `W/S`, oklar ve `Space/Enter` ile seçilir; `Q` menüyü
-kapatıp yazmaya döner. Metin yazarken `Q` normal harftir. Bu yeni kısayollar da
-Ayarlar → Shortcuts içinde ayrı ayrı değiştirilebilir.
-
-- **Fotoğraf veya belge:** `+` içinden veya `⌘O` ile yerel dosya seçilir. Dosya,
-  görsel veya macOS ekran görüntüsü küçük resmi doğrudan sohbetin herhangi bir
-  yerine bırakılabilir. Finder dosya URL'leri, PNG/TIFF pano verisi ve AppKit
-  `NSFilePromiseReceiver` ile henüz dosyası oluşmamış ekran görüntüleri desteklenir.
-- Bırakmak yalnızca ilgili sohbetin taslağına ekler; göndermez. Küçük önizleme,
-  dosya adı ve kaldırma düğmesi görünür. Yazısız, yalnız ekli mesaj gönderilebilir.
-  Aktarım sürerken `Enter` eksik mesaj göndermez. Odak değişse veya sohbet `Q` ile
-  kapansa bile dosya başladığı taslağa gider. Kaynak taşınmaz/değiştirilmez;
-  `~/Library/Application Support/Bavbav/Attachments/<uuid>/` altında özel kopya
-  tutulur. Yerel taslak ekleri yeniden açılışta korunur; çalışma kuyruğu hâlâ
-  süreç içidir, tam uygulama çıkışında kuyruk kurtarma garantisi verilmez.
-- Bir mesajda en fazla **12 dosya**, dosya başına **25 MB**. Görseller yerel görüntü
-  girdisi olarak, belgeler açık dosya yolları içeren bağlam olarak Codex'e iletilir;
-  genel bir bulut belge-yükleme API'si kullanılmaz. Belgenin okunabilmesi Codex'in
-  dosya türüne uygun araçlarına bağlıdır. Desteklenen HEIC/TIFF görseller PNG'ye
-  çevrilir. Göndermeden önce yalnız yerel kopyalama/önizleme yapılır.
-- **Normal / Plan:** seçilen mod sohbet taslağında kalır; her yeni tur gerçek
-  `collaborationMode` parametresiyle başlar. Çalışan bir turun modu ara mesajla
-  değiştirilemez; farklı mod seçilen mesaj sonraki turda gönderilir.
-- **Goal:** mevcut sohbetin gerçek `thread/goal/get/set/clear` işlemleri kullanılır.
-  Hedefi yazıp `Enter` ile kaydet; sonraki mesajda hedef üzerinde çalışmaya başlar.
-  Kullanım/durum gösterilir. Hedef kutusunda `⌘.` geri döner. Goal desteği olmayan
-  sunucu bir hata gösterir; başarılıymış gibi yerel etiket oluşturulmaz.
-
-Önizlemeler en çok 96 piksel, 8 MiB/96 öğe önbellek ve iki arka plan işiyle
-sınırlıdır. Dosya içe aktarma seri çalışır; kaldırılan taslak referansı, gönderilmiş
-veya sıradaki başka bir mesajın kullandığı dosyayı silmez.
-
-Yerel/sahte sunucu kontrolleri (gerçek hesaba mesaj göndermez):
+If needed, run `codex login` and complete the sign-in flow. Then build Bavbav:
 
 ```sh
-BAVBAV_ATTACHMENT_INTAKE_CHECK=1 .build/debug/Bavbav
-BAVBAV_COMPOSER_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav
-```
-
-Gizli pencere/pano testleri gerçek macOS köşe küçük resminin canlı fareyle
-sürüklenmesinin kanıtı değildir; bu hareket yeni paketle ayrıca denenmelidir.
-
-## Zengin mesaj görünümü
-
-Codex sohbet mesajları yerel TextKit ile biçimlendirilir: başlıklar, kalın/italik
-metin, iç içe ve numaralı listeler, görev listeleri, alıntılar, tablolar ve satır içi
-kod. Koyu yüzeyler ve sade tipografi korunur; mesaj başlığındaki saat değişmez.
-TRACE komut/diff/araç çıktıları biçimlendirme uygulanmadan olduğu gibi gösterilir.
-
-LaTeX `\(...\)` / `$...$` satır içinde, `\[...\]` / `$$...$$` ayrı denklem olarak
-çizilir. Kesir, kök, integral ve matrisler Retina'da keskin kalan vektör görüntülerdir.
-Formül çizimi internet, HTML veya yeni bir WebKit süreci kullanmaz. Eksik veya
-desteklenmeyen LaTeX, aşırı uzun/karmaşık formüller okunabilir kaynak metni olarak
-kalır; tam LaTeX belge/makro çalıştırma sistemi değildir. Para tutarları ve kod
-içindeki dolar işaretleri matematik olarak yorumlanmaz.
-
-Üç backtick ile çevrili kod blokları, dil adı ve sağ üstte `KOPYALA` düğmesi olan
-koyu kutulara dönüşür. `prompt` dil etiketi de desteklenir; kutunun içeriği aynen
-kopyalanır. Serbest düzyazının prompt olduğu tahmin edilmez: kutu için yanıtın o
-bölümünün Markdown kod bloğu olarak gelmesi gerekir.
-
-Bir mesajı tıklayıp `⌘A` tüm mesajı seçer; `⌘C` metni kopyalar. Formüller panoya
-anlamsız resim işareti yerine orijinal LaTeX'iyle, tablolar sekmeyle ayrılmış hücreler
-olarak gider. Mesaj içindeki aktif seçim sırasında gelen güncellemeler son değerle
-birleştirilir; seçim kaldırılınca veya yazma alanına geçilince hemen uygulanır.
-
-Markdown bağlantıları ve metindeki normal HTTP(S) adresleri tıklanabilir. Yerel
-dosya bağlantıları Finder'da gösterilir; komut/uygulama bağlantıları çalıştırılmaz.
-Bağlantılar pencere odakta değilken de ilk tıklamayı kabul eder. Sağ tık veya
-Control-tık menüsünden bağlantı açılabilir ya da adresi/dosya yolu kopyalanabilir.
-Yerel `file://` adresleri de yalnızca Finder'da gösterilir; `:satır:sütun` ve
-`#Lsatır` ekleri dosya hedefinden ayrılır. Silinmiş dosya sessizce başarısız olmak
-yerine açıklayıcı uyarı gösterir. `BAVBAV_LINK_CHECK=1` gizli gerçek transcript
-hiyerarşisinde tıklama/menü testleri yapar; tarayıcı veya Finder açmaz.
-Ham HTML yürütülmez, mesajdaki uzak görseller otomatik indirilmez.
-
-### Mesaj içinde fotoğraflar
-
-Markdown `![açıklama](resim.png)` görselleri ve Codex'in `imageView`,
-`imageGeneration`, MCP/dinamik araç görsel çıktıları mesaj balonunda native
-önizleme olarak gösterilir. Görsel içeren araç mesajları COMMANDS kapalıyken de
-kalır; teknik JSON yalnızca COMMANDS açıldığında gösterilir. Projeye göre göreli
-yollar çözülür; bulut `sandbox:` yollarının bu Mac'te bulunduğu varsayılmaz.
-Görsele tıklamak mesaj içinde büyütür/küçültür. Eksik/bozuk resim boş alan yerine
-açıklama ve tekrar deneme düğmesi gösterir.
-
-Yerel ve gömülü raster görseller otomatik yüklenir. HTTPS görselleri çerez/hesap
-bilgisi göndermeyen, 20 saniye ve 25 MiB sınırları olan istekle, yalnızca
-**Görseli yükle** tıklandığında indirilir. Yönlendirmeler, SVG/HTML ve HTTP
-önizlemeleri kabul edilmez; desteklenmeyen bağlantılar normal link olarak açılabilir.
-PNG/JPEG/WebP/HEIC/TIFF ve GIF'in ilk karesi desteklenir. En fazla sekiz görsel;
-60 megapiksel üzeri kaynaklar reddedilir, önizlemeler 1200 piksele indirilir.
-İki arka plan çözme işçisi, 24 MiB decoded-image önbelleği ve 128 MiB gömülü-görsel
-disk önbelleği kullanılır. Kaynak dosyalar taşınmaz/silinmez. Kod bloklarındaki
-görsel örnekleri dosya veya ağ erişimi başlatmaz.
-
-[OpenAI Docs protokolü](https://learn.chatgpt.com/docs/app-server) ve kurulu CLI'nin
-ürettiği şema (`ImageGenerationItem.savedPath/result`) esas alınır.
-`BAVBAV_IMAGE_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/release/BavbavFakeCodex" .build/release/Bavbav`
-gizli native pencere/piksel kontrolü, yerel sahte sunucu ve ağsız URLProtocol
-testleri çalıştırır; gerçek hesaba mesaj göndermez.
-
-Biçimlendirme önbelleği 80 kayıt/12 MiB, formül önbelleği 128 kayıt/8 MiB bütçelidir.
-256 KiB üzerindeki mesajlar tam içerikleri korunarak düz metne döner; 12 sütun veya
-249 gövde satırını aşan tablolar kaynak biçiminde gösterilir. Amaç çok uzun araç
-çıktılarının veya bozuk akışın arayüzü sınırsız bellekle büyütmesini önlemektir.
-
-Markdown ayrıştırıcısı [swift-markdown 0.8.0](https://github.com/swiftlang/swift-markdown/tree/0.8.0),
-matematik motoru [SwiftMath 1.7.3](https://github.com/mgriebling/SwiftMath/tree/1.7.3).
-SwiftMath, imzalı macOS paketinde fontların doğru bulunması için küçük bir kaynak
-konumu düzeltmesiyle `Vendor/SwiftMath` altında tutulur; sürüm ve güncelleme notları
-oradadır. Fontlar ve lisanslar uygulamayla birlikte paketlenir.
-
-## Otomatik takvim / günlük
-
-`⌘5`, aynı native karanlık tasarımda bir kişisel/proje günlüğüdür; Apple/Google
-Takvim veya web sayfası açmaz. Bavbav üzerinden yapılan yeni `CODEX` ve `ChatGPT`
-konuşmalarında önemli yaşanmış olayları, kesinleşmiş kararları ve açık planları
-ayrı türlerde kısa cümlelere dönüştürür. Geçmiş sohbetleri kendiliğinden topluca
-taramaz; eski bir sohbette yazılan yeni mesajlar kapsamdadır.
-
-- Yakalama etkin pencereye bağlı değildir. `Q` ile sohbeti kapatmak not işini
-  durdurmaz. Tamamlanan turlar, kalıcı iş kuyruğundan tek tek işlenir; yeniden
-  açılışta yarım kalan bilinen turlar yalnız okunarak tamamlanır.
-- Yakın bağlam son 8 mesaj / 16 KB ve 32 sohbetle sınırlıdır. Model girdisi en çok
-  80 KB'dır; büyük veya başarısız işler sessizce kaybolmak yerine hata ile bekler.
-  Üç otomatik deneme ve artan bekleme süresi vardır; `R` yeniden dener.
-- Not çıkarma ek Codex kullanımı tüketir. Günlük en fazla 60 iş başlatılır;
-  fazlası kuyruğa kalır. `P` durdurur; duraklatılan sürede yeni konuşmalar alınmaz.
-  Çıkarıcı yalnız iş sırasında açılır ve sonra kapanır, sürekli ikinci model
-  süreci tutmaz. Mevcut yenileme ritmi kullanılır; ayrı sürekli tarama yoktur.
-- Çıkarıcı, [resmî App Server protokolü](https://learn.chatgpt.com/docs/app-server)
-  üzerinden geçici, salt okunur bir oturum ve JSON çıktı şeması kullanır.
-  Kullanıcının sohbetine prompt eklemez, model/çaba ayarlarını veya Codex'in
-  kalıcı yapılandırmasını değiştirmez. Kabuk, web, uygulama araçları, MCP,
-  alt ajanlar, hook ve bellek özellikleri yalnız çıkarıcı süreçte kapatılır.
-- Her notta kaynak sohbet ve birebir kaynak alıntısı bulunur. Uydurma alıntı/ID,
-  düşük güven veya yalnız önceki bağlama dayanan kayıtlar reddedilir. Tarih
-  somut ifadeyle doğrulanır; belirsiz olaylar konuşuldukları günde **tarih belirsiz**
-  etiketiyle görünür. Öneri bir karar, plan gerçekleşmiş bir olay sayılmaz.
-  Otomatik anlam çıkarma kusursuz değildir: `E` ile not/tarih düzeltilebilir.
-- Aynı işin tekrar işlenmesi, tekrar adaylar ve eşleşen olay kayıtları engellenir.
-  Silinen kayıt bir engel kaydı olarak korunur; model onu yeniden oluşturmaz.
-  `U` son silmeyi geri alır. Düzenlenen metin otomatik olarak üzerine yazılmaz.
-- Veriler `~/Library/Application Support/Bavbav/Journal/journal.json` içindedir;
-  `journal.previous.json` bir önceki kayıttır. Atomik yazım ve yalnız kullanıcıya
-  açık dosya izinleri kullanılır; dosyalar ayrıca şifrelenmez. Bozuk veya daha
-  yeni sürüm dosyası boş veriyle ezilmez. Normal uygulama çıkışı yazımı bekler.
-
-Çevrimdışı ve gizli pencere regresyonu (gerçek sohbetlere dokunmaz):
-
-```sh
-swift build
-BAVBAV_JOURNAL_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav
-```
-
-Yalnız yapay örneklerle gerçek Codex çıkarım testi (ek kullanım tüketir, kalıcı
-sohbet oluşturmaz):
-
-```sh
-BAVBAV_JOURNAL_LIVE_CHECK=1 .build/debug/Bavbav
-```
-
-## Kontroller
-
-Aşağıdaki tuşlar varsayılan atamalardır. Uygulamanın kısayolları Ayarlar →
-Shortcuts sayfasından ayrı ayrı değiştirilebilir; macOS uygulama değiştiricisi
-sisteme ait olduğu için bunun dışındadır.
-
-- `⌘Tab` / `⇧⌘Tab`: macOS uygulama değiştiricisi; Bavbav Dock'ta ve bu listede görünür
-- `⌘1`: Sol üst proje penceresini göster veya klavye odağını ona taşı
-- `⌘2`: Sağ üst son 8 Codex sohbetini göster veya klavye odağını ona taşı
-- `⌘3`: Sağ alttaki ayrı `CHAT` penceresini göster/odakla
-- `⌘4`: Sol alttaki aktif-sohbet model, çaba ve limit penceresini göster/odakla
-- `⌘5`: Yerel takvimi aç/odakla; tekrar basmak kapatmaz. `W/S` gün/not, `A/D` ay; `Space` gün → not → kaynak sohbet; `Q` geri/kapat. `E` düzenle, `⌫` silme onayı, `U` son silmeyi geri al, `P` otomatik notları durdur/aç, `R` bekleyen işi yeniden dene, `T` bugün. Düzenlerken `Q` normal harftir; `Enter` kaydeder, `⌘.` vazgeçer.
-- `⌘X`: Üst ortadaki küçük genel ayar penceresini aç/odakla; tekrar basmak kapatmaz
-- `Shift+W/A/S/D`: Yazı alanı odakta değilken üst/sol/alt/sağ pencereye geç; yazarken normal büyük harflerdir. `⌘A` metin seçer.
-- `W` / `S`: Seçimi yukarı/aşağı taşı
-- Kısa `Space`: Projeyi veya sohbeti aç
-- `⌥Space`: ⌘1, ⌘2 ve ⌘3 listelerinde seçili proje veya sohbetin adını düzenle. Mevcut ad seçili gelir; `Enter` kaydeder, boş `Enter` veya `⌘.` vazgeçer. Projeler yalnızca Bavbav içindeki görünen adlarıyla değişir; klasör yolu sabit kalır. Sohbet adı Codex'e kaydedilir ve açık sohbet başlıkları güncellenir. ⌘3'ün `CHAT` düğmesi değişmez. Her bağlamın düzenleme, kaydetme ve vazgeçme tuşları ayarlarda ayrı ayrı değiştirilebilir.
-- Uzun `Space`: Taşıma moduna gir; `W/S` ile taşı, `Space` ile kaydet
-- `⌘1` penceresinde `Space+Enter`: Proje listesindeyken yeni proje, proje
-  içindeyken yeni sohbet isim slotu aç; dolu `Enter` oluşturur, boş `Enter` iptal eder
-- `Enter`: Açık sohbet penceresinde yazma alanını göster; proje seçiliyken yeni sohbet aç
-- Sohbet içindeyken `Shift+Tab`: Komut, plan, dosya değişikliği ve araç mesajlarını göster/gizle. Senin mesajların, Codex yanıtları, düşünce özetleri ve alt ajan mesajları her iki görünümde de kalır. Yazarken de çalışır; taslağı değiştirmez.
-- Sohbet ilk açıldığında son mesajdan başlar; geçmiş geç yüklense veya yanıt uzasa da alt konum korunur. Küçük trackpad hareketleri ve momentum dahil, yukarı kaydırıp okurken yeni mesajlar konumunu değiştirmez.
-- Sohbet görünümü yeniden oluşturulursa okuma konumu yeni kaydırma alanına taşınır; geçmiş geç yüklendiğinde de geri yüklenir. Eski görünümün gecikmiş kapanışı yeni görünümün kaydırma takibini kesmez.
-- Trackpad hareketinin sonu bir sessizlik süresiyle tahmin edilmez: parmaklar hâlâ yüzeydeyken duraklamak veya hızla yön değiştirmek otomatik alta takibi yeniden açmaz. Değişmeyen mesajların metin ölçümü kaydırma sırasında tekrar kullanılabilir.
-- Açık sohbetler arasında geçişte mevcut görünüm, okuma konumu ve metin seçimi korunur; geçmiş yenilenirken boş ekran gösterilmez. Q ile kapatmak görünümü ve pencere önbelleğini bırakır, arka plandaki Codex işini sonlandırmaz. Q sonrası yeniden açılış son mesajdan başlar.
-- `B` / `End` (`Fn+→`): Yazmıyorken etkin sohbetin en altına git. Yukarı kaydırınca sağ altta çıkan küçük `↓` düğmesi de aynı işi yapar; diğer sohbetleri etkilemez.
-- Yazarken `Enter`: Gönder; `Shift+Enter`: Yeni satır; `⌘.`: Yazma alanını gizle
-- Yazma alanı boşken tekrar `Enter`: Yazma alanını kapat
-- `⌘A`, `⌘C`, `⌘V`: Odaktaki metni seç, kopyala, yapıştır. Mesaj metnine
-  tıklayıp `⌘A` yalnızca o mesajı seçer; `⌘C` kopyalar. Mesajlar salt okunurdur.
-- YOU/CODEX yanında ince saat görünür. Sunucunun mesaj zamanı varsa kullanılır;
-  yeni canlı mesajlarda ilk alınma zamanı saklanır. Tarih içermeyen eski kayıtlarda
-  tahmini bir saat yerine `—` gösterilir.
-- Aynı sohbetin Codex turu çalışırken gönderilen yeni mesaj sıraya eklenir
-- `Space+Enter`: Sıra yönetimini aç/kapat
-- Sıra yönetiminde kısa `Space`: Seçili mesajı çalışan Codex turuna hemen yönlendir
-- Sıra yönetiminde uzun `Space` + `W/S`: Seçili mesajı sırada taşı; bırakınca kaydet
-- Sıra yönetiminde `Q`: Seçili mesajı sıradan çıkarıp yazma alanına geri al
-- `⌘H`: Uygulamayı macOS'un yerel gizleme işlemiyle gizle; `⌘Tab` veya Dock ile
-  geri dönünce açık pencereler ve yazma durumu korunur
-- `⌘Q`: Uygulamadan tamamen çık (tek başına `Q` ile pencere kapatmaktan farklıdır)
-- `Q`: Yazma alanı kapalıyken aktif pencereyi kapat; yazarken normal `q` harfidir
-- `⌘1` içindeki sohbet listesindeyken ilk `Q` seçili projeye geri döner;
-  proje listesindeki ikinci `Q` pencereyi kapatır. Basılı tutmak iki adımı atlamaz.
-
-`⌘1–4` birer aç/kapat anahtarı değildir. Aynı kısayola tekrar basmak görünür
-pencereyi kapatmaz. `⌘1` ve `⌘2` hâlâ açık olan ilgili Codex sohbet pencerelerini,
-`⌘4` ise ayarladığı aktif sohbeti kendi penceresiyle birlikte öne taşır; sayı
-penceresi klavye odağını alır. Farklı sohbetler ayrı, hafifçe basamaklandırılmış
-pencerelerde birlikte açık kalır. Listeden zaten
-açık bir sohbeti seçmek o pencereyi öne getirir; yazma kapalıyken `Q` yalnız aktif
-sohbet penceresini kapatır ve varsa önceki açık sohbete döner.
-
-`⌘X` genel uygulama ayarlarını açar; `⌘4` hâlâ seçili sohbetin model ayarıdır.
-Genel ayarlar ilk açılışta ekranın üst ortasında 360×320 punto yer kaplar, normal
-macOS pencere seviyesinde çalışır ve köşelerinden boyutlandırılabilir. Bu kısayol
-yalnız Bavbav içinde geçerlidir; diğer uygulamaların `⌘X` kes komutunu ele geçirmez.
-Bavbav içinde yazarken de `⌘X` ayarları açar, metni kesmez. Pencereler arası
-yönlendirme `Shift+W/A/S/D` ile yapılır; eski Command yön tuşları kullanılmaz.
-Menü çubuğunda da Ayarlar öğesi vardır.
-
-Ayarların ana sayfasında `W/S` ile **Shortcuts** veya **Görünüm** seçilir,
-`Space/Enter` ile açılır. Shortcuts, her işlem ve her alternatif tuş için ayrı
-satır sunar. Örneğin W ile yukarı gitmek, ↑ ile yukarı gitmek, dolu mesajı
-göndermek ve boş yazma alanını kapatmak birbirinden bağımsızdır. Projeler,
-projenin sohbetleri, kuyruk, takvim sayfaları ve ayarlar da ayrı bağlamlardır.
-
-- Satırı seçip Enter veya Space ile tuş kaydını aç; yeni tuşlara basıp bırak.
-  Önizlemede Enter uygular, Q vazgeçer, R yeniden kaydeder, D bu atamayı kapatır,
-  geri silme tuşu yalnız bu atamayı varsayılana döndürür. Bu onay tuşları da ayrı
-  satırlardan değiştirilebilir. Kayıt sürerken Q ve Enter da atanabilir.
-- Tek tuş, değiştirici tuşlar ve birlikte basılan iki tuş desteklenir.
-  Space + Enter hareketini örneğin Control + N olarak değiştirebilirsin.
-  Uzun basışın tuşu kısa basıştan bağımsızdır; eşiği 200–2000 ms ayarlanabilir.
-  Önizlemede W süreyi 20 ms azaltır, S artırır. Varsayılan eşik 440 ms'dir.
-- Arama alanına tıkla veya kısayol listesinde Command + F kullan. Enter
-  sonuç listesine döner; normal yazma ve pano işlemleri aramada korunur.
-- Aynı bağlamdaki çakışmalar kaydedilmez. Yazarken sıradan harflerin mesaj
-  göndermesini engelleyen doğrulama ve macOS'a ait Command + Tab koruması vardır.
-  Kısa basış, uzun basış ve birleşimin başlangıcı aynı tuşu paylaşabilir.
-- Ayarlar kullanıcıya özel `keyboard.bindings.v1` kaydında saklanır; anında
-  uygulanır. Ekrandaki tuş ipuçları, native menüler ve beş global pencere tuşu
-  aynı kaynaktan güncellenir. Global kayıt hatası değişikliği geri alır.
-  Kayıt sırasında global tuşlar geçici bırakılır, kayıt bitince geri yüklenir.
-- Üstteki sıfırlama düğmesi onaydan sonra yalnız kısayolları sıfırlar.
-  Bozuk kayıt sessizce üzerine yazılmaz; güvenli varsayılanlar ve uyarı kullanılır.
-  Hiçbir atama sohbet geçmişini, modeli veya pencere saydamlığını değiştirmez.
-
-Kısayol regresyonu, gizli native pencereler ve yalnız yerel sahte Codex sunucusu
-üzerinde tek gönderim/yanıt akışını da test eder:
-
-```sh
-swift build
-BAVBAV_SHORTCUT_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav
-```
-
-Görünümde arka plan saydamlığı %0 (opak zemin) ile %100 (şeffaf zemin) arasındadır;
-`W/S` −5/+5, `←/→` −1/+1 değiştirir, `Space/Enter` %0'a döndürür. Değer anında
-uygulanır ve kaydedilir. Alt bölümde `Q` ana sayfaya döner, ana sayfada `Q` ayarı
-kapatıp mümkünse önceki pencereye döner.
-
-Saydamlık yalnızca arka plan dolgularına uygulanır: yazılar, çizgiler, ikonlar,
-logolar ve kontrollerin netliği değişmez. Mesaj/kod balonları ve genel ayarlar da
-aynı ayarı kullanır; mevcut, gizli ve sonradan açılan sohbetlerde değer korunur.
-%100'de yalnız zemin kaybolur; pencereler tıklanabilir, klavyeyle yönetilebilir
-kalmaya devam eder. Hesap giriş popup'ları değiştirilmez. `Space` ayarı sıfırlar.
-Klavye odağı olan pencere 0,8 punto ince yeşil bir çizgiyle belirtilir; odak başka
-pencereye taşınınca çizgi de taşınır. Başka uygulamaya geçince çizgi kaybolur.
-Saydamlıktan etkilenmez, tıklama ve köşeden boyutlandırmayı engellemez.
-
-%35 üzerindeki saydamlıkta yazı kontrastı kademeli artar: metin tam opak kalır,
-ince koyu kenar/gölge açık zemin üzerinde ayrışmasını sağlar. Bu destek pencere
-zeminini yeniden boyamaz; metin, kod kopyalama, seçim ve formül düzenini değiştirmez.
-
-`⌘3` küçük CHAT menüsünü açar: üstte yeni sohbet açan `CHAT`, altında bu kanaldaki
-son üç sohbet vardır. `W/S` seçer, kısa `Space` açar, uzun `Space` + `W/S` sıralar.
-Yeni sohbet önceki pencereleri kapatmaz. Mesaj ekranı ortak native `ChatDetailView`
-üzerindedir; yalnız kanal başlığı `CHANNEL / ChatGPT`, proje etiketi `PROJESİZ` olur.
-Enter ile yazma, boş Enter ile kapatma, Q, Shift+Tab, model/çaba, formüller, kopyalama,
-saydamlık ve odak çizgisi normal Codex sohbetleriyle aynı davranır.
-
-Bu kanal ChatGPT web geçmişiyle senkronize değildir; mevcut Codex App Server
-bağlantısını kullanır ([resmî protokol](https://learn.chatgpt.com/docs/app-server)).
-Proje bağlamı yerine uygulamanın Application Support/Bavbav/StandaloneChats dizini
-kullanılır. Bu dizin ve kanal sohbetleri Bavbav'ın proje ve Codex-son-sohbet listesine
-eklenmez. Kanal kimlikleri ve sıralama yerel ayarlarda saklanır; mesaj geçmişi aynı
-App Server üzerinden tekrar okunur. Eski web hesabının oturumu/geçmişi silinmez.
-
-Bavbav pencereleri normal macOS pencere seviyesindedir. Kısayolla öne gelirler;
-Safari, Haritalar veya başka bir uygulamaya dönüldüğünde onun arkasına geçebilirler.
-Bavbav artık yardımcı/menü-çubuğu uygulaması değil, Dock ve `⌘Tab` içinde görünen
-normal bir uygulamadır; standart uygulama ve Düzenle menüleri vardır. Pencereleri
-tıklamak uygulamayı etkinleştirir. `⌘Tab` tuşlarına uygulama müdahale etmez;
-uygulamadan ayrılırken bekleyen uzun-Space hareketi iptal edilir. `Q` ile tüm
-pencereler kapatılmışsa Dock'tan ya da uygulama değiştiricisinden dönüşte PROJECTS
-açılır; hâlâ açık pencereler varsa konumları ve odakları zorla değiştirilmez.
-Tüm Bavbav panelleri yalnızca dört köşesinden sürüklenerek boyutlandırılır; köşeye
-gelince çapraz boyutlandırma imleci görünür. Kenarlar boyutlandırma yapmaz, koyu
-çerçevesiz tasarım korunur. Okunabilir minimum boyut ve ekran sınırı uygulanır.
-Boyut sürükleme bitince bir kez kaydedilir; yeniden açılışta ve uygulama yeniden
-başladığında korunur. Codex sohbetleri kendi boyutunu, CHAT'in küçük ve büyümüş
-görünümleri birbirinden ayrı boyutlarını hatırlar.
-
-Codex masaüstünün hâlen yazarı olduğu bir sohbet ikinci App Server sürecinden
-doğrudan yazmaya kapalıysa Bavbav konuşmayı o noktadan sessizce çatallar, aynı
-ekranda yeni yazılabilir kola geçer ve mesajı bir kez gönderir. Eski kol Bavbav
-listelerinde gizlenir; Codex masaüstündeki özgün sohbet değişmeden kalır. Mesaj
-taslakları uygulama yeniden başlatılsa da korunur.
-
-Geçmiş Codex sohbetleri salt okunur değildir: sohbeti açıp `Enter` ile doğrudan
-yazılabilir. Başka bir sohbet o sırada çalışıyor olsa bile mesaj seçili geçmiş
-sohbette hemen başlar. Sıra yalnızca aynı sohbetin hâlihazırda çalışan turuna ait
-ek mesajlar için kullanılır.
-
-Görünür sohbet, yerel canlı tur yokken dört saniyede bir geçmişten eşitlenir.
-Canlı tur kendi olay akışını kullanır. Aynı anda ikinci bir geçmiş okuması
-başlatılmaz; eski bir okuma yeni canlı içeriğin üzerine yazılmaz.
-
-`Q` yalnızca sohbet penceresini kapatır: Bavbav ve çalışan Codex turu arka planda
-devam eder. Kapatılan pencerenin görünümü, mesajları ve TRACE içeriği bellekten
-bırakılır; turun kimliği ve gönderim sırası korunur. Yeniden açılan çalışan sohbet
-kayıtlı düşünce ve alt ajan etkinliklerini yeniden yükler. Komut görünürlüğü her
-sohbet için ayrı saklanır; varsayılan kapalıdır, çalışan bir sohbeti açmak bunu
-zorla değiştirmez. `Shift+Tab` komut ayrıntılarını açar/kapatır. Kapalıyken araç
-çıktıları UI belleğinde biriktirilmez; düşünce ve alt ajan kayıtları korunur.
-Tüm pencereler gizliyken periyodik katalog/geçmiş okumaları yapılmaz.
-Uygulamadan tamamen çıkmak veya bilgisayarı kapatmak bu arka plan davranışının
-dışındadır.
-
-`⌘4`, seçili sohbetin son gerçek model ve effort değerini otomatik olarak okur.
-Kullanıcı bir değer seçerse bu seçim sohbet için saklanır; `AUTO` seçeneği tekrar
-sohbetin son ayarını izler.
-
-Hesabın model kataloğunda `gpt-6-astra` varsa `GPT-6 ASTRA`, `AUTO` satırının
-hemen altında görünür. Çaba seçenekleri sunucudan gelir. `⌘4` açılınca katalog
-en fazla beş dakikada bir ayrı, kısa ömürlü bağlantıyla tazelenir; çalışan sohbet
-bağlantıları yeniden başlatılmaz. Model eklenmesi mevcut sohbet seçimini değiştirmez.
-
-Bavbav'dan açılan ve devam ettirilen Codex sohbetleri varsayılan olarak tam erişim
-modundadır (`danger-full-access`, `approvalPolicy: never`). Komut, dosya ve ağ
-işlemleri için onay kartı gösterilmez. Bu mod yalnız Bavbav'ın başlattığı turlara
-uygulanmak üzere her mesajda yeniden doğrulanır ve sohbetin sonraki turlarına
-aktarılır. Bağlı uygulamaların formları ve Codex'in gerçekten kullanıcı yanıtı
-gerektiren soruları normal klavye akışında görünmeye devam eder.
-
-## Derleme
-
-```sh
-swift run BavbavChecks
+git clone https://github.com/denizybd/bavbav.git
+cd bavbav
 zsh scripts/build-app.sh
+```
+
+The build produces `dist/Bavbav.app`, packages its resources, and runs the native and fixture checks. Launch it from the same terminal so it uses the Codex executable on your shell's path:
+
+```sh
+BAVBAV_CODEX_BIN="$(command -v codex)" ./dist/Bavbav.app/Contents/MacOS/Bavbav
+```
+
+<details>
+<summary>Launching from Finder or using another Codex installation</summary>
+
+Without an override, Bavbav looks for an executable in this order:
+
+1. `/Applications/ChatGPT.app/Contents/Resources/codex`
+2. `/opt/homebrew/bin/codex`
+3. `/usr/local/bin/codex`
+
+If your installation is in one of those locations, you can launch normally:
+
+```sh
 open dist/Bavbav.app
 ```
 
-Zengin mesajların çevrimdışı regresyon ve görsel kontrolü:
+For another location, supply an absolute path when launching the executable:
+
+```sh
+BAVBAV_CODEX_BIN="/absolute/path/to/codex" ./dist/Bavbav.app/Contents/MacOS/Bavbav
+```
+
+`BAVBAV_CODEX_BIN` takes priority over the automatic locations. Bavbav does not otherwise search the shell's `PATH`, and Finder launches do not inherit terminal-only environment variables. Authenticate using the same Codex installation you select here.
+
+</details>
+
+### Your first conversation
+
+1. Press **`⌘1`** to open Projects. Bavbav combines Codex's saved local projects with the working directories of existing conversations.
+2. Use **`W` / `S`** or the arrow keys to select a project, then **`Space`** to open it. Select a conversation and press **`Space`** again.
+3. Press **`Enter`** to write. Send an instruction, keep the chat open, and open another conversation alongside it.
+4. Use **`⌘4`** for the active conversation's model and effort, or **`⌘X`** for appearance and shortcut settings.
+
+To create a project or a named chat, use `Space` + `Enter` in the relevant Projects list. New project folders are created beside the selected project, or under `~/Documents/ChatGPT` when no projects exist. You can also use `⌘3` for a standalone conversation.
+
+## Keyboard cheat sheet
+
+These are the defaults. Most navigation keys apply outside text editing; `Q`, `W`, `A`, `S`, and `D` remain ordinary letters while you type. The five panel shortcuts, `⌘1`–`⌘5`, are global and bring their panels forward without toggling them closed.
+
+For `Space` + `Enter`, press Enter while holding Space, before the long press enters reorder mode.
+
+| Keys | Action |
+| --- | --- |
+| `⌘1` / `⌘2` | Projects / recent Codex conversations |
+| `⌘3` | Standalone chat launcher |
+| `⌘4` / `⌘5` | Active conversation's model settings / journal |
+| `W` / `S` or `↑` / `↓` | Move through a list |
+| `Space` | Open the selected entry; steer a selected queue item |
+| `⌥Space` | Rename the selected project or conversation |
+| Hold `Space`, then `W` / `S` | Reorder an entry or queued message |
+| `Space` + `Enter` | Create a project/chat in Projects; toggle the queue in a conversation |
+| `⇧W` / `⇧A` / `⇧S` / `⇧D` | Focus the window above / left / below / right |
+| `Enter` | Open the composer; send while writing; close an empty composer |
+| `⇧Enter` / `⌘.` | Insert a newline / leave text editing |
+| `⌘K` / `⌘O` | Open composer tools / choose an attachment while writing |
+| `⇧Tab` | Show or hide command and tool activity |
+| `B` / `End` | Jump to the latest message |
+| `Q` | Go back or close the active panel; return a selected queue item to the composer |
+| `⌘X` | Open app settings, including while writing |
+| `⌘H` / `⌘Q` | Hide Bavbav / quit it completely |
+
+Click a message and use `⌘A` / `⌘C` to select and copy its text. Inside Bavbav, the default `⌘X` opens settings instead of cutting text; you can change this binding in **Settings → Shortcuts**.
+
+## Execution and local data
+
+Bavbav's interface runs locally. Conversations and model requests go through your installed Codex runtime and its configured services; local rendering does not mean offline inference.
+
+- **Drafts and attachments:** Drafts persist locally. Imported files are copied into `~/Library/Application Support/Bavbav/Attachments/`; original files are left in place. The pending message queue is held in memory and is not guaranteed to recover after a full quit.
+- **Images and links:** Local and embedded images can render in messages. Remote HTTPS image previews require an explicit load action. Raw HTML is not executed; local file links reveal files in Finder.
+- **Journal:** Automatic note extraction is enabled by default and uses additional Codex requests, capped at 60 per day. Press `P` in the journal to pause it. It processes new conversation activity rather than automatically scanning your entire history. Notes are stored under `~/Library/Application Support/Bavbav/Journal/`, retain source references, and can be edited or deleted. These local files are not separately encrypted.
+- **Closing and quitting:** `Q` closes a view while Bavbav and its active work remain running. `⌘Q` exits the app; continued background work is not promised after quitting or shutting down the Mac.
+
+## Under the hood
+
+```mermaid
+flowchart LR
+    UI["Native windows<br/>AppKit + SwiftUI + TextKit"]
+    State["Conversation state<br/>Drafts, queues, focus, history"]
+    Server["Local Codex App Server"]
+    Runtime["Codex models and tools"]
+    UI <--> State
+    State <-->|"JSON-RPC over stdio"| Server
+    Server <--> Runtime
+```
+
+| Location | Responsibility |
+| --- | --- |
+| [`Sources/Bavbav`](Sources/Bavbav) | Window coordination, keyboard routing, native transcripts, composer, appearance, and journal UI. |
+| [`Sources/BavbavCore`](Sources/BavbavCore) | App Server transport, project discovery, conversation models, message reconciliation, and journal rules. |
+| [`Tests/BavbavChecks`](Tests/BavbavChecks) | Core behavior checks and optional protocol/integration checks. |
+| [`Tests/BavbavFakeCodex`](Tests/BavbavFakeCodex) | A local server fixture for repeatable protocol and UI checks. |
+| [`scripts`](scripts) | Icon preparation, release builds, resource packaging, and app validation. |
+| [`Vendor/SwiftMath`](Vendor/SwiftMath) | Native mathematical typesetting, with a small resource lookup patch for packaged macOS apps. |
+
+The UI keeps runtime state per conversation, reconciles optimistic sends with server events, and protects current content from stale history responses. Closing a detail window releases its view without clearing the running turn or its queue. Rich-text, formula, and image caches have explicit size limits.
+
+The transport follows the [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server). Markdown uses the pinned `swift-markdown` dependency; mathematical notation is rendered with the vendored SwiftMath package.
+
+## Development and checks
+
+For the complete packaged-app validation:
+
+```sh
+zsh scripts/build-app.sh
+.build/release/BavbavChecks
+codesign --verify --deep --strict dist/Bavbav.app
+```
+
+The build script exercises native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, and standalone chats. Its fixture checks do not send prompts to your real Codex account.
+
+For core changes and explicit protocol checks without packaging:
 
 ```sh
 swift build
-BAVBAV_RICH_MESSAGE_CHECK=1 .build/debug/Bavbav
-BAVBAV_RICH_MESSAGE_CHECK=1 BAVBAV_RICH_MESSAGE_SNAPSHOT_DIR=/tmp/bavbav-rich-message-review .build/debug/Bavbav
+swift run BavbavChecks
+BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/BavbavChecks --protocol-fixture
 ```
 
-Kontrol gizli native görünümler üzerinde çalışır; kullanıcıya pencere açmaz veya
-gerçek sohbete mesaj göndermez. Son komut 320/700 punto genişliğinde PNG örnekleri
-üretir. Paketleme ayrıca aynı kontrolü imzalı `.app` üzerinde çalıştırır ve fontların
-geliştirme klasöründen değil uygulamanın içinden yüklendiğini doğrular.
+Live account checks are separate and opt-in: `swift run BavbavChecks --integration` reads account and history metadata; adding `--integration-turn` sends a real ephemeral test turn and consumes model usage. Native fixture checks do not establish real-account compatibility or replace testing an interaction in the running app.
 
-Sohbet kaydırmanın çevrimdışı regresyon kontrolü (geç yüklenen geçmiş, canlı yanıt,
-yeniden boyutlandırma, okuma konumu, B/End ve pencere ayrımı; en altta parmakları
-kaldırmadan duraklama, küçük yukarı hareketler, hızlı yön değişimleri, momentum ve
-değişken boylu mesajlarda görünür metin konumunun korunması). Gizli SwiftUI/AppKit
-pencerelerinde native kaydırma olayları kullanır; gerçek hesaba veya açık
-uygulamaya dokunmaz:
+## Current scope
 
-```sh
-BAVBAV_SCROLL_CHECK=1 .build/debug/Bavbav
-```
+Bavbav is an independently developed macOS client in active development.
 
-Kaydırma/geçiş regresyonları ayrıca iki uzun geçmişte 100 hızlı ve 20 çizimi
-tamamlanan geçişi, native görünüm kimliğini, metin seçimini, gecikmiş odak yarışını,
-mesaj listesi önbelleğini ve Q sonrası bellek bırakılmasını sınar:
+- **Source build:** The packaging script uses ad-hoc signing for local builds. It does not produce a Developer ID signed, notarized distribution.
+- **Language:** This README is English. Some controls and messages in the app still use Turkish.
+- **Codex compatibility:** Available models and capabilities depend on your account and installed App Server version. Goal support is checked against the server.
+- **Standalone CHAT:** The current UI labels this channel `ChatGPT`, but its conversations use Codex App Server. It does not synchronize your chatgpt.com history.
+- **Concurrent writers:** If another client owns a conversation and it cannot be resumed for writing, Bavbav can fork it and continue in the new branch, leaving the original conversation intact.
+- **Journal scope:** The journal is local to Bavbav; it does not sync with Apple Calendar or Google Calendar. Automatically extracted notes may need correction.
 
-```sh
-BAVBAV_PERFORMANCE_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav
-```
+## Feedback and contributions
 
-Bu kontrol gizli gerçek AppKit/SwiftUI pencereleri ve yerel sahte sunucu kullanır;
-canlı hesap veya ekrandaki uygulama üzerinde FPS/trackpad ölçümü değildir. Her iki
-kontrol de paketleme sırasında imzalı uygulamada tekrar çalışır.
+[Open an issue](https://github.com/denizybd/bavbav/issues) with the behavior you expected, what happened, and the shortest steps that reproduce it. Include your macOS version, Bavbav commit, and Codex version. Screenshots with fictional projects are especially useful for layout and interaction reports.
 
-Ad düzenlemenin çevrimdışı kontrolü (proje adı kalıcılığı, sohbet adı kaydı,
-aktif ve arka plandaki başlıklar, eski katalog yanıtları, sunucu hatası, native
-metin düzenleme ve bağımsız kısayollar; gizli pencereler ve yerel sahte sunucu):
+Focused pull requests are welcome. Explain the user-visible change and the checks you ran; for keyboard or window behavior, include what you verified in the running app. Keep credentials, private conversations, and personal project content out of reports and fixtures.
 
-Kontrol, ⌘1/2/3'te adı doğrudan uygulama durumuna atamak yerine gerçek native
-ad kutusuna yazar; Enter'dan önce metnin duruma aktarıldığını, SwiftUI yenilenince
-korunduğunu ve kaydedildikten sonra katalogda kaldığını doğrular. Boş ad, vazgeçme,
-sunucu hatasından sonra tekrar yazma ve özel kaydetme kısayolu da bu yoldan sınanır.
+The repository does not yet include a project-wide license. Third-party code and fonts retain their own licenses; the app build bundles the dependency notices.
 
-```sh
-BAVBAV_RENAME_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav
-```
+---
 
-Gerçek Codex bağlantı testini ayrıca çalıştırmak için:
-
-```sh
-swift run BavbavChecks --integration
-```
-
-Kalıcı sohbet oluşturmadan gerçek mesaj akışını sınamak için:
-
-```sh
-swift run BavbavChecks --integration --integration-turn
-```
-
-Tam etkinlik zaman çizgisini ve bütün kayıtlı sohbetleri doğrulamak için:
-
-```sh
-swift run BavbavChecks --integration --integration-activity
-swift run BavbavChecks --integration --integration-all-history
-```
-
-Onay, izin, soru ve uygulama-formu JSON-RPC cevaplarını yerel güvenli sunucu
-taklidiyle sınamak için (aktif-yazar devir akışı da buna dahildir):
-
-```sh
-swift build --product BavbavFakeCodex
-BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" swift run BavbavChecks --protocol-fixture
-```
-
-Proje dışı native kanalı gerçek hesaba mesaj göndermeden sınamak için:
-
-```sh
-swift build
-BAVBAV_STANDALONE_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/Bavbav
-```
-
-Kontrol sahte sunucuyla oluşturma, gönderme, geçmişi yeniden açma, proje ayrımı,
-son üç sohbet ve sıralama akışlarını sınar. WebKit oluşturulmaz, pencere öne gelmez.
-
-Köşe boyutlandırmasını ekranı öne getirmeden, gerçek sohbetlere dokunmadan sınamak için:
-
-```sh
-BAVBAV_RESIZE_CHECK=1 .build/debug/Bavbav
-BAVBAV_APP_SWITCH_CHECK=1 .build/debug/Bavbav
-BAVBAV_PREFERENCES_CHECK=1 .build/debug/Bavbav
-```
-
-Bu kontrol dört köşeyi, sabit karşı köşeyi, ekran/minimum sınırlarını, fare olaylarını,
-içerik değişirken süren sürüklemeyi ve panel/sohbet/CHAT boyutlarının saklanmasını
-geçici ve ayrı bir ayar alanında doğrular.
-Uygulama-geçiş kontrolü normal uygulama politikasını, pencere odaklanma özelliklerini,
-`⌘Tab`/`⇧⌘Tab` olaylarının değiştirilmeden geçirilmesini ve yerel Gizle/Çık menüsünü
-sınar. Kullanıcının ön plandaki uygulamasını değiştirerek görsel bir uçtan uca
-`⌘Tab` testi yapmaz.
-
-Genel ayarlar kontrolü ayrı/geçici bir ayar alanında saydamlık sınırlarını,
-kalıcılığı, yeni/gizli sohbet pencerelerini ve klavye akışını test eder. Pencereler
-öne getirilmez. `BAVBAV_PREFERENCES_SNAPSHOT_DIR=/tmp/bavbav-preferences-review`
-eklenirse ayar ekranlarının PNG örnekleri de kaydedilir.
+Created by [denizybd](https://github.com/denizybd). Bavbav is an independent project and is not affiliated with or endorsed by OpenAI.
