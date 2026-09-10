@@ -1294,7 +1294,7 @@ final class OverlayStore: ObservableObject {
         detailShowsActivity.toggle()
         defaults.set(detailShowsActivity, forKey: "commands-visible.\(threadID)")
         if !detailShowsActivity {
-            detailActivityItems.removeAll { !$0.kind.isChatVisible }
+            detailActivityItems.removeAll { !$0.isChatVisible }
         }
         guard detailShowsActivity else { return }
         startActivityLoad(threadID: threadID)
@@ -2399,7 +2399,7 @@ final class OverlayStore: ObservableObject {
     }
 
     private func upsertActivity(_ message: CodexMessage) {
-        guard detailShowsActivity || message.kind.isChatVisible else { return }
+        guard detailShowsActivity || message.isChatVisible else { return }
         let message = datedMessage(message, isLive: true)
         activityRevision &+= 1
         if let index = detailActivityItems.firstIndex(where: { $0.id == message.id }) {
@@ -2493,7 +2493,7 @@ final class OverlayStore: ObservableObject {
                       detailThread?.id == threadID,
                       generation == activityLoadGeneration
                 else { return }
-                let retained = items.filter { self.detailShowsActivity || $0.kind.isChatVisible }
+                let retained = items.filter { self.detailShowsActivity || $0.isChatVisible }
                     .map { self.datedMessage($0) }
                 if revision == activityRevision {
                     detailActivityItems = retained
@@ -2767,7 +2767,7 @@ final class OverlayStore: ObservableObject {
         loadOverrides(for: thread.id)
         detailMessages = cached?.conversation ?? []
         detailShowsActivity = defaults.bool(forKey: "commands-visible.\(thread.id)")
-        detailActivityItems = (cached?.activity ?? []).filter { detailShowsActivity || $0.kind.isChatVisible }
+        detailActivityItems = (cached?.activity ?? []).filter { detailShowsActivity || $0.isChatVisible }
         detailOperation = nil
         detailLoading = cached?.items.isEmpty != false
         detailActivityLoading = false

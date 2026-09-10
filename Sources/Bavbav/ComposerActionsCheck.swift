@@ -47,12 +47,12 @@ enum ComposerActionsCheck {
                 try? await Task.sleep(nanoseconds: 20_000_000)
             }
         }
-        func waitUntil(_ condition: () -> Bool) async throws {
+        func waitUntil(_ condition: () -> Bool, line: UInt = #line) async throws {
             for _ in 0..<200 {
                 if condition() { return }
                 try? await Task.sleep(nanoseconds: 20_000_000)
             }
-            throw Failure(message: "timed out: \(store.composerError ?? "no error")")
+            throw Failure(message: "timed out at line \(line), check \(checks), thread \(store.detailThread?.id ?? "none"), sending \(store.messageSending), steering \(store.steerSending), queue \(store.currentQueueCount): \(store.composerError ?? "no error")")
         }
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         func panel(_ threadID: String) throws -> OverlayPanel {

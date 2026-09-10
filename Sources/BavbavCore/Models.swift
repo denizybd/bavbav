@@ -81,7 +81,7 @@ public enum CodexMessageKind: String, Codable, Sendable {
     }
 
     public var isChatVisible: Bool {
-        isConversation || self == .reasoning || self == .collaboration
+        isConversation || self == .reasoning || self == .collaboration || self == .image
     }
 }
 
@@ -93,6 +93,8 @@ public struct CodexMessage: Identifiable, Hashable, Codable, Sendable {
     public let title: String?
     public let status: String?
     public var timestamp: Date?
+    public var images: [CodexMessageImage]?
+    public var isChatVisible: Bool { kind.isChatVisible || !(images ?? []).isEmpty }
 
     public init(
         id: String,
@@ -101,7 +103,8 @@ public struct CodexMessage: Identifiable, Hashable, Codable, Sendable {
         kind: CodexMessageKind? = nil,
         title: String? = nil,
         status: String? = nil,
-        timestamp: Date? = nil
+        timestamp: Date? = nil,
+        images: [CodexMessageImage]? = nil
     ) {
         self.id = id
         self.role = role
@@ -110,6 +113,7 @@ public struct CodexMessage: Identifiable, Hashable, Codable, Sendable {
         self.title = title
         self.status = status
         self.timestamp = timestamp
+        self.images = images
     }
 }
 

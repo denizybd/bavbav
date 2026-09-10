@@ -112,6 +112,32 @@ yerine açıklayıcı uyarı gösterir. `BAVBAV_LINK_CHECK=1` gizli gerçek tran
 hiyerarşisinde tıklama/menü testleri yapar; tarayıcı veya Finder açmaz.
 Ham HTML yürütülmez, mesajdaki uzak görseller otomatik indirilmez.
 
+### Mesaj içinde fotoğraflar
+
+Markdown `![açıklama](resim.png)` görselleri ve Codex'in `imageView`,
+`imageGeneration`, MCP/dinamik araç görsel çıktıları mesaj balonunda native
+önizleme olarak gösterilir. Görsel içeren araç mesajları COMMANDS kapalıyken de
+kalır; teknik JSON yalnızca COMMANDS açıldığında gösterilir. Projeye göre göreli
+yollar çözülür; bulut `sandbox:` yollarının bu Mac'te bulunduğu varsayılmaz.
+Görsele tıklamak mesaj içinde büyütür/küçültür. Eksik/bozuk resim boş alan yerine
+açıklama ve tekrar deneme düğmesi gösterir.
+
+Yerel ve gömülü raster görseller otomatik yüklenir. HTTPS görselleri çerez/hesap
+bilgisi göndermeyen, 20 saniye ve 25 MiB sınırları olan istekle, yalnızca
+**Görseli yükle** tıklandığında indirilir. Yönlendirmeler, SVG/HTML ve HTTP
+önizlemeleri kabul edilmez; desteklenmeyen bağlantılar normal link olarak açılabilir.
+PNG/JPEG/WebP/HEIC/TIFF ve GIF'in ilk karesi desteklenir. En fazla sekiz görsel;
+60 megapiksel üzeri kaynaklar reddedilir, önizlemeler 1200 piksele indirilir.
+İki arka plan çözme işçisi, 24 MiB decoded-image önbelleği ve 128 MiB gömülü-görsel
+disk önbelleği kullanılır. Kaynak dosyalar taşınmaz/silinmez. Kod bloklarındaki
+görsel örnekleri dosya veya ağ erişimi başlatmaz.
+
+[OpenAI Docs protokolü](https://learn.chatgpt.com/docs/app-server) ve kurulu CLI'nin
+ürettiği şema (`ImageGenerationItem.savedPath/result`) esas alınır.
+`BAVBAV_IMAGE_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/release/BavbavFakeCodex" .build/release/Bavbav`
+gizli native pencere/piksel kontrolü, yerel sahte sunucu ve ağsız URLProtocol
+testleri çalıştırır; gerçek hesaba mesaj göndermez.
+
 Biçimlendirme önbelleği 80 kayıt/12 MiB, formül önbelleği 128 kayıt/8 MiB bütçelidir.
 256 KiB üzerindeki mesajlar tam içerikleri korunarak düz metne döner; 12 sütun veya
 249 gövde satırını aşan tablolar kaynak biçiminde gösterilir. Amaç çok uzun araç

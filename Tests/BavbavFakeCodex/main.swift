@@ -338,6 +338,21 @@ while let line = readLine() {
                 if standaloneRows[threadID] != nil { standaloneRows[threadID]?["name"] = name }
             }
             send(["id": id, "result": [:]])
+        case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_IMAGE_CHECK"] == "1":
+            send(["id": id, "result": ["thread": threadRow(id: "image-fixture", cwd: "/tmp/fixture")]])
+        case let method where ProcessInfo.processInfo.environment["BAVBAV_IMAGE_CHECK"] == "1"
+            && ["thread/turns/list", "thread/items/list"].contains(method):
+            let path = ProcessInfo.processInfo.environment["BAVBAV_IMAGE_FIXTURE_PATH"] ?? "/tmp/missing.png"
+            let items: [[String: Any]] = [
+                ["type": "imageView", "id": "view-image", "path": path],
+                ["type": "imageGeneration", "id": "generated-image", "status": "completed", "savedPath": path, "result": "", "failure": NSNull()],
+                ["type": "mcpToolCall", "id": "tool-image", "server": "fixture", "tool": "image", "status": "completed",
+                 "result": ["content": [["type": "image", "url": path]]]],
+                ["type": "agentMessage", "id": "image-answer", "text": "Fotoğraf hazır. ![Test görseli](<\(path)>)"]
+            ]
+            let data: [[String: Any]] = method == "thread/items/list"
+                ? items.reversed().map { ["item": $0] } : [["id": "image-turn", "items": items]]
+            send(["id": id, "result": ["data": data, "nextCursor": NSNull()]])
         case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_STANDALONE_CHECK"] == "1":
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             send(["id": id, "result": ["thread": standaloneRows[threadID] ?? threadRow(id: threadID, cwd: "/tmp/fixture")]])

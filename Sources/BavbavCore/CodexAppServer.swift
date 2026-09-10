@@ -1027,6 +1027,8 @@ public actor CodexAppServer {
 
     private static func parseMessage(_ item: [String: Any]) -> CodexMessage? {
         guard var message = parseMessageContent(item) else { return nil }
+        let images = MessageImagePayload.images(in: item)
+        if !images.isEmpty { message.images = images }
         for key in ["createdAt", "created_at", "timestamp", "createdAtMs"] {
             guard let value = item[key] else { continue }
             if let number = value as? NSNumber {
@@ -1057,7 +1059,8 @@ public actor CodexAppServer {
                 case "text":
                     return part["text"] as? String
                 case "image":
-                    return "[IMAGE] \(part["url"] as? String ?? "attached image")"
+                    let url = part["url"] as? String ?? "attached image"
+                    return url.hasPrefix("data:") ? "[IMAGE]" : "[IMAGE] \(url)"
                 case "localImage":
                     return "[LOCAL IMAGE] \(part["path"] as? String ?? "attached image")"
                 case "audio":
@@ -1178,7 +1181,7 @@ public actor CodexAppServer {
                 id: id,
                 kind: .image,
                 label: "IMAGE GENERATION",
-                body: renderJSON(item["result"]),
+                body: (item["failure"] as? [String: Any])?["message"] as? String,
                 status: item["status"] as? String
             )
         case "sleep":
@@ -1221,7 +1224,7 @@ public actor CodexAppServer {
             let role = item["role"] as? String
             let content = item["content"] as? [[String: Any]] ?? []
             let text = content.compactMap { $0["text"] as? String }.joined(separator: "\n")
-            guard !text.isEmpty else { return nil }
+            guard !text.isEmpty || content.contains(where: { ["image", "input_image", "inputImage", "localImage"].contains($0["type"] as? String ?? "") }) else { return nil }
             return CodexMessage(id: id, role: role == "user" ? .user : .agent, text: text)
         default:
             return nil

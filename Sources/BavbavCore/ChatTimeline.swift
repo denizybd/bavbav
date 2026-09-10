@@ -8,7 +8,7 @@ public enum ChatTimeline {
         let latest = Dictionary(conversation.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
         var seen = Set<String>()
         var result: [CodexMessage] = []
-        for item in activity where commandsVisible || item.kind.isChatVisible {
+        for item in activity where commandsVisible || item.isChatVisible {
             guard seen.insert(item.id).inserted else { continue }
             result.append(latest[item.id] ?? item)
         }

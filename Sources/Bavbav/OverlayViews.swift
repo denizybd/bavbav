@@ -337,6 +337,8 @@ struct ChatDetailView: View {
             return store.importComposerPasteboard(board, for: thread)
         }) {
             chatSurface.environment(\.panelBackdropOpacity, backdropOpacity).environment(\.shortcutLabels, shortcuts)
+                .environment(\.messageDirectory, displayedThread?.cwd)
+                .environment(\.messageCommandsVisible, displayedCommands)
         }
         .overlay {
             if dropHover {
@@ -1038,11 +1040,14 @@ private struct EmptyState: View {
 
 struct MessageBlock: View {
     let message: CodexMessage
+    @Environment(\.messageCommandsVisible) private var commandsVisible
 
     var body: some View {
         let content = message.role == .user
             ? SentMessageAttachments.parse(text: message.text)
             : SentMessageAttachments(text: message.text, attachments: [])
+        let images = MessageImageReferences.images(for: message)
+            .filter { image in !content.attachments.contains { $0.path == image.source } }
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 RoundedRectangle(cornerRadius: 1)
@@ -1071,12 +1076,24 @@ struct MessageBlock: View {
                         .foregroundStyle(BavbavTheme.muted).readableForeground()
                 }
             }
-            if !content.text.isEmpty {
+            if !content.text.isEmpty && (images.isEmpty || message.kind.isConversation || commandsVisible) {
                 MessageTextView(text: content.text, fontSize: message.kind.isConversation ? 12 : 9,
                                 markdown: message.kind.isConversation)
             }
             if !content.attachments.isEmpty {
                 AttachmentStrip(attachments: content.attachments)
+            }
+            if !images.isEmpty {
+                LazyVStack(spacing: 10) {
+                    ForEach(images, id: \.source) {
+                        // Completion may create/replace a file whose path was
+                        // already announced while the tool was still running.
+                        MessageImageCard(reference: $0).id(message.status ?? "")
+                    }
+                }
+            } else if message.kind == .image && content.text.isEmpty {
+                Text(message.status == "inProgress" ? "Görsel hazırlanıyor…" : "Görsel çıktısı bu kayıtta bulunamadı.")
+                    .font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.muted).readableForeground()
             }
         }
         .padding(12)
