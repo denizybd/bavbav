@@ -224,7 +224,7 @@ Live account checks are separate and opt-in: `swift run BavbavChecks --integrati
 Bavbav is an independently developed macOS client in active development.
 
 - **Source build:** The packaging script uses ad-hoc signing for local builds. It does not produce a Developer ID signed, notarized distribution.
-- **Language:** This README is English. Some controls and messages in the app still use Turkish.
+- **Language:** The app interface and this README are English, including settings, shortcut descriptions, menus, and app-generated messages. Conversation content remains in its original language.
 - **Codex compatibility:** Available models and capabilities depend on your account and installed App Server version. Goal support is checked against the server.
 - **Standalone CHAT:** The current UI labels this channel `ChatGPT`, but its conversations use Codex App Server. It does not synchronize your chatgpt.com history.
 - **Concurrent writers:** If another client owns a conversation and it cannot be resumed for writing, Bavbav can fork it and continue in the new branch, leaving the original conversation intact.

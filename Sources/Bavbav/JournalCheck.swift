@@ -61,11 +61,23 @@ enum JournalCheck {
                                 ("2026-09-02 tarihinde Mısır'a gittim.", "2026-09-02"),
                                 ("2 Eylül 2026 tarihinde Mısır'a gittim.", "2026-09-02"),
                                 ("2 Mayıs 2026 tarihinde Mısır'a gittim.", "2026-05-02"),
-                                ("02.09.2026 tarihinde Mısır'a gittim.", "2026-09-02")] {
+                                ("02.09.2026 tarihinde Mısır'a gittim.", "2026-09-02"),
+                                ("I visited Egypt on September 2, 2026.", "2026-09-02"),
+                                ("I visited Egypt on 02 September 2026.", "2026-09-02"),
+                                ("I visited Egypt yesterday.", "2026-09-06")] {
                 var dated = job; dated.messages = [CodexMessage(id: "u1", role: .user, text: text, timestamp: date)]
                 let c = JournalCandidate(summary: candidate.summary, kind: .event, eventKey: "travel", eventDay: day,
                                          dateQuote: text, sources: [JournalSource(messageID: "u1", quote: text)])
                 try check(JournalRules.accepted([c], job: dated, existing: []).first?.eventDay == day, "verified date: \(text)")
+            }
+            for text in ["I visited Egypt in September 2026.", "Reference: September 12, 2026.",
+                         "Reference: September 2, 20260."] {
+                var dated = job; dated.messages = [CodexMessage(id: "u1", role: .user, text: text, timestamp: date)]
+                let c = JournalCandidate(summary: "Visited Egypt.", kind: .event, eventKey: "travel",
+                                         eventDay: "2026-09-02", dateQuote: text,
+                                         sources: [JournalSource(messageID: "u1", quote: text)])
+                try check(JournalRules.accepted([c], job: dated, existing: []).first?.eventDay == nil,
+                          "English date evidence must match the whole date: \(text)")
             }
             let futureText = "Yarın Mısır'a gideceğim."
             var futureJob = job; futureJob.messages = [CodexMessage(id: "u1", role: .user, text: futureText, timestamp: date)]

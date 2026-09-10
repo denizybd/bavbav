@@ -32,7 +32,7 @@ enum MessageImageReferences {
         func visit(_ node: Markup, depth: Int) {
             guard depth < 64, images.count < MessageImagePayload.maximumImages else { return }
             if let image = node as? Markdown.Image, let source = image.source {
-                images.append(CodexMessageImage(source: source, title: image.plainText.isEmpty ? "Görsel" : image.plainText))
+                images.append(CodexMessageImage(source: source, title: image.plainText.isEmpty ? "Image" : image.plainText))
             } else if !(node is CodeBlock) && !(node is InlineCode) {
                 for child in node.children { visit(child, depth: depth + 1) }
             }
@@ -186,19 +186,19 @@ struct MessageImageCard: View {
                     Button { expanded.toggle() } label: {
                         Image(decorative: image, scale: 1).resizable().scaledToFit()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }.buttonStyle(.plain).accessibilityLabel("\(reference.title) · \(expanded ? "Küçült" : "Büyüt")")
+                    }.buttonStyle(.plain).accessibilityLabel("\(reference.title) · \(expanded ? "Collapse" : "Expand")")
                 } else if loading { ProgressView().controlSize(.small) }
                 else {
                     VStack(spacing: 10) {
                         Image(systemName: "photo").font(.system(size: 24, weight: .light))
-                        Text(remote != nil && !attempted ? "Web görseli" : "Görsel yüklenemedi")
+                        Text(remote != nil && !attempted ? "Remote image" : "Could not load image")
                         if remote != nil && !attempted {
-                            Button("Görseli yükle") { loadRemote = true }
-                            Text("\(remote?.host ?? "") · Yalnızca tıklayınca indirilir")
+                            Button("Load image") { loadRemote = true }
+                            Text("\(remote?.host ?? "") · Downloads only when clicked")
                         } else {
-                            Text("Dosya taşınmış, erişilemiyor veya biçimi desteklenmiyor olabilir.")
+                            Text("The file may have moved, be inaccessible, or use an unsupported format.")
                                 .multilineTextAlignment(.center)
-                            Button("Tekrar dene") { retry += 1 }
+                            Button("Try again") { retry += 1 }
                         }
                     }.font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.muted).readableForeground().padding(12)
                 }
@@ -208,11 +208,11 @@ struct MessageImageCard: View {
             HStack {
                 Text(reference.title).lineLimit(1)
                 Spacer()
-                if image != nil { Text(expanded ? "KÜÇÜLT ↑" : "BÜYÜT ↗") }
+                if image != nil { Text(expanded ? "COLLAPSE ↑" : "EXPAND ↗") }
                 if let url = MessageImageReferences.localURL(reference.source, directory: directory) {
-                    Button("Finder’da göster") { MessageLinkPolicy.open(url) }.buttonStyle(.plain)
+                    Button("Show in Finder") { MessageLinkPolicy.open(url) }.buttonStyle(.plain)
                 } else if let remote {
-                    Button("Bağlantıyı aç") { MessageLinkPolicy.open(remote) }.buttonStyle(.plain)
+                    Button("Open link") { MessageLinkPolicy.open(remote) }.buttonStyle(.plain)
                 }
             }.font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.cyan).readableForeground()
         }

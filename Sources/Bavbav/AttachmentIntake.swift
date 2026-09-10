@@ -59,7 +59,7 @@ final class AttachmentIntake {
             } else if let item = object as? NSPasteboardItem,
                       let type = item.availableType(from: [.png, .tiff]), let data = item.data(forType: type) {
                 if data.count <= Self.maximumFileBytes { sources.append(.image(data)) }
-                else { errors.append("Görsel 25 MB sınırını aşıyor.") }
+                else { errors.append("The image exceeds the 25 MiB limit.") }
             }
         }
         // Some older pasteboard owners expose image bytes on the board rather
@@ -67,15 +67,15 @@ final class AttachmentIntake {
         if sources.isEmpty && promises.isEmpty && errors.isEmpty,
            let type = pasteboard.availableType(from: [.png, .tiff]), let data = pasteboard.data(forType: type) {
             if data.count <= Self.maximumFileBytes { sources.append(.image(data)) }
-            else { errors.append("Görsel 25 MB sınırını aşıyor.") }
+            else { errors.append("The image exceeds the 25 MiB limit.") }
         }
         let requested = sources.count + promises.reduce(0) { $0 + max(1, $1.fileTypes.count) }
         guard requested <= Self.maximumCount else {
-            completion(AttachmentIntakeResult(errors: ["Bir seferde en fazla 12 dosya ekleyebilirsin."]))
+            completion(AttachmentIntakeResult(errors: ["You can add up to 12 files at a time."]))
             return true
         }
         guard requested > 0 else {
-            completion(AttachmentIntakeResult(errors: errors.isEmpty ? ["Bu bırakılan öğe okunamadı."] : errors))
+            completion(AttachmentIntakeResult(errors: errors.isEmpty ? ["The dropped item could not be read."] : errors))
             return true
         }
         let batch = Batch(directory: directory, queue: queue, initialErrors: errors,
@@ -87,14 +87,14 @@ final class AttachmentIntake {
     func ingest(pasteboard: NSPasteboard) async -> AttachmentIntakeResult {
         await withCheckedContinuation { continuation in
             if !importPasteboard(pasteboard, completion: { continuation.resume(returning: $0) }) {
-                continuation.resume(returning: AttachmentIntakeResult(errors: ["Fotoğraf veya belge bırakabilirsin."]))
+                continuation.resume(returning: AttachmentIntakeResult(errors: ["Drop an image or document here."]))
             }
         }
     }
 
     func ingest(urls: [URL]) async -> AttachmentIntakeResult {
         guard urls.count <= Self.maximumCount else {
-            return AttachmentIntakeResult(errors: ["Bir seferde en fazla 12 dosya ekleyebilirsin."])
+            return AttachmentIntakeResult(errors: ["You can add up to 12 files at a time."])
         }
         guard !urls.isEmpty else { return AttachmentIntakeResult() }
         return await withCheckedContinuation { continuation in
@@ -157,13 +157,13 @@ final class AttachmentIntake {
                     }
                 } catch {
                     pending -= promises.reduce(0) { $0 + max(1, $1.fileTypes.count) }
-                    result.errors.append("Ekran görüntüsü alınamadı: \(error.localizedDescription)")
+                    result.errors.append("Could not import the screenshot: \(error.localizedDescription)")
                 }
             }
             if pending == 0 { finish(); return }
             let work = DispatchWorkItem { [self] in
                 guard completion != nil else { return }
-                result.errors.append("Dosya aktarımı zaman aşımına uğradı. Görüntüyü yeniden bırakabilirsin.")
+                result.errors.append("The file transfer timed out. Try dropping the image again.")
                 finish()
             }
             timeoutWork = work
@@ -190,7 +190,7 @@ final class AttachmentIntake {
                 if attachments.count < AttachmentIntake.maximumCount { attachments.append((index, attachment)) }
                 else {
                     Self.removeOwnedCopy(attachment, in: directory)
-                    result.errors.append("Bir seferde en fazla 12 dosya ekleyebilirsin.")
+                    result.errors.append("You can add up to 12 files at a time.")
                 }
             case .failure(let error): result.errors.append(error.localizedDescription)
             }
@@ -234,7 +234,7 @@ final class AttachmentIntake {
             let isImage: Bool
             switch source {
             case .file(let original):
-                guard original.isFileURL else { throw IntakeError("Yalnızca yerel dosyalar eklenebilir.") }
+                guard original.isFileURL else { throw IntakeError("Only local files can be attached.") }
                 let scoped = original.startAccessingSecurityScopedResource()
                 defer { if scoped { original.stopAccessingSecurityScopedResource() } }
                 let values = try original.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey,
@@ -242,21 +242,21 @@ final class AttachmentIntake {
                 guard values.isRegularFile == true, values.isDirectory != true,
                       values.isSymbolicLink != true, values.isPackage != true,
                       FileManager.default.isReadableFile(atPath: original.path) else {
-                    throw IntakeError("\(original.lastPathComponent): okunabilir bir dosya seç; klasörler eklenemez.")
+                    throw IntakeError("\(original.lastPathComponent): choose a readable file; folders cannot be attached.")
                 }
                 if let type = values.contentType,
                    type.conforms(to: .executable) || type.conforms(to: .application) {
-                    throw IntakeError("\(original.lastPathComponent): uygulamalar eklenemez.")
+                    throw IntakeError("\(original.lastPathComponent): applications cannot be attached.")
                 }
                 guard let size = values.fileSize, size <= AttachmentIntake.maximumFileBytes else {
-                    throw IntakeError("\(original.lastPathComponent): dosya 25 MB sınırını aşıyor.")
+                    throw IntakeError("\(original.lastPathComponent): the file exceeds the 25 MiB limit.")
                 }
                 let originalCopy = destinationDirectory.appendingPathComponent(original.lastPathComponent)
                 try FileManager.default.copyItem(at: original, to: originalCopy)
                 isImage = values.contentType?.conforms(to: .image) == true
                 if isImage {
                     guard let image = CGImageSourceCreateWithURL(originalCopy as CFURL, nil) else {
-                        throw IntakeError("\(original.lastPathComponent): görsel okunamadı.")
+                        throw IntakeError("\(original.lastPathComponent): the image could not be read.")
                     }
                     try validateImageSource(image)
                     let type = CGImageSourceGetType(image) as String?
@@ -280,10 +280,10 @@ final class AttachmentIntake {
             case .image(let data):
                 guard data.count <= AttachmentIntake.maximumFileBytes,
                       let image = CGImageSourceCreateWithData(data as CFData, nil) else {
-                    throw IntakeError("Görsel okunamadı veya 25 MB sınırını aşıyor.")
+                    throw IntakeError("The image could not be read or exceeds the 25 MiB limit.")
                 }
                 try validateImageSource(image)
-                name = "Ekran görüntüsü.png"
+                name = "Screenshot.png"
                 destination = destinationDirectory.appendingPathComponent(name)
                 if CGImageSourceGetType(image) as String? == UTType.png.identifier {
                     // PNG screenshots are already in their final format; do
@@ -297,7 +297,7 @@ final class AttachmentIntake {
             let copied = try destination.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
             guard copied.isRegularFile == true, copied.isSymbolicLink != true,
                   let size = copied.fileSize, size <= AttachmentIntake.maximumFileBytes else {
-                throw IntakeError("\(name): dosya 25 MB sınırını aşıyor.")
+                throw IntakeError("\(name): the file exceeds the 25 MiB limit.")
             }
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
             succeeded = true
@@ -311,9 +311,9 @@ final class AttachmentIntake {
             conversionLock.lock()
             defer { conversionLock.unlock() }
             guard let output = CGImageDestinationCreateWithURL(url as CFURL,
-                UTType.png.identifier as CFString, 1, nil) else { throw IntakeError("Görsel kaydedilemedi.") }
+                UTType.png.identifier as CFString, 1, nil) else { throw IntakeError("The image could not be saved.") }
             CGImageDestinationAddImageFromSource(output, source, 0, nil)
-            guard CGImageDestinationFinalize(output) else { throw IntakeError("Görsel kaydedilemedi.") }
+            guard CGImageDestinationFinalize(output) else { throw IntakeError("The image could not be saved.") }
         }
 
         nonisolated static func validateImageSource(_ source: CGImageSource) throws {
@@ -323,7 +323,7 @@ final class AttachmentIntake {
                   let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
                   width.doubleValue > 0, height.doubleValue > 0,
                   width.doubleValue * height.doubleValue <= 60_000_000 else {
-                throw IntakeError("Görsel okunamıyor veya çok büyük (en fazla 60 megapiksel).")
+                throw IntakeError("The image is unreadable or too large (maximum 60 megapixels).")
             }
         }
     }

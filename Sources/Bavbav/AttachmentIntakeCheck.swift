@@ -123,7 +123,7 @@ enum AttachmentIntakeCheck {
             let modern = await intake.ingest(pasteboard: board)
             withExtendedLifetime((delegate, provider, otherDelegate, otherProvider)) {}
             if modern.attachments.isEmpty {
-                try check(modern.errors.contains { $0.contains("zaman aşımına") }, "unresolved promise returns actionable bounded error")
+                try check(modern.errors.contains { $0.contains("timed out") }, "unresolved promise returns actionable bounded error")
                 print("ATTACHMENT LIVE-DRAG BOUNDARY: native provider decoded; private-board timeout handled. Live screenshot-thumbnail gesture remains unverified.")
             } else {
                 try check(delegate.writeCount == 1 && otherDelegate.writeCount == 1 && modern.attachments.count == 2

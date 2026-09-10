@@ -310,8 +310,8 @@ struct ChatTranscriptView: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(BavbavTheme.accent.opacity(0.7), lineWidth: 0.8))
                 }
                 .buttonStyle(.plain)
-                .help("En alta git · \(shortcuts.key("chat.read.bottom.key")) · \(shortcuts.key("chat.read.bottom.end"))")
-                .accessibilityLabel("Sohbetin en altına git")
+                .help("Jump to latest · \(shortcuts.key("chat.read.bottom.key")) · \(shortcuts.key("chat.read.bottom.end"))")
+                .accessibilityLabel("Jump to the latest message")
                 .padding(12)
             }
         }

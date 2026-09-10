@@ -109,20 +109,20 @@ final class ChatGPTWebSession: NSObject, ObservableObject, WKNavigationDelegate,
 
     private func report(_ error: Error) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
-        self.error = "ChatGPT yüklenemedi: \(error.localizedDescription)"
+        self.error = "Could not load ChatGPT: \(error.localizedDescription)"
         status = "OFFLINE"
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         status = "RELOAD NEEDED"
-        error = "ChatGPT görünümü kapandı. Yenile ile tekrar açabilirsin."
+        error = "The ChatGPT view closed. Refresh to reopen it."
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         guard ["https", "about"].contains(url.scheme ?? "") else {
-            error = "Bu bağlantı uygulama içinde açılamıyor."
+            error = "This link cannot be opened inside the app."
             decisionHandler(.cancel)
             return
         }
@@ -138,7 +138,7 @@ final class ChatGPTWebSession: NSObject, ObservableObject, WKNavigationDelegate,
         popup.uiDelegate = self
         let window = NSWindow(contentRect: popup.frame, styleMask: [.titled, .closable, .resizable],
                               backing: .buffered, defer: false)
-        window.title = "ChatGPT · \(navigationAction.request.url?.host ?? "Bağlantı")"
+        window.title = "ChatGPT · \(navigationAction.request.url?.host ?? "Link")"
         window.isReleasedWhenClosed = false
         window.contentView = popup
         window.center()

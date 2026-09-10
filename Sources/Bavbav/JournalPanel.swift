@@ -10,7 +10,7 @@ final class JournalPanel: NSPanel, CornerResizeCommitHandler {
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 440, height: 520),
                    styleMask: [.borderless], backing: .buffered, defer: false)
-        title = "Bavbav Takvim"
+        title = "Bavbav Journal"
         isFloatingPanel = false; level = .normal; isOpaque = false; backgroundColor = .clear
         hasShadow = true; isReleasedWhenClosed = false; hidesOnDeactivate = false
         collectionBehavior = [.moveToActiveSpace]; isMovableByWindowBackground = true
@@ -36,7 +36,7 @@ final class JournalNavigation: ObservableObject {
     var day: String { JournalRules.day(selectedDate) }
     var dayNotes: [JournalNote] { service.notes.filter { $0.day == day }.sorted { $0.createdAt < $1.createdAt } }
     var selected: JournalNote? { service.notes.first { $0.id == selectedID } }
-    var monthTitle: String { selectedDate.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "tr_TR"))).uppercased() }
+    var monthTitle: String { selectedDate.formatted(.dateTime.year().month(.wide).locale(Locale(identifier: "en_US"))).uppercased() }
     var monthCells: [Date?] {
         let calendar = JournalRules.calendar()
         let start = calendar.date(from: calendar.dateComponents([.year, .month], from: selectedDate))!
@@ -79,7 +79,7 @@ final class JournalNavigation: ObservableObject {
             editing = false; editError = nil
             if let newDate = JournalRules.date(date) { selectedDate = newDate }
             NSApp.keyWindow?.makeFirstResponder(nil)
-        } else { editError = "Not 1–240 karakter olmalı; tarih YYYY-AA-GG veya boş." }
+        } else { editError = "Use 1–240 characters for the note and YYYY-MM-DD for the date, or leave the date empty." }
     }
     func goBack() -> Bool {
         if confirmingDelete { confirmingDelete = false; return true }
@@ -186,21 +186,21 @@ struct JournalPanelView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("05 / TAKVİM").font(BavbavTheme.mono(10, weight: .bold)).foregroundStyle(BavbavTheme.accent).readableForeground()
-                    Text("Küçük notlar. Kalıcı izler.").font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.muted).readableForeground()
+                    Text("05 / JOURNAL").font(BavbavTheme.mono(10, weight: .bold)).foregroundStyle(BavbavTheme.accent).readableForeground()
+                    Text("Small notes. Lasting context.").font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.muted).readableForeground()
                 }
                 Spacer()
                 Button(service.state.enabled ? "● AUTO" : "○ PAUSE") { service.toggleEnabled() }
                     .font(BavbavTheme.mono(9, weight: .bold)).foregroundStyle(service.state.enabled ? BavbavTheme.accent : BavbavTheme.warning)
-                    .readableForeground().buttonStyle(.plain).help("Otomatik notları değiştir · \(shortcuts.key("calendar.month.calendarPause.key"))")
+                    .readableForeground().buttonStyle(.plain).help("Toggle automatic notes · \(shortcuts.key("calendar.month.calendarPause.key"))")
             }.padding(18).fixedSize(horizontal: false, vertical: true)
             Divider().overlay(BavbavTheme.border)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if navigation.confirmingDelete {
-                        Text("Bu not silinsin mi?").font(BavbavTheme.mono(12, weight: .bold))
-                        Text("\(shortcuts.key("calendar.delete.confirmDelete.key")) SİL · \(shortcuts.key("calendar.delete.calendarBack.key")) VAZGEÇ").font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.warning)
-                        Button("Sil") { navigation.confirmDelete() }.buttonStyle(.plain)
+                        Text("Delete this note?").font(BavbavTheme.mono(12, weight: .bold))
+                        Text("\(shortcuts.key("calendar.delete.confirmDelete.key")) DELETE · \(shortcuts.key("calendar.delete.calendarBack.key")) CANCEL").font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.warning)
+                        Button("Delete") { navigation.confirmDelete() }.buttonStyle(.plain)
                     } else if navigation.editing {
                         editor
                     } else if navigation.route == .month {
@@ -222,7 +222,7 @@ struct JournalPanelView: View {
                         .foregroundStyle(service.error == nil ? BavbavTheme.accent : BavbavTheme.warning)
                 }
                 Text(footer).foregroundStyle(BavbavTheme.muted)
-                Text("EK CODEX KULLANIMI · \(service.state.usageDay == JournalRules.day(Date()) ? service.state.requestsToday : 0)/\(JournalService.dailyRequestLimit) İŞ / GÜN")
+                Text("EXTRA CODEX USAGE · \(service.state.usageDay == JournalRules.day(Date()) ? service.state.requestsToday : 0)/\(JournalService.dailyRequestLimit) JOBS / DAY")
                     .foregroundStyle(BavbavTheme.muted)
             }.font(BavbavTheme.mono(8, weight: .medium)).readableForeground().padding(14)
                 .fixedSize(horizontal: false, vertical: true)
@@ -233,12 +233,12 @@ struct JournalPanelView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(BavbavTheme.border, lineWidth: 1))
     }
     private var footer: String {
-        if navigation.editing { return "\(shortcuts.key("calendar.write.saveNote.key")) KAYDET · \(shortcuts.key("calendar.write.calendarBack.key")) VAZGEÇ" }
-        if navigation.confirmingDelete { return "Silme onayını bekliyor." }
+        if navigation.editing { return "\(shortcuts.key("calendar.write.saveNote.key")) SAVE · \(shortcuts.key("calendar.write.calendarBack.key")) CANCEL" }
+        if navigation.confirmingDelete { return "Waiting for deletion confirmation." }
         switch navigation.route {
-        case .month: return "\(shortcuts.key("calendar.month.up.key")) ← GÜN · \(shortcuts.key("calendar.month.down.key")) GÜN → · \(shortcuts.key("calendar.month.previousMonth.key")) ← AY · \(shortcuts.key("calendar.month.nextMonth.key")) AY →\n\(shortcuts.key("calendar.month.calendarOpen.space")) AÇ · \(shortcuts.key("calendar.month.calendarToday.key")) BUGÜN · \(shortcuts.key("calendar.month.calendarBack.key")) KAPAT\n\(shortcuts.key("calendar.month.calendarPause.key")) OTOMATİK · \(shortcuts.key("calendar.month.calendarRetry.key")) YENİDEN DENE"
-        case .day: return "\(shortcuts.key("calendar.day.up.key")) ↑ · \(shortcuts.key("calendar.day.down.key")) ↓ · \(shortcuts.key("calendar.day.calendarOpen.space")) AÇ · \(shortcuts.key("calendar.day.calendarEdit.key")) DÜZENLE · \(shortcuts.key("calendar.day.calendarBack.key")) TAKVİM"
-        case .note: return "\(shortcuts.key("calendar.note.calendarOpen.space")) KAYNAK SOHBET · \(shortcuts.key("calendar.note.calendarEdit.key")) DÜZENLE · \(shortcuts.key("calendar.note.calendarDelete.key")) SİL · \(shortcuts.key("calendar.note.calendarUndo.key")) GERİ AL · \(shortcuts.key("calendar.note.calendarBack.key")) GERİ"
+        case .month: return "\(shortcuts.key("calendar.month.up.key")) ← DAY · \(shortcuts.key("calendar.month.down.key")) DAY → · \(shortcuts.key("calendar.month.previousMonth.key")) ← MONTH · \(shortcuts.key("calendar.month.nextMonth.key")) MONTH →\n\(shortcuts.key("calendar.month.calendarOpen.space")) OPEN · \(shortcuts.key("calendar.month.calendarToday.key")) TODAY · \(shortcuts.key("calendar.month.calendarBack.key")) CLOSE\n\(shortcuts.key("calendar.month.calendarPause.key")) AUTO · \(shortcuts.key("calendar.month.calendarRetry.key")) RETRY"
+        case .day: return "\(shortcuts.key("calendar.day.up.key")) ↑ · \(shortcuts.key("calendar.day.down.key")) ↓ · \(shortcuts.key("calendar.day.calendarOpen.space")) OPEN · \(shortcuts.key("calendar.day.calendarEdit.key")) EDIT · \(shortcuts.key("calendar.day.calendarBack.key")) JOURNAL"
+        case .note: return "\(shortcuts.key("calendar.note.calendarOpen.space")) SOURCE CHAT · \(shortcuts.key("calendar.note.calendarEdit.key")) EDIT · \(shortcuts.key("calendar.note.calendarDelete.key")) DELETE · \(shortcuts.key("calendar.note.calendarUndo.key")) UNDO · \(shortcuts.key("calendar.note.calendarBack.key")) BACK"
         }
     }
     private var month: some View {
@@ -251,7 +251,7 @@ struct JournalPanelView: View {
                 Button("›") { navigation.changeMonth(1) }
             }.buttonStyle(.plain)
             LazyVGrid(columns: columns, spacing: 5) {
-                ForEach(["PT", "SA", "ÇA", "PE", "CU", "CT", "PA"], id: \.self) { name in
+                ForEach(["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"], id: \.self) { name in
                     Text(name).font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted).frame(maxWidth: .infinity)
                 }
                 ForEach(Array(navigation.monthCells.enumerated()), id: \.offset) { _, date in
@@ -270,15 +270,15 @@ struct JournalPanelView: View {
                             .background((navigation.day == day ? BavbavTheme.raised : BavbavTheme.surface).panelBackdrop())
                             .clipShape(RoundedRectangle(cornerRadius: 5))
                             .overlay(RoundedRectangle(cornerRadius: 5).stroke(navigation.day == day ? BavbavTheme.accent : .clear, lineWidth: 0.8))
-                        }.buttonStyle(.plain).help("\(day) · \(count) not")
+                        }.buttonStyle(.plain).help("\(day) · Notes: \(count)")
                     } else { Color.clear.frame(height: 40) }
                 }
             }
-            Text("\(navigation.day) · \(navigation.dayNotes.count) not").font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.accent)
+            Text("\(navigation.day) · Notes: \(navigation.dayNotes.count)").font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.accent)
             if let note = navigation.dayNotes.first {
                 Text(note.summary).font(BavbavTheme.mono(10)).lineLimit(3)
             } else {
-                Text("Bu gün henüz not yok. Önemli olaylar ve kesinleşen kararlar konuşmalardan kısa notlara dönüşür.")
+                Text("No notes yet for this day. Important events and confirmed decisions become short notes from your conversations.")
                     .font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.muted)
             }
         }
@@ -286,11 +286,11 @@ struct JournalPanelView: View {
     private var day: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(navigation.day).font(BavbavTheme.mono(14, weight: .bold))
-            if navigation.dayNotes.isEmpty { Text("Bu gün için not yok.").font(BavbavTheme.mono(11)).foregroundStyle(BavbavTheme.muted) }
+            if navigation.dayNotes.isEmpty { Text("No notes for this day.").font(BavbavTheme.mono(11)).foregroundStyle(BavbavTheme.muted) }
             ForEach(navigation.dayNotes) { note in
                 Button { navigation.selectedID = note.id; navigation.route = .note } label: {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text(note.kind.label + (note.eventDay == nil ? " · TARİH BELİRSİZ" : ""))
+                        Text(note.kind.label + (note.eventDay == nil ? " · DATE UNCERTAIN" : ""))
                             .font(BavbavTheme.mono(8, weight: .bold)).foregroundStyle(note.kind == .plan ? BavbavTheme.warning : BavbavTheme.accent)
                         Text(note.summary).font(BavbavTheme.mono(11)).multilineTextAlignment(.leading)
                         Text(note.channel + " / " + note.thread.title).font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted).lineLimit(1)
@@ -305,32 +305,32 @@ struct JournalPanelView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(note.kind.label).font(BavbavTheme.mono(9, weight: .bold)).foregroundStyle(BavbavTheme.accent)
             Text(note.summary).font(BavbavTheme.mono(14, weight: .medium)).textSelection(.enabled)
-            Text(note.eventDay ?? "Olay tarihi belirsiz · Konuşulduğu gün: \(note.recordedDay)")
+            Text(note.eventDay ?? "Event date uncertain · Discussed on: \(note.recordedDay)")
                 .font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.muted)
-            if note.edited { Text("ELLE DÜZENLENDİ").font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.warning) }
+            if note.edited { Text("EDITED").font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.warning) }
             Divider().overlay(BavbavTheme.border)
-            Text("KAYNAK / \(note.thread.title)").font(BavbavTheme.mono(9, weight: .bold))
+            Text("SOURCE / \(note.thread.title)").font(BavbavTheme.mono(9, weight: .bold))
             ForEach(Array(note.sources.enumerated()), id: \.offset) { _, source in
                 Text("“\(source.quote)”").font(BavbavTheme.mono(11)).foregroundStyle(BavbavTheme.muted).textSelection(.enabled)
             }
             HStack {
-                Button("Sohbeti aç ↗") { service.onOpenSource?(note.thread) }
+                Button("Open source chat ↗") { service.onOpenSource?(note.thread) }
                 Spacer()
-                Button("Düzenle") { navigation.beginEdit() }
-                Button("Sil") { navigation.confirmingDelete = true }.foregroundStyle(BavbavTheme.warning)
+                Button("Edit") { navigation.beginEdit() }
+                Button("Delete") { navigation.confirmingDelete = true }.foregroundStyle(BavbavTheme.warning)
             }.font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.accent).buttonStyle(.plain)
         }
     }
     private var editor: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("NOTU DÜZENLE").font(BavbavTheme.mono(11, weight: .bold))
+            Text("EDIT NOTE").font(BavbavTheme.mono(11, weight: .bold))
             CompactInputField(text: $navigation.draft, focusToken: navigation.focusToken, secure: false, onSubmit: navigation.saveEdit)
                 .frame(height: 36)
-            Text("Tarih · YYYY-AA-GG · belirsizse boş bırak").font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.muted)
+            Text("Date · YYYY-MM-DD · leave empty if uncertain").font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.muted)
             TextField("", text: $navigation.draftDay).textFieldStyle(.plain).font(BavbavTheme.mono(12))
                 .onSubmit { navigation.saveEdit() }.padding(8).background(BavbavTheme.surface.panelBackdrop())
             if let error = navigation.editError { Text(error).font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.warning) }
-            Button("Kaydet") { navigation.saveEdit() }.buttonStyle(.plain).foregroundStyle(BavbavTheme.accent)
+            Button("Save") { navigation.saveEdit() }.buttonStyle(.plain).foregroundStyle(BavbavTheme.accent)
         }
     }
 }

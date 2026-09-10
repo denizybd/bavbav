@@ -78,7 +78,7 @@ struct ProjectPanelView: View {
                         LeftCreationSlot(store: store, label: "NEW CHAT")
                     }
                     if store.projectChats.isEmpty {
-                        EmptyState(text: "Bu projede kayıtlı sohbet bulunamadı")
+                        EmptyState(text: "No saved chats in this project")
                     }
                     ForEach(Array(store.projectChats.enumerated()), id: \.element.id) { index, chat in
                         ThreadRow(
@@ -180,7 +180,7 @@ struct RecentsPanelView: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         LazyVStack(spacing: 4) {
                             if store.recentChats.isEmpty {
-                                EmptyState(text: "Henüz sohbet sinyali yok")
+                                EmptyState(text: "No recent conversations yet")
                             }
                             ForEach(Array(store.recentChats.enumerated()), id: \.element.id) { index, chat in
                                 ThreadRow(
@@ -221,7 +221,7 @@ struct ChatGPTPanelView: View {
         PanelShell(
             index: "03",
             title: "CHAT",
-            subtitle: store.standaloneCreating ? "OPENING" : "PROJESİZ · CODEX",
+            subtitle: store.standaloneCreating ? "OPENING" : "STANDALONE · CODEX",
             connection: .channel("ChatGPT"),
             isReordering: store.chatGPTIsReordering
         ) {
@@ -265,7 +265,7 @@ struct ChatGPTPanelView: View {
                         .onTapGesture { store.selectChatGPT(id: chat.id) }
                     }
                     if store.standaloneChats.isEmpty {
-                        Text("CHAT ile proje dışı yeni sohbet aç.")
+                        Text("Choose CHAT to start a standalone conversation.")
                             .font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.muted).readableForeground().padding(10)
                     }
                     if let error = store.standaloneError {
@@ -347,9 +347,9 @@ struct ChatDetailView: View {
                     RoundedRectangle(cornerRadius: 10).strokeBorder(BavbavTheme.accent, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
                     VStack(spacing: 10) {
                         Image(systemName: "square.and.arrow.down").font(.system(size: 28, weight: .light))
-                        Text("Bu sohbete ekle").font(BavbavTheme.mono(13, weight: .semibold))
-                        Text("Fotoğraf · belge · ekran görüntüsü").font(BavbavTheme.mono(9))
-                        Text("Bırakmak göndermez; önce taslağı görürsün.").font(BavbavTheme.mono(8))
+                        Text("Attach to this chat").font(BavbavTheme.mono(13, weight: .semibold))
+                        Text("Images · documents · screenshots").font(BavbavTheme.mono(9))
+                        Text("Drop to preview in your draft before sending.").font(BavbavTheme.mono(8))
                     }.foregroundStyle(BavbavTheme.accent)
                 }.allowsHitTesting(false)
             }
@@ -510,7 +510,7 @@ struct ChatDetailView: View {
                 Text(store.channelLabel(for: displayedThread))
                     .font(BavbavTheme.mono(9, weight: .semibold))
                     .foregroundStyle(displayedCommands ? BavbavTheme.warning : BavbavTheme.accent).readableForeground()
-                Text(displayedThread?.title ?? "SOHBET")
+                Text(displayedThread?.title ?? "CHAT")
                     .font(BavbavTheme.mono(15, weight: .semibold))
                     .foregroundStyle(BavbavTheme.text).readableForeground()
                     .lineLimit(1)
@@ -529,7 +529,7 @@ struct ChatDetailView: View {
                 .foregroundStyle(BavbavTheme.muted).readableForeground()
             if let thread = displayedThread {
                 ActivitySquare(state: thread.state, hasMessages: thread.hasMessages)
-                Text(store.isStandalone(thread) ? "PROJESİZ" : URL(fileURLWithPath: thread.cwd).lastPathComponent.uppercased())
+                Text(store.isStandalone(thread) ? "STANDALONE" : URL(fileURLWithPath: thread.cwd).lastPathComponent.uppercased())
                     .font(BavbavTheme.mono(9, weight: .semibold))
                     .foregroundStyle(BavbavTheme.muted).readableForeground()
             }
@@ -551,7 +551,7 @@ struct ChatDetailView: View {
         } else if displayedItems.isEmpty {
             EmptyState(text: displayedThread?.preview.isEmpty == false
                 ? displayedThread?.preview ?? ""
-                : "Bu sohbette gösterilecek metin yok")
+                : "No messages to display in this chat")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ChatTranscriptView(items: displayedItems, scroll: scrollController)
@@ -914,7 +914,7 @@ private struct CodexDockThreadRow: View {
         .background((selected ? BavbavTheme.raised : Color.clear).panelBackdrop())
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(thread.title), Codex sohbeti")
+        .accessibilityLabel("\(thread.title), Codex chat")
     }
 
     private func relativeTime(_ date: Date) -> String {
@@ -956,9 +956,9 @@ private struct ActivitySquare: View {
 
     private var accessibilityText: String {
         switch state {
-        case .active: return "Codex çalışıyor"
-        case .systemError: return "Sohbet hatası"
-        default: return hasMessages ? "Mesaj içeriyor" : "Boş sohbet"
+        case .active: return "Codex is working"
+        case .systemError: return "Chat error"
+        default: return hasMessages ? "Contains messages" : "Empty chat"
         }
     }
 }
@@ -993,9 +993,9 @@ private struct ConnectionPill: View {
 
     private var helpText: String {
         switch connection {
-        case .connecting: return "Codex bağlantısı kuruluyor"
-        case .connected(let account): return "Codex bağlı: \(account)"
-        case .channel(let label): return "Yerel kanal: \(label)"
+        case .connecting: return "Connecting to Codex"
+        case .connected(let account): return "Connected to Codex: \(account)"
+        case .channel(let label): return "Local channel: \(label)"
         case .failed(let error): return error
         }
     }
@@ -1061,12 +1061,12 @@ struct MessageBlock: View {
                         Text(timestamp, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
                             .font(BavbavTheme.mono(8, weight: .light))
                             .foregroundStyle(BavbavTheme.muted).readableForeground()
-                            .help(timestamp.formatted(date: .abbreviated, time: .standard))
+                            .help(timestamp.formatted(.dateTime.year().month(.abbreviated).day().hour().minute().second().locale(Locale(identifier: "en_US"))))
                     } else {
                         Text("—")
                             .font(BavbavTheme.mono(8, weight: .light))
                             .foregroundStyle(BavbavTheme.muted).readableForeground()
-                            .help("Bu mesajın gönderim saati kayıtta bulunmuyor")
+                            .help("No timestamp is available for this message")
                     }
                 }
                 Spacer(minLength: 0)
@@ -1092,7 +1092,7 @@ struct MessageBlock: View {
                     }
                 }
             } else if message.kind == .image && content.text.isEmpty {
-                Text(message.status == "inProgress" ? "Görsel hazırlanıyor…" : "Görsel çıktısı bu kayıtta bulunamadı.")
+                Text(message.status == "inProgress" ? "Preparing image…" : "No image output was found in this record.")
                     .font(BavbavTheme.mono(10)).foregroundStyle(BavbavTheme.muted).readableForeground()
             }
         }

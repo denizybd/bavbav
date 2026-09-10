@@ -19,7 +19,7 @@ struct AttachmentStrip: View {
             .padding(.vertical, 3)
         }
         .frame(height: 62)
-        .accessibilityLabel("Ekler")
+        .accessibilityLabel("Attachments")
     }
 }
 
@@ -72,8 +72,8 @@ private struct AttachmentChip: View {
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .help("Eki kaldır")
-                .accessibilityLabel("\(attachment.name) ekini kaldır")
+                .help("Remove attachment")
+                .accessibilityLabel("Remove attachment: \(attachment.name)")
             }
         }
         .padding(6)
@@ -90,10 +90,10 @@ private struct AttachmentChip: View {
     }
 
     private var detail: String {
-        let kind = attachment.isImage ? "GÖRSEL" : (attachment.localURL.pathExtension.isEmpty
-            ? "BELGE" : attachment.localURL.pathExtension.uppercased())
+        let kind = attachment.isImage ? "IMAGE" : (attachment.localURL.pathExtension.isEmpty
+            ? "DOCUMENT" : attachment.localURL.pathExtension.uppercased())
         guard attachment.byteCount > 0 else { return kind }
-        return "\(kind) · \(ByteCountFormatter.string(fromByteCount: attachment.byteCount, countStyle: .file))"
+        return "\(kind) · \(attachment.byteCount.formatted(.byteCount(style: .file).locale(Locale(identifier: "en_US"))))"
     }
 }
 

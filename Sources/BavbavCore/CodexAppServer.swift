@@ -80,7 +80,7 @@ public actor CodexAppServer {
 
     /// Dedicated ephemeral worker; never resumes or adds prompts to a user chat.
     public func extractJournal(prompt: String, cwd: String) async throws -> [JournalCandidate] {
-        guard journalWorker else { throw JournalError.extractionFailed("Not çıkarıcı ayrı bağlantı gerektirir.") }
+        guard journalWorker else { throw JournalError.extractionFailed("Note extraction requires a separate connection.") }
         try await ensureConnected()
         journalOutput = ""; journalFinished = false; journalFailure = nil
         let result = try await request(method: "thread/start", params: [
@@ -93,7 +93,7 @@ public actor CodexAppServer {
                        "features.hooks": false, "features.memories": false, "mcp_servers": [:]] as [String: Any]
         ], timeout: 30)
         guard let row = result["thread"] as? [String: Any], let id = row["id"] as? String else {
-            throw JournalError.extractionFailed("Not çıkarıcı başlatılamadı.")
+            throw JournalError.extractionFailed("Could not start note extraction.")
         }
         journalThreadID = id
         _ = try await request(method: "turn/start", params: [
@@ -109,7 +109,7 @@ public actor CodexAppServer {
         }
         if let journalFailure { throw JournalError.extractionFailed(journalFailure) }
         guard journalFinished, !journalOutput.isEmpty else {
-            throw JournalError.extractionFailed("Not çıkarma zaman aşımına uğradı; yeniden denenecek.")
+            throw JournalError.extractionFailed("Note extraction timed out and will be retried.")
         }
         return try JSONDecoder().decode(JournalExtraction.self, from: Data(journalOutput.utf8)).notes
     }
@@ -133,7 +133,7 @@ public actor CodexAppServer {
             guard let next = result["nextCursor"] as? String, visited.insert(next).inserted else { break }
             cursor = next
         }
-        throw JournalError.extractionFailed("Bekleyen takvim kaydının kaynak turu henüz okunamadı.")
+        throw JournalError.extractionFailed("The source turn for this pending journal entry could not be read yet.")
     }
 
     deinit {
@@ -207,7 +207,7 @@ public actor CodexAppServer {
         response: CodexInteractionResponse
     ) throws {
         guard let pendingRequest = pendingServerRequests[requestID] else {
-            throw CodexClientError.invalidResponse("Etkileşim isteği artık beklemede değil")
+            throw CodexClientError.invalidResponse("The interaction request is no longer pending")
         }
 
         let result: [String: Any]
@@ -216,13 +216,13 @@ public actor CodexAppServer {
             guard case .option(let decision) = response,
                   ["accept", "acceptForSession", "decline", "cancel"].contains(decision)
             else {
-                throw CodexClientError.invalidResponse("Geçersiz onay kararı")
+                throw CodexClientError.invalidResponse("Invalid approval decision")
             }
             result = ["decision": decision]
 
         case "execCommandApproval", "applyPatchApproval":
             guard case .option(let decision) = response else {
-                throw CodexClientError.invalidResponse("Geçersiz eski-protokol onay kararı")
+                throw CodexClientError.invalidResponse("Invalid legacy approval decision")
             }
             switch decision {
             case "accept": result = ["decision": "approved"]
@@ -231,12 +231,12 @@ public actor CodexAppServer {
                 result = ["decision": ["denied": ["rejection": "User declined in Bavbav."]]]
             case "cancel": result = ["decision": "abort"]
             default:
-                throw CodexClientError.invalidResponse("Geçersiz eski-protokol onay kararı")
+                throw CodexClientError.invalidResponse("Invalid legacy approval decision")
             }
 
         case "item/permissions/requestApproval":
             guard case .option(let decision) = response else {
-                throw CodexClientError.invalidResponse("Geçersiz izin kararı")
+                throw CodexClientError.invalidResponse("Invalid permission decision")
             }
             switch decision {
             case "permissionTurn", "permissionSession":
@@ -247,12 +247,12 @@ public actor CodexAppServer {
             case "decline", "cancel":
                 result = ["permissions": [:], "scope": "turn"]
             default:
-                throw CodexClientError.invalidResponse("Geçersiz izin kararı")
+                throw CodexClientError.invalidResponse("Invalid permission decision")
             }
 
         case "item/tool/requestUserInput":
             guard case .answers(let answers) = response else {
-                throw CodexClientError.invalidResponse("Kullanıcı yanıtı eksik")
+                throw CodexClientError.invalidResponse("User answer is missing")
             }
             result = [
                 "answers": answers.mapValues { ["answers": $0] }
@@ -267,11 +267,11 @@ public actor CodexAppServer {
             case .option(let action) where ["accept", "decline", "cancel"].contains(action):
                 result = ["action": action, "content": NSNull()]
             default:
-                throw CodexClientError.invalidResponse("Geçersiz MCP etkileşim yanıtı")
+                throw CodexClientError.invalidResponse("Invalid MCP interaction response")
             }
 
         default:
-            throw CodexClientError.invalidResponse("Desteklenmeyen etkileşim isteği")
+            throw CodexClientError.invalidResponse("Unsupported interaction request")
         }
 
         try writeJSON(["id": requestID.jsonValue, "result": result])
@@ -335,7 +335,7 @@ public actor CodexAppServer {
                 timeout: 30
             )
             guard let rows = result["data"] as? [[String: Any]] else {
-                throw CodexClientError.invalidResponse("thread/list içinde data yok")
+                throw CodexClientError.invalidResponse("thread/list response is missing data")
             }
 
             for row in rows {
@@ -372,7 +372,7 @@ public actor CodexAppServer {
             if let cursor { params["cursor"] = cursor }
             let result = try await request(method: "model/list", params: params, timeout: 12)
             guard let rows = result["data"] as? [[String: Any]] else {
-                throw CodexClientError.invalidResponse("model/list içinde data yok")
+                throw CodexClientError.invalidResponse("model/list response is missing data")
             }
             models.append(contentsOf: rows.compactMap(Self.parseModel))
 
@@ -409,7 +409,7 @@ public actor CodexAppServer {
             timeout: 12
         )
         guard let limits = Self.parsePreferredRateLimits(result) else {
-            throw CodexClientError.invalidResponse("account/rateLimits/read içinde limit yok")
+            throw CodexClientError.invalidResponse("account/rateLimits/read response is missing limits")
         }
         return limits
     }
@@ -423,7 +423,7 @@ public actor CodexAppServer {
             timeout: 12
         )
         guard let summary = result["summary"] as? [String: Any] else {
-            throw CodexClientError.invalidResponse("account/usage/read içinde summary yok")
+            throw CodexClientError.invalidResponse("account/usage/read response is missing summary")
         }
         let dailyRows = result["dailyUsageBuckets"] as? [[String: Any]] ?? []
         let daily = dailyRows.compactMap { row -> CodexDailyUsage? in
@@ -501,7 +501,7 @@ public actor CodexAppServer {
             let row = result["thread"] as? [String: Any],
             let thread = Self.parseThread(row)
         else {
-            throw CodexClientError.invalidResponse("thread/fork içinde thread yok")
+            throw CodexClientError.invalidResponse("thread/fork response is missing thread")
         }
         let runtime = Self.parseRuntime(result)
         resumedThreadIDs.insert(thread.id)
@@ -594,7 +594,7 @@ public actor CodexAppServer {
             let turn = result["turn"] as? [String: Any],
             let id = turn["id"] as? String
         else {
-            throw CodexClientError.invalidResponse("turn/start içinde turn yok")
+            throw CodexClientError.invalidResponse("turn/start response is missing turn")
         }
         return CodexTurnStart(id: id, status: turn["status"] as? String ?? "inProgress")
     }
@@ -621,7 +621,7 @@ public actor CodexAppServer {
 
         let result = try await request(method: "turn/steer", params: params, timeout: 30)
         guard let returnedTurnID = result["turnId"] as? String else {
-            throw CodexClientError.invalidResponse("turn/steer içinde turnId yok")
+            throw CodexClientError.invalidResponse("turn/steer response is missing turnId")
         }
         return returnedTurnID
     }
@@ -657,7 +657,7 @@ public actor CodexAppServer {
             }
         }
         guard let resolvedModel, !resolvedModel.isEmpty else {
-            throw CodexClientError.invalidResponse("Mod için geçerli model bulunamadı; önce model seç.")
+            throw CodexClientError.invalidResponse("No compatible model is available for this mode. Select a model first.")
         }
         return [
             "mode": mode.rawValue,
@@ -688,17 +688,17 @@ public actor CodexAppServer {
     ) async throws -> CodexThreadGoal {
         let objective = objective.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !objective.isEmpty, objective.unicodeScalars.count <= 4_000 else {
-            throw CodexClientError.invalidResponse("Hedef 1–4.000 karakter olmalı.")
+            throw CodexClientError.invalidResponse("The goal must contain 1–4,000 characters.")
         }
         if let tokenBudget, tokenBudget <= 0 {
-            throw CodexClientError.invalidResponse("Hedef token sınırı sıfırdan büyük olmalı.")
+            throw CodexClientError.invalidResponse("The goal token limit must be greater than zero.")
         }
         try await ensureConnected()
         var params: [String: Any] = ["threadId": threadID, "objective": objective, "status": "active"]
         if let tokenBudget { params["tokenBudget"] = tokenBudget }
         let result = try await request(method: "thread/goal/set", params: params, timeout: 15)
         guard let raw = result["goal"] else {
-            throw CodexClientError.invalidResponse("thread/goal/set içinde hedef yok")
+            throw CodexClientError.invalidResponse("thread/goal/set response is missing goal")
         }
         return try Self.parseGoal(raw, threadID: threadID)
     }
@@ -708,7 +708,7 @@ public actor CodexAppServer {
         try await ensureConnected()
         let result = try await request(method: "thread/goal/clear", params: ["threadId": threadID], timeout: 15)
         guard let cleared = result["cleared"] as? Bool else {
-            throw CodexClientError.invalidResponse("thread/goal/clear içinde sonuç yok")
+            throw CodexClientError.invalidResponse("thread/goal/clear response is missing result")
         }
         return cleared
     }
@@ -718,7 +718,7 @@ public actor CodexAppServer {
               let data = try? JSONSerialization.data(withJSONObject: raw),
               let goal = try? JSONDecoder().decode(CodexThreadGoal.self, from: data),
               goal.threadID == threadID else {
-            throw CodexClientError.invalidResponse("Sohbet hedefi yanıtı geçersiz")
+            throw CodexClientError.invalidResponse("Invalid conversation goal response")
         }
         return goal
     }
@@ -745,7 +745,7 @@ public actor CodexAppServer {
             let row = result["thread"] as? [String: Any],
             let thread = Self.parseThread(row)
         else {
-            throw CodexClientError.invalidResponse("thread/start içinde thread yok")
+            throw CodexClientError.invalidResponse("thread/start response is missing thread")
         }
         resumedThreadIDs.insert(thread.id)
         threadMetadata[thread.id] = Self.parseThreadMetadata(row)
@@ -840,7 +840,7 @@ public actor CodexAppServer {
             timeout: 12
         )
         guard let thread = result["thread"] as? [String: Any], thread["id"] as? String == id else {
-            throw CodexClientError.invalidResponse("thread/read içinde beklenen sohbet yok")
+            throw CodexClientError.invalidResponse("thread/read response is missing the expected thread")
         }
         let metadata = Self.parseThreadMetadata(thread)
         threadMetadata[id] = metadata
@@ -873,7 +873,7 @@ public actor CodexAppServer {
                 timeout: 12
             )
             guard let entries = result["data"] as? [[String: Any]] else {
-                throw CodexClientError.invalidResponse("thread/items/list içinde data yok")
+                throw CodexClientError.invalidResponse("thread/items/list response is missing data")
             }
 
             for entry in entries {
@@ -894,7 +894,7 @@ public actor CodexAppServer {
                 seenCursors.insert(nextCursor).inserted
             else { break }
             if pageIndex == maximumPages - 1 {
-                throw CodexClientError.invalidResponse("Sohbet öğeleri güvenli sayfa sınırını aşıyor")
+                throw CodexClientError.invalidResponse("Conversation items exceed the safe pagination limit")
             }
             cursor = nextCursor
         }
@@ -930,7 +930,7 @@ public actor CodexAppServer {
                 timeout: 12
             )
             guard let turns = result["data"] as? [[String: Any]] else {
-                throw CodexClientError.invalidResponse("thread/turns/list içinde data yok")
+                throw CodexClientError.invalidResponse("thread/turns/list response is missing data")
             }
 
             newestFirstTurns.append(contentsOf: turns)
@@ -949,7 +949,7 @@ public actor CodexAppServer {
                 seenCursors.insert(nextCursor).inserted
             else { break }
             if pageIndex == maximumPages - 1 {
-                throw CodexClientError.invalidResponse("Sohbet geçmişi güvenli sayfa sınırını aşıyor")
+                throw CodexClientError.invalidResponse("Conversation history exceeds the safe pagination limit")
             }
             cursor = nextCursor
         }
@@ -984,7 +984,7 @@ public actor CodexAppServer {
                 timeout: 30
             )
             guard let turns = result["data"] as? [[String: Any]] else {
-                throw CodexClientError.invalidResponse("thread/turns/list içinde data yok")
+                throw CodexClientError.invalidResponse("thread/turns/list response is missing data")
             }
             newestFirstTurns.append(contentsOf: turns)
 
@@ -995,7 +995,7 @@ public actor CodexAppServer {
                 seenCursors.insert(nextCursor).inserted
             else { break }
             if pageIndex == maximumPages - 1 {
-                throw CodexClientError.invalidResponse("Tam etkinlik geçmişi güvenli sayfa sınırını aşıyor")
+                throw CodexClientError.invalidResponse("Full activity history exceeds the safe pagination limit")
             }
             cursor = nextCursor
         }
@@ -1015,7 +1015,7 @@ public actor CodexAppServer {
             timeout: 30
         )
         guard let thread = result["thread"] as? [String: Any] else {
-            throw CodexClientError.invalidResponse("thread/read içinde sohbet yok")
+            throw CodexClientError.invalidResponse("thread/read response is missing thread")
         }
         let turns = thread["turns"] as? [[String: Any]] ?? []
         let messages = turns.flatMap { turn in
@@ -1453,7 +1453,7 @@ public actor CodexAppServer {
             .map(String.init)
         let title = [explicitName, previewTitle]
             .compactMap { $0 }
-            .first { !$0.isEmpty } ?? "isimsiz sohbet"
+            .first { !$0.isEmpty } ?? "Untitled chat"
 
         let statusObject = row["status"] as? [String: Any]
         let statusText = statusObject?["type"] as? String ?? row["status"] as? String ?? "unknown"
@@ -1698,7 +1698,7 @@ public actor CodexAppServer {
             trace("event id=\(String(describing: message["id"])) method=\(method)")
             if let requestID = message["id"] {
                 if journalWorker {
-                    journalFailure = "Not çıkarıcı beklenmeyen araç/izin isteği gönderdi; işlem durduruldu."
+                    journalFailure = "The note extractor sent an unexpected tool or permission request and was stopped."
                     // No approval, form, or external tool request may escape into the UI.
                     return
                 }
@@ -1723,12 +1723,12 @@ public actor CodexAppServer {
 
         if let error = message["error"] as? [String: Any] {
             request.continuation.resume(throwing: CodexClientError.rpcError(
-                error["message"] as? String ?? "bilinmeyen RPC hatası"
+                error["message"] as? String ?? "unknown RPC error"
             ))
         } else if let result = message["result"] as? [String: Any] {
             request.continuation.resume(returning: result)
         } else {
-            request.continuation.resume(throwing: CodexClientError.invalidResponse("result alanı yok"))
+            request.continuation.resume(throwing: CodexClientError.invalidResponse("Missing result field"))
         }
     }
 
@@ -1737,12 +1737,12 @@ public actor CodexAppServer {
             if method == "item/completed", let item = params["item"] as? [String: Any],
                item["type"] as? String == "agentMessage", let text = item["text"] as? String {
                 if text.utf8.count <= 32_000 { journalOutput = text }
-                else { journalFailure = "Not çıkarıcı çıktı sınırını aştı." }
+                else { journalFailure = "Note extraction exceeded the output limit." }
             }
             if method == "turn/completed", let turn = params["turn"] as? [String: Any] {
                 journalFinished = turn["status"] as? String == "completed"
                 if !journalFinished {
-                    journalFailure = (turn["error"] as? [String: Any])?["message"] as? String ?? "Not çıkarma tamamlanamadı."
+                    journalFailure = (turn["error"] as? [String: Any])?["message"] as? String ?? "Note extraction could not be completed."
                 }
             }
         }
@@ -1894,7 +1894,7 @@ public actor CodexAppServer {
             eventHandler?(.warning(threadID: params["threadId"] as? String, message: message))
 
         case "configWarning":
-            let summary = params["summary"] as? String ?? "Codex yapılandırma uyarısı"
+            let summary = params["summary"] as? String ?? "Codex configuration warning"
             let detail = params["details"] as? String
             eventHandler?(.warning(
                 threadID: nil,
@@ -1903,7 +1903,7 @@ public actor CodexAppServer {
 
         case "error":
             let error = params["error"] as? [String: Any]
-            let message = error?["message"] as? String ?? "Codex çalışma hatası"
+            let message = error?["message"] as? String ?? "Codex runtime error"
             eventHandler?(.warning(threadID: params["threadId"] as? String, message: message))
 
         case "model/rerouted":
@@ -1912,13 +1912,13 @@ public actor CodexAppServer {
             let reason = params["reason"] as? String
             eventHandler?(.warning(
                 threadID: params["threadId"] as? String,
-                message: (["Model yönlendirildi: \(from) → \(to)", reason].compactMap { $0 }).joined(separator: "\n")
+                message: (["Model rerouted: \(from) → \(to)", reason].compactMap { $0 }).joined(separator: "\n")
             ))
 
         case "model/verification":
             eventHandler?(.warning(
                 threadID: params["threadId"] as? String,
-                message: "Codex hesap doğrulaması istiyor."
+                message: "Codex requires account verification."
             ))
 
         case "model/safetyBuffering/updated":
@@ -1980,7 +1980,7 @@ public actor CodexAppServer {
                 "id": parsedID.jsonValue,
                 "error": [
                     "code": -32_601,
-                    "message": "Bavbav bu sunucu isteğini desteklemiyor."
+                    "message": "Bavbav does not support this server request."
                 ]
             ])
         } catch {
@@ -2007,7 +2007,7 @@ public actor CodexAppServer {
             let protocolName = network?["protocol"] as? String
             let command = params["command"] as? String
                 ?? (params["command"] as? [String])?.joined(separator: " ")
-                ?? "Komut ayrıntısı sağlanmadı"
+                ?? "No command details provided"
             let cwd = params["cwd"] as? String
             let options = approvalOptions(available: params["availableDecisions"])
             return CodexInteractionRequest(
@@ -2033,9 +2033,9 @@ public actor CodexAppServer {
                 itemID: itemID,
                 kind: .fileApproval,
                 title: "FILE CHANGE APPROVAL",
-                summary: root.map { "Write access · \($0)" } ?? "Codex dosya değişikliği yapmak istiyor.",
+                summary: root.map { "Write access · \($0)" } ?? "Codex wants to modify files.",
                 detail: ([reason, legacyChanges].compactMap { $0 }).joined(separator: "\n").isEmpty
-                    ? "Değişiklik ayrıntısı sohbetin TRACE görünümünde."
+                    ? "Change details are available in the chat's command view."
                     : ([reason, legacyChanges].compactMap { $0 }).joined(separator: "\n"),
                 options: standardApprovalOptions,
                 defaultOptionID: "decline"
@@ -2049,12 +2049,12 @@ public actor CodexAppServer {
                 itemID: itemID,
                 kind: .permissionApproval,
                 title: "PERMISSION REQUEST",
-                summary: reason ?? "Codex ek çalışma izni istiyor.",
-                detail: renderJSON(params["permissions"]) ?? "İzin ayrıntısı yok",
+                summary: reason ?? "Codex is requesting additional permissions.",
+                detail: renderJSON(params["permissions"]) ?? "No permission details provided",
                 options: [
-                    CodexInteractionOption(id: "permissionTurn", label: "ALLOW THIS TURN", detail: "Yalnız bu tur için istenen izinleri ver"),
-                    CodexInteractionOption(id: "permissionSession", label: "ALLOW SESSION", detail: "Bu oturum boyunca istenen izinleri ver"),
-                    CodexInteractionOption(id: "decline", label: "DENY", detail: "İzin vermeden çalışmaya devam et")
+                    CodexInteractionOption(id: "permissionTurn", label: "ALLOW THIS TURN", detail: "Grant the requested permissions for this turn only"),
+                    CodexInteractionOption(id: "permissionSession", label: "ALLOW SESSION", detail: "Grant the requested permissions for this session"),
+                    CodexInteractionOption(id: "decline", label: "DENY", detail: "Continue without granting permissions")
                 ],
                 defaultOptionID: "decline"
             )
@@ -2068,7 +2068,7 @@ public actor CodexAppServer {
                 itemID: itemID,
                 kind: .userInput,
                 title: "CODEX QUESTION",
-                summary: questions.first?.prompt ?? "Codex yanıtını bekliyor.",
+                summary: questions.first?.prompt ?? "Codex is waiting for your answer.",
                 detail: "W/S SELECT · SPACE CONFIRM · ENTER CUSTOM",
                 options: [],
                 questions: questions
@@ -2077,7 +2077,7 @@ public actor CodexAppServer {
         case "mcpServer/elicitation/request":
             let mode = params["mode"] as? String ?? "form"
             let server = params["serverName"] as? String ?? "MCP"
-            let message = params["message"] as? String ?? "Uygulama ek bilgi istiyor."
+            let message = params["message"] as? String ?? "The app is requesting additional information."
             if mode == "url" {
                 let url = params["url"] as? String ?? ""
                 return CodexInteractionRequest(
@@ -2090,9 +2090,9 @@ public actor CodexAppServer {
                     summary: message,
                     detail: url,
                     options: [
-                        CodexInteractionOption(id: "accept", label: "CONTINUE", detail: "Bağlantı akışını kabul et"),
-                        CodexInteractionOption(id: "decline", label: "DECLINE", detail: "İsteği reddet"),
-                        CodexInteractionOption(id: "cancel", label: "CANCEL TURN", detail: "İsteği ve turu durdur")
+                        CodexInteractionOption(id: "accept", label: "CONTINUE", detail: "Continue the connection flow"),
+                        CodexInteractionOption(id: "decline", label: "DECLINE", detail: "Decline the request"),
+                        CodexInteractionOption(id: "cancel", label: "CANCEL TURN", detail: "Cancel the request and stop the turn")
                     ],
                     defaultOptionID: "decline"
                 )
@@ -2106,10 +2106,10 @@ public actor CodexAppServer {
                 kind: .mcpForm,
                 title: "APP INPUT · \(server)",
                 summary: message,
-                detail: "Bilgiler yalnız isteyen uygulamaya gönderilir.",
+                detail: "Information is sent only to the requesting app.",
                 options: questions.isEmpty ? [
-                    CodexInteractionOption(id: "accept", label: "ACCEPT", detail: "İsteği kabul et"),
-                    CodexInteractionOption(id: "decline", label: "DECLINE", detail: "İsteği reddet")
+                    CodexInteractionOption(id: "accept", label: "ACCEPT", detail: "Accept the request"),
+                    CodexInteractionOption(id: "decline", label: "DECLINE", detail: "Decline the request")
                 ] : [],
                 questions: questions,
                 defaultOptionID: questions.isEmpty ? "decline" : nil
@@ -2122,10 +2122,10 @@ public actor CodexAppServer {
 
     private static var standardApprovalOptions: [CodexInteractionOption] {
         [
-            CodexInteractionOption(id: "accept", label: "ALLOW ONCE", detail: "Yalnız bu işlem için izin ver"),
-            CodexInteractionOption(id: "acceptForSession", label: "ALLOW SESSION", detail: "Benzer işlemlere bu oturumda izin ver"),
-            CodexInteractionOption(id: "decline", label: "DENY", detail: "İşlemi reddet, tur devam etsin"),
-            CodexInteractionOption(id: "cancel", label: "STOP TURN", detail: "İşlemi reddet ve turu durdur")
+            CodexInteractionOption(id: "accept", label: "ALLOW ONCE", detail: "Allow this action once"),
+            CodexInteractionOption(id: "acceptForSession", label: "ALLOW SESSION", detail: "Allow similar actions for this session"),
+            CodexInteractionOption(id: "decline", label: "DENY", detail: "Deny the action and continue the turn"),
+            CodexInteractionOption(id: "cancel", label: "STOP TURN", detail: "Deny the action and stop the turn")
         ]
     }
 
@@ -2203,7 +2203,7 @@ public actor CodexAppServer {
             return CodexInteractionQuestion(
                 id: key,
                 header: field["title"] as? String ?? key.uppercased(),
-                prompt: field["description"] as? String ?? "\(key) değerini gir.",
+                prompt: field["description"] as? String ?? "Enter a value for \(key).",
                 options: options,
                 allowsOther: options.isEmpty,
                 isSecret: field["format"] as? String == "password" || field["writeOnly"] as? Bool == true,
@@ -2249,7 +2249,7 @@ public actor CodexAppServer {
             .suffix(2)
             .joined(separator: " ")
         let error = CodexClientError.processFailed(
-            detail.isEmpty ? "çıkış kodu \(status)" : detail
+            detail.isEmpty ? "exit code \(status)" : detail
         )
         eventHandler?(.transportClosed(
             message: error.localizedDescription

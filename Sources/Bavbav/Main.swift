@@ -754,8 +754,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Recent 8", action: #selector(showRecents), keyEquivalent: "").representedObject = "*.recents.key"
         menu.addItem(withTitle: "ChatGPT", action: #selector(showChatGPT), keyEquivalent: "").representedObject = "*.standalone.key"
         menu.addItem(withTitle: "Write Control", action: #selector(showSettings), keyEquivalent: "").representedObject = "*.models.key"
-        menu.addItem(withTitle: "Takvim", action: #selector(showJournal), keyEquivalent: "").representedObject = "*.journal.key"
-        menu.addItem(withTitle: "Ayarlar", action: #selector(showAppSettings(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Journal", action: #selector(showJournal), keyEquivalent: "").representedObject = "*.journal.key"
+        menu.addItem(withTitle: "Settings", action: #selector(showAppSettings(_:)), keyEquivalent: "")
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Refresh Codex", action: #selector(refreshNow), keyEquivalent: "").representedObject = "*.refresh.key"
         menu.addItem(NSMenuItem.separator())
@@ -767,7 +767,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
 
     private func showShortcutError(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "Kısayol çakışması"
+        alert.messageText = "Shortcut conflict"
         alert.informativeText = message
         alert.alertStyle = .warning
         alert.runModal()

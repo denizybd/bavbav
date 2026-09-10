@@ -53,7 +53,7 @@ enum MessageLinkCheck {
         expect(text.link(at: NSPoint(x: -1, y: -1)) == nil, "outside message is inert")
         let menu = text.menu(for: mouse(.rightMouseDown))
         menu?.update()
-        expect(menu?.items.prefix(2).map(\.title) == ["Bağlantıyı aç", "Bağlantıyı kopyala"],
+        expect(menu?.items.prefix(2).map(\.title) == ["Open link", "Copy link"],
                "right-click exposes explicit open and copy actions")
         expect(menu?.items.prefix(2).allSatisfy(\.isEnabled) == true, "context actions pass native menu validation")
         if let item = menu?.items.first, let action = item.action {
@@ -100,7 +100,7 @@ enum MessageLinkCheck {
                                           timestamp: 0, windowNumber: window.windowNumber, context: nil,
                                           eventNumber: 0, clickCount: 1, pressure: 1)!
         let fileMenu = text.menu(for: fileEvent)
-        expect(fileMenu?.items.prefix(2).map(\.title) == ["Finder’da göster", "Dosya yolunu kopyala"],
+        expect(fileMenu?.items.prefix(2).map(\.title) == ["Show in Finder", "Copy file path"],
                "file context menu is reveal-only")
         if let item = fileMenu?.items.dropFirst().first, let action = item.action {
             _ = NSApp.sendAction(action, to: item.target, from: item)

@@ -97,7 +97,7 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
                               .underlineStyle: NSUnderlineStyle.single.rawValue]
         selectedTextAttributes = [.backgroundColor: NSColor(calibratedRed: 0.18, green: 0.32, blue: 0.39, alpha: 1)]
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        setAccessibilityLabel("Sohbet mesajı")
+        setAccessibilityLabel("Chat message")
     }
 
     func configure(text: String, fontSize: CGFloat, markdown: Bool) {
@@ -174,8 +174,8 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         pasteboard.setString(blocks[index].code, forType: .string)
         guard pasteboard === NSPasteboard.general, copyButtons.indices.contains(index) else { return }
         let button = copyButtons[index]
-        button.title = "KOPYALANDI"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { [weak button] in button?.title = "KOPYALA" }
+        button.title = "COPIED"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { [weak button] in button?.title = "COPY" }
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -208,10 +208,10 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         guard let url = link(at: convert(event.locationInWindow, from: nil)) else { return super.menu(for: event) }
         // Capture the clicked destination on each item, not a mutable selection.
         // Supply explicit actions instead of relying on AppKit's generated menu.
-        let menu = NSMenu(title: "Bağlantı")
-        let open = NSMenuItem(title: url.isFileURL ? "Finder’da göster" : "Bağlantıyı aç",
+        let menu = NSMenu(title: "Link")
+        let open = NSMenuItem(title: url.isFileURL ? "Show in Finder" : "Open link",
                               action: #selector(openContextLink(_:)), keyEquivalent: "")
-        let copy = NSMenuItem(title: url.isFileURL ? "Dosya yolunu kopyala" : "Bağlantıyı kopyala",
+        let copy = NSMenuItem(title: url.isFileURL ? "Copy file path" : "Copy link",
                               action: #selector(copyContextLink(_:)), keyEquivalent: "")
         for item in [open, copy] {
             item.target = self
@@ -220,7 +220,7 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         }
         if selectedRange().length > 0 {
             menu.addItem(.separator())
-            let selection = NSMenuItem(title: "Seçili metni kopyala", action: #selector(copy(_:)), keyEquivalent: "")
+            let selection = NSMenuItem(title: "Copy selected text", action: #selector(copy(_:)), keyEquivalent: "")
             selection.target = self
             menu.addItem(selection)
         }
@@ -242,15 +242,15 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         let count = rendered?.codeBlocks.count ?? 0
         while copyButtons.count > count { copyButtons.removeLast().removeFromSuperview() }
         while copyButtons.count < count {
-            let button = MessageCodeCopyButton(title: "KOPYALA", target: self, action: #selector(copyBlockClicked(_:)))
+            let button = MessageCodeCopyButton(title: "COPY", target: self, action: #selector(copyBlockClicked(_:)))
             button.font = NSFont.monospacedSystemFont(ofSize: 8, weight: .semibold)
             button.bezelStyle = .inline
             button.isBordered = false
             let contrast = ForegroundContrast.strength(backgroundOpacity: backgroundOpacity)
             button.contentTintColor = ForegroundContrast.color(RichMessageRenderer.mutedColor, strength: contrast)
             button.contrastStrength = contrast
-            button.toolTip = "Yalnızca bu kodu veya promptu kopyala"
-            button.setAccessibilityLabel("Kutunun içeriğini kopyala")
+            button.toolTip = "Copy only this code or prompt"
+            button.setAccessibilityLabel("Copy code block contents")
             button.tag = copyButtons.count
             addSubview(button)
             copyButtons.append(button)

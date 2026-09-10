@@ -77,7 +77,7 @@ public enum ComposerInput {
                   FileManager.default.fileExists(atPath: attachment.path, isDirectory: &isDirectory),
                   !isDirectory.boolValue,
                   FileManager.default.isReadableFile(atPath: attachment.path) else {
-                throw CodexClientError.invalidResponse("Ek dosya okunamıyor: \(attachment.name). Lütfen yeniden ekle.")
+                throw CodexClientError.invalidResponse("Cannot read attachment: \(attachment.name). Please attach it again.")
             }
         }
 

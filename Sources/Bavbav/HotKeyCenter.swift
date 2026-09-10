@@ -9,7 +9,7 @@ final class HotKeyCenter {
         var errorDescription: String? {
             switch self {
             case .registrationFailed(let number, let status):
-                return "Global pencere kısayolu \(number) kaydedilemedi (macOS \(status)). Başka bir tuş dene."
+                return "Could not register global window shortcut \(number) (macOS \(status)). Try another key."
             }
         }
     }

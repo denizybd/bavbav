@@ -296,7 +296,7 @@ final class OverlayStore: ObservableObject {
             let health = try await client.connect()
             codexHome = health.codexHome.isEmpty ? nil : health.codexHome
             guard health.authenticated, health.historyAvailable, health.modelAvailable else {
-                connection = .failed("Codex hesabı veya model erişimi hazır değil")
+                connection = .failed("Codex account or model access is not ready")
                 return
             }
             await installEventHandlerIfNeeded()
@@ -727,7 +727,7 @@ final class OverlayStore: ObservableObject {
         let name = renameName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != target.name else { cancelRename(); return }
         guard name.rangeOfCharacter(from: .controlCharacters) == nil else {
-            renameError = "Ad tek satır olmalı; kontrol karakteri içeremez."
+            renameError = "Names must be a single line without control characters."
             return
         }
         switch target.item {
@@ -760,7 +760,7 @@ final class OverlayStore: ObservableObject {
                     cancelRename()
                 } catch {
                     renameSubmitting = false
-                    renameError = "Ad değiştirilemedi: \(error.localizedDescription)"
+                    renameError = "Could not rename: \(error.localizedDescription)"
                 }
             }
         }
@@ -840,7 +840,7 @@ final class OverlayStore: ObservableObject {
                 // Open in reading mode, exactly like an ordinary Codex chat.
                 open(thread)
             } catch {
-                standaloneError = "Sohbet açılamadı: \(error.localizedDescription)"
+                standaloneError = "Could not open chat: \(error.localizedDescription)"
             }
         }
     }
@@ -922,7 +922,7 @@ final class OverlayStore: ObservableObject {
         var seen = Set(items.map(\.path))
         for item in attachments where seen.insert(item.path).inserted { items.append(item) }
         if items.count > AttachmentIntake.maximumCount {
-            attachmentErrors[threadID] = "Bir mesaja en fazla \(AttachmentIntake.maximumCount) dosya ekleyebilirsin."
+            attachmentErrors[threadID] = "You can attach up to \(AttachmentIntake.maximumCount) files per message."
         }
         setComposerAttachments(Array(items.prefix(AttachmentIntake.maximumCount)), for: threadID)
     }
@@ -962,8 +962,8 @@ final class OverlayStore: ObservableObject {
         guard let thread = detailThread, let window = NSApp.keyWindow else { return }
         closeComposerTools(restoreFocus: false)
         let panel = NSOpenPanel()
-        panel.title = "Fotoğraf veya belge ekle"
-        panel.prompt = "Ekle"
+        panel.title = "Attach an image or document"
+        panel.prompt = "Attach"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
@@ -1050,7 +1050,7 @@ final class OverlayStore: ObservableObject {
                 goalErrorsByThreadID[id] = nil
             } catch {
                 guard goalReadGeneration[id] == generation else { return }
-                goalErrorsByThreadID[id] = "Goal okunamadı: \(error.localizedDescription)"
+                goalErrorsByThreadID[id] = "Could not load goal: \(error.localizedDescription)"
             }
         }
     }
@@ -1069,7 +1069,7 @@ final class OverlayStore: ObservableObject {
                 goalsByThreadID[id] = goal
                 defaults.removeObject(forKey: "composer.goal-draft.\(id)")
                 if detailThread?.id == id { cancelComposerGoalEditing() }
-            } catch { goalErrorsByThreadID[id] = "Goal kaydedilemedi: \(error.localizedDescription)" }
+            } catch { goalErrorsByThreadID[id] = "Could not save goal: \(error.localizedDescription)" }
         }
     }
     func clearComposerGoal() {
@@ -1084,7 +1084,7 @@ final class OverlayStore: ObservableObject {
                 _ = try await client.clearThreadGoal(threadID: id)
                 goalsByThreadID[id] = nil
                 defaults.removeObject(forKey: "composer.goal-draft.\(id)")
-            } catch { goalErrorsByThreadID[id] = "Goal kaldırılamadı: \(error.localizedDescription)" }
+            } catch { goalErrorsByThreadID[id] = "Could not clear goal: \(error.localizedDescription)" }
         }
     }
 
@@ -1190,7 +1190,7 @@ final class OverlayStore: ObservableObject {
         setComposerMode(prompt.collaborationMode, for: threadID)
         persistDraft(prompt.text, for: threadID)
         composerVisible = true
-        composerError = hadDraft ? "Önceki taslağın kuyrukta korundu; kendiliğinden gönderilmez." : nil
+        composerError = hadDraft ? "Your previous draft is preserved in the queue and will not be sent automatically." : nil
         DispatchQueue.main.async { [weak self] in self?.composerFocusToken &+= 1 }
     }
 
@@ -1263,21 +1263,21 @@ final class OverlayStore: ObservableObject {
                 options.append(CodexInteractionOption(
                     id: "__other__",
                     label: question.options.isEmpty ? "TYPE ANSWER" : "OTHER",
-                    detail: "Klavyeyle özel bir yanıt yaz"
+                    detail: "Type a custom answer"
                 ))
             }
             if question.allowsMultiple {
                 options.append(CodexInteractionOption(
                     id: "__done__",
                     label: "DONE",
-                    detail: "Seçimleri kaydet ve devam et"
+                    detail: "Save selections and continue"
                 ))
             }
             if !question.isRequired {
                 options.append(CodexInteractionOption(
                     id: "__skip__",
                     label: "SKIP",
-                    detail: "Bu isteğe bağlı alanı boş bırak"
+                    detail: "Leave this optional field empty"
                 ))
             }
             return options
@@ -1332,7 +1332,7 @@ final class OverlayStore: ObservableObject {
             }
             if option.id == "__done__" {
                 guard !(interactionAnswers[question.id] ?? []).isEmpty else {
-                    interactionError = "En az bir seçenek seç."
+                    interactionError = "Select at least one option."
                     return
                 }
                 advanceInteractionQuestion(request)
@@ -1417,7 +1417,7 @@ final class OverlayStore: ObservableObject {
         case .mcpForm, .mcpURL: decision = "decline"
         case .commandApproval, .fileApproval, .permissionApproval: decision = "decline"
         case .userInput:
-            interactionError = "Bu soruya yanıt vermeden pencere kapatılamaz; bir seçenek seç veya turu Codex'ten durdur."
+            interactionError = "Answer this question before closing the window, or stop the turn in Codex."
             return
         }
         resolveInteraction(request, with: .option(decision))
@@ -1451,13 +1451,13 @@ final class OverlayStore: ObservableObject {
     ) -> Bool {
         switch question.valueType {
         case .integer where Int(text) == nil:
-            interactionError = "Tam sayı girmen gerekiyor."
+            interactionError = "Enter a whole number."
             return false
         case .number where Double(text) == nil:
-            interactionError = "Sayısal bir değer girmen gerekiyor."
+            interactionError = "Enter a numeric value."
             return false
         case .boolean where Bool(text.lowercased()) == nil:
-            interactionError = "TRUE veya FALSE seç."
+            interactionError = "Select TRUE or FALSE."
             return false
         default:
             return true
@@ -1472,26 +1472,26 @@ final class OverlayStore: ObservableObject {
             let values = interactionAnswers[question.id, default: []]
             guard let first = values.first else {
                 if !question.isRequired { continue }
-                interactionError = "\(question.header) alanı eksik."
+                interactionError = "\(question.header) is required."
                 return nil
             }
             switch question.valueType {
             case .string: content[question.id] = .string(first)
             case .integer:
                 guard let value = Int(first) else {
-                    interactionError = "\(question.header) tam sayı olmalı."
+                    interactionError = "\(question.header) must be a whole number."
                     return nil
                 }
                 content[question.id] = .integer(value)
             case .number:
                 guard let value = Double(first) else {
-                    interactionError = "\(question.header) sayı olmalı."
+                    interactionError = "\(question.header) must be a number."
                     return nil
                 }
                 content[question.id] = .number(value)
             case .boolean:
                 guard let value = Bool(first.lowercased()) else {
-                    interactionError = "\(question.header) TRUE/FALSE olmalı."
+                    interactionError = "\(question.header) must be TRUE or FALSE."
                     return nil
                 }
                 content[question.id] = .boolean(value)
@@ -1514,7 +1514,7 @@ final class OverlayStore: ObservableObject {
                 completeInteraction(requestID: request.requestID)
             } catch {
                 interactionResolving = false
-                interactionError = "Yanıt gönderilemedi: \(error.localizedDescription)"
+                interactionError = "Could not send answer: \(error.localizedDescription)"
             }
         }
     }
@@ -1574,12 +1574,12 @@ final class OverlayStore: ObservableObject {
                 settingsChoiceIndex = settingsChoices.firstIndex(where: { $0.id == selectedID }) ?? 0
             }
         } catch {
-            failures.append("Model listesi alınamadı: \(error.localizedDescription)")
+            failures.append("Could not load models: \(error.localizedDescription)")
         }
         do {
             rateLimits = try await client.readRateLimits()
         } catch {
-            failures.append("Limit bilgisi alınamadı: \(error.localizedDescription)")
+            failures.append("Could not load usage limits: \(error.localizedDescription)")
         }
         do {
             accountUsage = try await client.readAccountUsage()
@@ -1646,7 +1646,7 @@ final class OverlayStore: ObservableObject {
 
     func submitMessage() {
         guard !composerImporting else {
-            composerError = "Dosyalar hazırlanıyor; bitince gönderebilirsin."
+            composerError = "Files are still being prepared. Send your message when they are ready."
             return
         }
         if !composerHasPayload {
@@ -1820,7 +1820,7 @@ final class OverlayStore: ObservableObject {
                     queuedOnFailure.requiresRetry = true
                     insertQueuedPrompt(queuedOnFailure, at: 0)
                     if detailThread?.id == destinationID {
-                        composerError = "Sıradaki prompt başlatılamadı: \(error.localizedDescription)"
+                        composerError = "Could not start queued prompt: \(error.localizedDescription)"
                         reloadDetail(threadID: destinationID)
                     }
                 } else {
@@ -1831,7 +1831,7 @@ final class OverlayStore: ObservableObject {
                             model: overrides.model, effort: overrides.effort, attachments: attachments,
                             collaborationMode: mode, requiresRetry: true), at: 0)
                         if detailThread?.id == destinationID {
-                            composerError = "Gönderilemeyen mesaj kuyrukta korundu. Yeni taslağın değişmedi; Q ile kuyruğun içinden düzenleyebilirsin."
+                            composerError = "The unsent message is preserved in the queue. Your current draft is unchanged; use the queue's Edit action to revise the message."
                         }
                         return
                     }
@@ -1858,7 +1858,7 @@ final class OverlayStore: ObservableObject {
         else { return }
         let prompt = currentQueuedPrompts[originalIndex]
         guard prompt.collaborationMode == turnModesByThreadID[thread.id] else {
-            composerError = "Çalışma modu tur ortasında değişmez. Bu mesaj seçtiğin modla sıradaki turda gönderilecek."
+            composerError = "The mode cannot change during a turn. This message will use your selected mode in the next turn."
             return
         }
         var queue = currentQueuedPrompts
@@ -1896,7 +1896,7 @@ final class OverlayStore: ObservableObject {
                     attachments: prompt.attachments
                 )
                 guard returnedTurnID == turnID else {
-                    throw CodexClientError.invalidResponse("turn/steer farklı bir tur döndürdü")
+                    throw CodexClientError.invalidResponse("turn/steer returned a different turn")
                 }
             } catch {
                 let failedEchoID = optimisticUserMessages.first(where: { $0.localID == localID })?.serverID
@@ -1905,7 +1905,7 @@ final class OverlayStore: ObservableObject {
                     detailMessages.removeAll { $0.id == localID || $0.id == failedEchoID }
                     insertQueuedPrompt(prompt, at: originalIndex)
                     queueInteraction.selectedID = prompt.id
-                    composerError = "Steer gönderilemedi: \(error.localizedDescription)"
+                    composerError = "Could not steer the turn: \(error.localizedDescription)"
                 } else {
                     insertQueuedPrompt(prompt, at: originalIndex)
                 }
@@ -2121,7 +2121,7 @@ final class OverlayStore: ObservableObject {
 
     private func settingsSpace() {
         guard detailThread != nil else {
-            settingsError = "Önce yazılabilir bir Codex sohbeti aç."
+            settingsError = "Open a writable Codex chat first."
             return
         }
         let choices = settingsChoices
@@ -2166,7 +2166,7 @@ final class OverlayStore: ObservableObject {
                 updateChatCatalogs()
                 open(thread, beginWriting: true)
             } catch {
-                connection = .failed("Yeni sohbet açılamadı: \(error.localizedDescription)")
+                connection = .failed("Could not create chat: \(error.localizedDescription)")
             }
         }
     }
@@ -2193,7 +2193,7 @@ final class OverlayStore: ObservableObject {
             throw NSError(
                 domain: "Bavbav.ProjectCreation",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Proje adında / veya : kullanma."]
+                userInfo: [NSLocalizedDescriptionKey: "Project names cannot contain / or :."]
             )
         }
         let parent: URL = {
@@ -2213,7 +2213,7 @@ final class OverlayStore: ObservableObject {
             throw NSError(
                 domain: "Bavbav.ProjectCreation",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Bu isimde bir proje klasörü zaten var."]
+                userInfo: [NSLocalizedDescriptionKey: "A project folder with this name already exists."]
             )
         }
 
@@ -2226,8 +2226,8 @@ final class OverlayStore: ObservableObject {
             sandbox: "danger-full-access",
             approvalPolicy: "never"
         )
-        try await client.setThreadName(id: thread.id, name: "Yeni sohbet")
-        let namedThread = renamedThread(thread, name: "Yeni sohbet")
+        try await client.setThreadName(id: thread.id, name: "New chat")
+        let namedThread = renamedThread(thread, name: "New chat")
         let project = CodexProject(
             id: thread.projectID ?? "cwd:\(projectURL.path)",
             name: name,
@@ -2333,7 +2333,7 @@ final class OverlayStore: ObservableObject {
             }
             guard detailThread?.id == threadID else { return }
             if status == "failed" || status == "interrupted" {
-                composerError = error ?? "Codex yanıtı \(status)."
+                composerError = error ?? "Codex response: \(status)."
             }
             refreshComposerGoal()
             Task {
@@ -2387,7 +2387,7 @@ final class OverlayStore: ObservableObject {
             connection = .failed(message)
             if let detailThreadID = detailThread?.id,
                interruptedThreadIDs.contains(detailThreadID) {
-                composerError = "Codex bağlantısı kapandı; son mesajın durumu doğrulanamadı."
+                composerError = "Codex disconnected; the status of your last message could not be confirmed."
             }
         }
     }
@@ -2493,7 +2493,7 @@ final class OverlayStore: ObservableObject {
                       detailThread?.id == threadID,
                       generation == detailLoadGeneration
                 else { return }
-                composerError = "Sohbet yenilenemedi: \(error.localizedDescription)"
+                composerError = "Could not refresh chat: \(error.localizedDescription)"
                 detailLoading = false
             }
         }
@@ -2536,7 +2536,7 @@ final class OverlayStore: ObservableObject {
                       detailThread?.id == threadID,
                       generation == activityLoadGeneration
                 else { return }
-                interactionError = "Etkinlik geçmişi yüklenemedi: \(error.localizedDescription)"
+                interactionError = "Could not load activity history: \(error.localizedDescription)"
                 detailActivityLoading = false
             }
         }
@@ -2566,7 +2566,7 @@ final class OverlayStore: ObservableObject {
 
     private func writingErrorMessage(_ error: Error) -> String {
         let description = error.localizedDescription
-        return "Mesaj gönderilemedi: \(description)"
+        return "Could not send message: \(description)"
     }
 
     private func loadOverrides(for threadID: String) {

@@ -32,11 +32,11 @@ final class JournalService: ObservableObject {
     var pendingCount: Int { state.jobs.count }
     var status: String {
         if let error { return error }
-        if !state.enabled { return "OTOMATİK NOT KAPALI" }
-        if working { return "NOTLAR AYIKLANIYOR" }
-        if state.requestsToday >= Self.dailyRequestLimit && state.usageDay == JournalRules.day(Date()) { return "GÜNLÜK SINIR · BEKLEYENLER YARIN DEVAM EDER" }
-        if !sourceConnected { return "CODEX BAĞLANTISI BEKLENİYOR" }
-        return pendingCount > 0 ? "\(pendingCount) İŞ BEKLİYOR" : "YENİ KONUŞMALAR İZLENİYOR"
+        if !state.enabled { return "AUTOMATIC NOTES PAUSED" }
+        if working { return "EXTRACTING NOTES" }
+        if state.requestsToday >= Self.dailyRequestLimit && state.usageDay == JournalRules.day(Date()) { return "DAILY LIMIT · QUEUED JOBS RESUME TOMORROW" }
+        if !sourceConnected { return "WAITING FOR CODEX" }
+        return pendingCount > 0 ? "\(pendingCount) JOBS WAITING" : "WATCHING NEW CONVERSATIONS"
     }
 
     init(directory: URL? = nil, activeInMemory: Bool = false) {
@@ -127,7 +127,7 @@ final class JournalService: ObservableObject {
                             recoveryIDs.remove(job.id)
                             persist()
                         }
-                    } catch { self.error = "Bekleyen not korunuyor: \(error.localizedDescription)" }
+                    } catch { self.error = "Pending note retained: \(error.localizedDescription)" }
                 }
                 runNext()
             }

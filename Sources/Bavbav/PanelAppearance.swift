@@ -51,5 +51,6 @@ struct PanelAppearanceRoot<Content: View>: View {
     var body: some View {
         content.environment(\.panelBackdropOpacity, preferences.backgroundOpacity)
             .environment(\.shortcutLabels, ShortcutLabels(overrides: preferences.keyBindings.overrides))
+            .environment(\.locale, Locale(identifier: "en_US"))
     }
 }

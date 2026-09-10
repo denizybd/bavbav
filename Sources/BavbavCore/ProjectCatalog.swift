@@ -19,7 +19,7 @@ public enum ProjectCatalog {
         for (fallbackID, rawValue) in rawProjects {
             guard let value = rawValue as? [String: Any] else { continue }
             let id = value["id"] as? String ?? fallbackID
-            let name = value["name"] as? String ?? "isimsiz"
+            let name = value["name"] as? String ?? "Untitled"
             guard let path = (value["rootPaths"] as? [String])?.first else { continue }
             projectsByID[id] = CodexProject(id: id, name: name, path: canonicalPath(path))
         }

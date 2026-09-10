@@ -39,7 +39,7 @@ struct RenameSlot: View {
 struct RenameNameField: NSViewRepresentable {
     @Binding var text: String
     let enabled: Bool
-    var accessibilityLabel = "Yeni ad"
+    var accessibilityLabel = "New name"
     var placeholder = ""
     @Environment(\.panelBackdropOpacity) private var opacity
 
@@ -93,7 +93,7 @@ struct RenameNameField: NSViewRepresentable {
             isEditable = true
             isSelectable = true
             usesSingleLineMode = true
-            setAccessibilityLabel("Yeni ad")
+            setAccessibilityLabel("New name")
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         override func viewDidMoveToWindow() {

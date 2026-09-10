@@ -16,14 +16,14 @@ struct ShortcutEditorView: View {
                 recorder(definition)
             } else {
                 HStack(spacing: 7) {
-                    TextField("İşlem, pencere veya tuş ara", text: $preferences.shortcutSearch)
+                    TextField("Search actions, windows, or keys", text: $preferences.shortcutSearch)
                         .textFieldStyle(.plain).font(BavbavTheme.mono(10))
                         .padding(7).background(BavbavTheme.surface.panelBackdrop()).cornerRadius(4)
-                        .accessibilityLabel("Kısayol ara")
+                        .accessibilityLabel("Search shortcuts")
                         .focused($searchFocused)
                     Button { confirmReset = true } label: {
                         Image(systemName: "arrow.counterclockwise").padding(6)
-                    }.buttonStyle(.plain).help("Bütün kısayolları varsayılana döndür")
+                    }.buttonStyle(.plain).help("Reset all shortcuts to defaults")
                 }
                 if let error = bindings.error { notice(error) }
                 ScrollViewReader { proxy in
@@ -48,7 +48,7 @@ struct ShortcutEditorView: View {
                                                 .frame(maxWidth: 125, alignment: .trailing)
                                         }
                                         if bindings.overrides[definition.id] != nil {
-                                            Text("ÖZEL").font(BavbavTheme.mono(6)).foregroundStyle(BavbavTheme.accent).readableForeground()
+                                            Text("CUSTOM").font(BavbavTheme.mono(6)).foregroundStyle(BavbavTheme.accent).readableForeground()
                                         }
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -58,8 +58,8 @@ struct ShortcutEditorView: View {
                                 }.buttonStyle(.plain).id(index)
                                     .accessibilityLabel("\(definition.group), \(definition.title), \(bindings.binding(definition).label)")
                             }
-                            if preferences.filteredShortcuts.isEmpty { Text("Eşleşen işlem yok.").font(BavbavTheme.mono(9)) }
-                            Text("⌘Tab macOS’a aittir. Tuşlar fiziksel konumlarıyla kaydedilir. Birleştirilmiş tuşlar birlikte basılır; her alternatif ayrı satırdır.")
+                            if preferences.filteredShortcuts.isEmpty { Text("No matching actions.").font(BavbavTheme.mono(9)) }
+                            Text("⌘Tab belongs to macOS. Bindings use physical key positions. Press chord keys together; each alternative has its own row.")
                                 .font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted).readableForeground().padding(.vertical, 7)
                         }
                     }.clipped()
@@ -73,10 +73,10 @@ struct ShortcutEditorView: View {
             if note.object as? AppPreferences === preferences { searchFocused = true }
         }
         .onChange(of: bindings.editingID) { id in if id != nil { searchFocused = false } }
-        .alert("Bütün kısayollar sıfırlansın mı?", isPresented: $confirmReset) {
-            Button("Vazgeç", role: .cancel) {}
-            Button("Sıfırla", role: .destructive) { _ = bindings.resetAll() }
-        } message: { Text("Yalnızca klavye atamaları sıfırlanır. Sohbetler ve diğer ayarlar değişmez.") }
+        .alert("Reset all shortcuts?", isPresented: $confirmReset) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) { _ = bindings.resetAll() }
+        } message: { Text("Only keyboard bindings will reset. Chats and other settings will stay as they are.") }
     }
     private func notice(_ value: String) -> some View {
         Text(value).font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.warning).readableForeground()
@@ -87,7 +87,7 @@ struct ShortcutEditorView: View {
             VStack(alignment: .leading, spacing: 11) {
                 Text(definition.group.uppercased()).font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted)
                 Text(definition.title).font(BavbavTheme.mono(11, weight: .medium))
-                Text(bindings.recording ? "TUŞLARA BAS, SONRA BIRAK" : "YENİ ATAMA")
+                Text(bindings.recording ? "PRESS KEYS, THEN RELEASE" : "NEW BINDING")
                     .font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted)
                 Text(bindings.candidate?.label ?? "—")
                     .font(BavbavTheme.mono(19, weight: .light)).foregroundStyle(BavbavTheme.accent)
@@ -95,7 +95,7 @@ struct ShortcutEditorView: View {
                     .background(BavbavTheme.surface.panelBackdrop()).cornerRadius(5)
                 if definition.defaultBinding.hold {
                     HStack {
-                        Text("Basılı tutma süresi").font(BavbavTheme.mono(9))
+                        Text("Hold duration").font(BavbavTheme.mono(9))
                         Spacer()
                         Text("\(bindings.candidate?.holdMilliseconds ?? 440) ms").font(BavbavTheme.mono(10))
                     }
@@ -105,22 +105,22 @@ struct ShortcutEditorView: View {
                 }
                 if let error = bindings.error { notice(error) }
                 HStack {
-                    Button("Uygula") { _ = bindings.applyCandidate() }.disabled(bindings.recording)
-                    Button("Yeniden kaydet") { bindings.recordAgain() }
-                    Button("Vazgeç") { bindings.cancelEditing() }
+                    Button("Apply") { _ = bindings.applyCandidate() }.disabled(bindings.recording)
+                    Button("Record again") { bindings.recordAgain() }
+                    Button("Cancel") { bindings.cancelEditing() }
                 }.buttonStyle(ShortcutEditorButtonStyle())
                 HStack {
-                    Button("Bu kısayolu kapat") {
+                    Button("Disable this shortcut") {
                         var value = bindings.binding(definition); value.disabled = true
                         if bindings.set(definition.id, value) { bindings.cancelEditing() }
                     }
-                    Button("Varsayılan") {
+                    Button("Default") {
                         if bindings.set(definition.id, nil) { bindings.cancelEditing() }
                     }
                 }.buttonStyle(ShortcutEditorButtonStyle()).disabled(bindings.recording)
                 Text(bindings.recording
-                     ? "Kayıt sırasında Q ve Enter da atanabilir. İptal için Vazgeç’e tıkla. Command Tab kaydı iptal eder."
-                     : "\(bindings.label("prefs.confirm.applyShortcut.key")) uygula · \(bindings.label("prefs.confirm.cancelShortcut.key")) vazgeç · \(bindings.label("prefs.confirm.recordShortcut.key")) tekrar kaydet\n\(bindings.label("prefs.confirm.disableShortcut.key")) kapat · \(bindings.label("prefs.confirm.resetShortcut.key")) varsayılan\nÖzgün atama: \(definition.keys)")
+                     ? "You can bind Q and Enter while recording. Click Cancel to stop. Command Tab cancels recording."
+                     : "\(bindings.label("prefs.confirm.applyShortcut.key")) apply · \(bindings.label("prefs.confirm.cancelShortcut.key")) cancel · \(bindings.label("prefs.confirm.recordShortcut.key")) record again\n\(bindings.label("prefs.confirm.disableShortcut.key")) disable · \(bindings.label("prefs.confirm.resetShortcut.key")) default\nOriginal binding: \(definition.keys)")
                     .font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted)
             }.readableForeground().frame(maxWidth: .infinity, alignment: .leading)
         }.frame(minHeight: 0, maxHeight: .infinity).clipped()

@@ -200,7 +200,7 @@ private struct SetStateBadge: View {
     let isAutomatic: Bool
 
     private var label: String {
-        if isSet { return "SETTED" }
+        if isSet { return "SET" }
         if isAutomatic { return "AUTO" }
         return "WAIT"
     }

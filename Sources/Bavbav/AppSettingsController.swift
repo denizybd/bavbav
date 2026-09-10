@@ -10,7 +10,7 @@ final class AppSettingsPanel: NSPanel, CornerResizeCommitHandler {
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 360, height: 320),
                    styleMask: [.borderless], backing: .buffered, defer: false)
-        title = "Bavbav Ayarlar"
+        title = "Bavbav Settings"
         isFloatingPanel = false
         level = .normal
         isOpaque = false

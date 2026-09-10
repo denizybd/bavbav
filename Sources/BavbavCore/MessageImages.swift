@@ -4,7 +4,7 @@ import CryptoKit
 public struct CodexMessageImage: Hashable, Codable, Sendable {
     public let source: String
     public let title: String
-    public init(source: String, title: String = "Görsel") { self.source = source; self.title = title }
+    public init(source: String, title: String = "Image") { self.source = source; self.title = title }
 }
 
 /// Extract only explicit image payloads, never arbitrary strings in tool JSON.
@@ -58,7 +58,7 @@ public enum MessageImagePayload {
                 return CodexMessageImage(source: source.utf8.count <= 32_768 ? source : "unavailable:oversized-reference")
             }
             let stored = persist(dataURL: source, directory: directory ?? cacheDirectory)
-            return CodexMessageImage(source: stored?.path ?? "unavailable:invalid-image", title: stored == nil ? "Görsel verisi okunamadı" : "Görsel")
+            return CodexMessageImage(source: stored?.path ?? "unavailable:invalid-image", title: stored == nil ? "Image data could not be read" : "Image")
         }.filter { seen.insert($0.source).inserted }
     }
 

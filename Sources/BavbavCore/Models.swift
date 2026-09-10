@@ -450,17 +450,17 @@ public enum CodexClientError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .executableNotFound:
-            return "Codex çalıştırıcısı bulunamadı."
+            return "Codex executable not found."
         case .processFailed(let detail):
-            return "Codex başlatılamadı: \(detail)"
+            return "Could not start Codex: \(detail)"
         case .invalidResponse(let detail):
-            return "Codex geçersiz yanıt verdi: \(detail)"
+            return "Invalid Codex response: \(detail)"
         case .rpcError(let detail):
-            return "Codex hatası: \(detail)"
+            return "Codex error: \(detail)"
         case .timeout(let method):
-            return "Codex yanıtı zaman aşımına uğradı (\(method))."
+            return "Codex request timed out (\(method))."
         case .disconnected:
-            return "Codex bağlantısı kapandı."
+            return "Codex disconnected."
         }
     }
 

@@ -200,7 +200,7 @@ enum ShortcutCustomizationCheck {
             try check(prefs.selectedIndex == 1, "new settings navigation")
             tap(125)
             try check(prefs.selectedIndex == 2, "independent arrow alias remains")
-            prefs.shortcutSearch = "Boş yazma"
+            prefs.shortcutSearch = "empty composer"
             try check(!prefs.filteredShortcuts.isEmpty && prefs.selectedIndex == 0, "search individual actions")
             prefs.shortcutSearch = ""
             _ = bindings.resetAll()
@@ -273,7 +273,7 @@ enum ShortcutCustomizationCheck {
             try check(bindings.recording, "preview recorder fully keyboard accessible")
             tap(3)
             tap(2)
-            try check(bindings.label("projects.root.close.key") == "KAPALI", "disable via configurable preview key")
+            try check(bindings.label("projects.root.close.key") == "DISABLED", "disable via configurable preview key")
             _ = bindings.resetAll()
 
             let thread = CodexThread(id:"fixture-thread",projectID:nil,cwd:"/tmp/fixture",title:"Shortcut fixture",

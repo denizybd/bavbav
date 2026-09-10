@@ -17,7 +17,7 @@ struct ChatComposerView: View {
             if store.composerImporting {
                 HStack(spacing: 7) {
                     ProgressView().controlSize(.mini).tint(BavbavTheme.accent)
-                    Text("Dosyalar hazırlanıyor…").font(BavbavTheme.mono(9))
+                    Text("Preparing files…").font(BavbavTheme.mono(9))
                 }.foregroundStyle(BavbavTheme.accent).readableForeground()
             }
             if let error = store.composerAttachmentError {
@@ -36,7 +36,7 @@ struct ChatComposerView: View {
             HStack(alignment: .bottom, spacing: 0) {
                 ZStack(alignment: .topLeading) {
                     if store.composerText.isEmpty {
-                        Text(store.composerAttachments.isEmpty ? "Mesaj yaz veya dosya bırak…" : "Ekler hakkında bir şey yaz…")
+                        Text(store.composerAttachments.isEmpty ? "Write a message or drop files…" : "Add a message about your attachments…")
                             .font(BavbavTheme.mono(11)).foregroundStyle(BavbavTheme.muted)
                             .readableForeground().padding(.horizontal, 10).padding(.vertical, 9)
                             .allowsHitTesting(false)
@@ -54,8 +54,8 @@ struct ChatComposerView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain).padding(6)
-                .accessibilityLabel("Ekler ve Codex özellikleri")
-                .help("Fotoğraf, belge, Plan ve Goal · \(shortcuts.key(scope + ".composerTools.key"))")
+                .accessibilityLabel("Attachments and Codex tools")
+                .help("Images, documents, Plan, and Goal · \(shortcuts.key(scope + ".composerTools.key"))")
             }
             .background(BavbavTheme.raised.panelBackdrop())
             .clipShape(RoundedRectangle(cornerRadius: 7))
@@ -75,32 +75,32 @@ struct ChatComposerView: View {
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("EKLER & ÖZELLİKLER").foregroundStyle(BavbavTheme.accent)
+                    Text("ATTACHMENTS & TOOLS").foregroundStyle(BavbavTheme.accent)
                     Spacer()
-                    Text("BU SOHBET").foregroundStyle(BavbavTheme.muted)
+                    Text("THIS CHAT").foregroundStyle(BavbavTheme.muted)
                 }.font(BavbavTheme.mono(8, weight: .bold)).readableForeground()
-                toolRow(index: 0, symbol: "paperclip", title: "Fotoğraf veya belge",
-                        subtitle: "Ekran görüntüsünü doğrudan sohbete bırakabilirsin.") { store.chooseComposerFiles() }
+                toolRow(index: 0, symbol: "paperclip", title: "Image or document",
+                        subtitle: "Drop a screenshot directly into the chat.") { store.chooseComposerFiles() }
                 HStack(spacing: 6) {
-                    modeButton(index: 1, mode: .default, symbol: "bolt", title: "Normal", subtitle: "Birlikte uygula")
-                    modeButton(index: 2, mode: .plan, symbol: "list.bullet.rectangle", title: "Plan", subtitle: "Önce planla")
+                    modeButton(index: 1, mode: .default, symbol: "bolt", title: "Normal", subtitle: "Build together")
+                    modeButton(index: 2, mode: .plan, symbol: "list.bullet.rectangle", title: "Plan", subtitle: "Plan first")
                 }
-                toolRow(index: 3, symbol: "scope", title: "Goal · Hedef",
-                        subtitle: store.composerGoal.map { "\($0.status.uppercased()) · \($0.objective)" } ?? "Codex'e takip edeceği açık bir hedef ver.") {
+                toolRow(index: 3, symbol: "scope", title: "Goal",
+                        subtitle: store.composerGoal.map { "\($0.status.uppercased()) · \($0.objective)" } ?? "Give Codex a clear objective to work toward.") {
                     store.beginComposerGoalEditing()
                 }
                 if store.composerGoalEditing {
                     VStack(alignment: .leading, spacing: 7) {
                         RenameNameField(text: Binding(get: { store.goalObjective }, set: { store.updateGoalObjective($0) }),
-                                        enabled: !store.composerGoalBusy, accessibilityLabel: "Goal hedefi",
-                                        placeholder: "Codex neyi tamamlasın?")
+                                        enabled: !store.composerGoalBusy, accessibilityLabel: "Conversation goal",
+                                        placeholder: "What should Codex accomplish?")
                             .frame(height: 26).padding(.horizontal, 8)
                             .background(BavbavTheme.background.panelBackdrop()).clipShape(RoundedRectangle(cornerRadius: 5))
                         HStack {
-                            Text("Bu sohbete kaydedilir. Mesaj gönderdiğinde hedef üzerinde çalışmaya başlar.")
+                            Text("Saved to this chat. Send a message to start working toward the goal.")
                                 .font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted).readableForeground()
                             Spacer()
-                            Button("Kaydet") { store.saveComposerGoal() }
+                            Button("Save") { store.saveComposerGoal() }
                                 .buttonStyle(.plain).font(BavbavTheme.mono(9, weight: .semibold))
                                 .foregroundStyle(BavbavTheme.accent).readableForeground().disabled(store.composerGoalBusy)
                         }
@@ -114,10 +114,10 @@ struct ChatComposerView: View {
                 }
                 if let goal = store.composerGoal {
                     HStack(spacing: 6) {
-                        Text(goal.remainingTokens.map { "\($0) token kaldı" } ?? "\(goal.tokensUsed) token kullanıldı")
+                        Text(goal.remainingTokens.map { "\($0) tokens remaining" } ?? "\(goal.tokensUsed) tokens used")
                             .font(BavbavTheme.mono(8)).foregroundStyle(BavbavTheme.muted).readableForeground()
                         Spacer()
-                        Button("Hedefi kaldır") { store.clearComposerGoal() }
+                        Button("Clear goal") { store.clearComposerGoal() }
                             .buttonStyle(.plain).font(BavbavTheme.mono(8))
                             .foregroundStyle(BavbavTheme.warning).readableForeground().disabled(store.composerGoalBusy)
                     }
@@ -128,10 +128,10 @@ struct ChatComposerView: View {
                 }
                 Divider().overlay(BavbavTheme.border)
                 Text(store.composerGoalEditing
-                     ? "\(shortcuts.key("composer.goal.write.composerGoalSave.key")) KAYDET · \(shortcuts.key("composer.goal.write.composerGoalCancel.key")) GERİ"
-                     : "\(shortcuts.key("composer.tools.up.key")) ↑ · \(shortcuts.key("composer.tools.down.key")) ↓ · \(shortcuts.key("composer.tools.composerToolOpen.space")) SEÇ · \(shortcuts.key("composer.tools.composerToolsClose.key")) KAPAT")
+                     ? "\(shortcuts.key("composer.goal.write.composerGoalSave.key")) SAVE · \(shortcuts.key("composer.goal.write.composerGoalCancel.key")) BACK"
+                     : "\(shortcuts.key("composer.tools.up.key")) ↑ · \(shortcuts.key("composer.tools.down.key")) ↓ · \(shortcuts.key("composer.tools.composerToolOpen.space")) SELECT · \(shortcuts.key("composer.tools.composerToolsClose.key")) CLOSE")
                     .font(BavbavTheme.mono(7, weight: .semibold)).foregroundStyle(BavbavTheme.muted).readableForeground()
-                Text("En fazla 12 dosya · dosya başına 25 MB · Göndermeden paylaşılmaz")
+                Text("Up to 12 files · 25 MiB each · Shared only when sent")
                     .font(BavbavTheme.mono(7)).foregroundStyle(BavbavTheme.muted).readableForeground()
             }.padding(12)
         }

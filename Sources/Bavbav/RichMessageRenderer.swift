@@ -90,20 +90,20 @@ enum MessageLinkPolicy {
         guard let allowed = destination(url.absoluteString) else { return }
         if allowed.isFileURL {
             guard FileManager.default.fileExists(atPath: allowed.path) else {
-                showOpenFailure("Dosya artık bu konumda bulunmuyor:\n\(allowed.path)")
+                showOpenFailure("The file no longer exists at this location:\n\(allowed.path)")
                 return
             }
             NSWorkspace.shared.activateFileViewerSelecting([allowed])
         } else if !NSWorkspace.shared.open(allowed) {
-            showOpenFailure("Bu bağlantıyı açabilecek bir uygulama bulunamadı:\n\(allowed.absoluteString)")
+            showOpenFailure("No application could open this link:\n\(allowed.absoluteString)")
         }
     }
 
     private static func showOpenFailure(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "Bağlantı açılamadı"
+        alert.messageText = "Could not open link"
         alert.informativeText = message
-        alert.addButton(withTitle: "Tamam")
+        alert.addButton(withTitle: "OK")
         if let window = NSApp.keyWindow { alert.beginSheetModal(for: window) }
         else { alert.runModal() }
     }

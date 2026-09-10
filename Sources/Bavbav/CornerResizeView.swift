@@ -113,7 +113,7 @@ final class CornerResizeHandle: NSView {
     init(corner: ResizeCorner) {
         self.corner = corner
         super.init(frame: .zero)
-        setAccessibilityLabel("Pencereyi boyutlandır")
+        setAccessibilityLabel("Resize window")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

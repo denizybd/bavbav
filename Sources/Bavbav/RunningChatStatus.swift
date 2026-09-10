@@ -36,7 +36,7 @@ final class RunningChatStatus {
         button.imagePosition = .imageOnly
         button.imageScaling = .scaleNone
         button.contentTintColor = nil
-        button.toolTip = "\(count) sohbet çalışıyor"
-        button.setAccessibilityLabel("Bavbav · \(count) sohbet çalışıyor")
+        button.toolTip = "Running chats: \(count)"
+        button.setAccessibilityLabel("Bavbav · Running chats: \(count)")
     }
 }

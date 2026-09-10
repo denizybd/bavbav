@@ -7,24 +7,24 @@ enum ApplicationMenu {
         let application = NSMenu(title: "Bavbav")
         let appItem = menu.addItem(withTitle: "Bavbav", action: nil, keyEquivalent: "")
         appItem.submenu = application
-        application.addItem(withTitle: "Bavbav Hakkında", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        application.addItem(withTitle: "About Bavbav", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         application.addItem(.separator())
-        application.addItem(withTitle: "Bavbav’ı Gizle", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        let hideOthers = application.addItem(withTitle: "Diğerlerini Gizle", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        application.addItem(withTitle: "Hide Bavbav", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = application.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
-        application.addItem(withTitle: "Tümünü Göster", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        application.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         application.addItem(.separator())
-        application.addItem(withTitle: "Bavbav’dan Çık", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        application.addItem(withTitle: "Quit Bavbav", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         application.items.forEach { $0.target = NSApp }
-        let settings = NSMenuItem(title: "Ayarlar…", action: #selector(BavbavAppDelegate.showAppSettings(_:)), keyEquivalent: "x")
+        let settings = NSMenuItem(title: "Settings…", action: #selector(BavbavAppDelegate.showAppSettings(_:)), keyEquivalent: "x")
         settings.target = NSApp.delegate
         application.insertItem(settings, at: 1)
 
-        let edit = NSMenu(title: "Düzenle")
-        menu.addItem(withTitle: "Düzenle", action: nil, keyEquivalent: "").submenu = edit
-        edit.addItem(withTitle: "Kopyala", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        edit.addItem(withTitle: "Yapıştır", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: "Tümünü Seç", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let edit = NSMenu(title: "Edit")
+        menu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         NSApp.mainMenu = menu
         if let bindings { update(menu, bindings: bindings) }
     }

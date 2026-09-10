@@ -30,9 +30,9 @@ struct AppPreferencesView: View {
 
     private var title: String {
         switch preferences.page {
-        case .home: return "AYARLAR"
+        case .home: return "SETTINGS"
         case .shortcuts: return "SHORTCUTS"
-        case .appearance: return "GÖRÜNÜM"
+        case .appearance: return "APPEARANCE"
         }
     }
 
@@ -55,14 +55,14 @@ struct AppPreferencesView: View {
             Spacer(minLength: 4)
             if preferences.page != .home {
                 Button { preferences.goBack() } label: {
-                    Text("← GERİ")
+                    Text("← BACK")
                         .font(BavbavTheme.mono(8, weight: .bold))
                         .foregroundStyle(BavbavTheme.muted).readableForeground()
                         .padding(7)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Ayarların ana sayfasına dön")
+                .accessibilityLabel("Back to settings")
             }
         }
         .padding(.horizontal, 13)
@@ -71,12 +71,12 @@ struct AppPreferencesView: View {
 
     private var home: some View {
         VStack(alignment: .leading, spacing: 8) {
-            preferenceRow(index: 0, title: "Shortcuts", subtitle: "Klavye kısayolları", symbol: "keyboard")
-            preferenceRow(index: 1, title: "Görünüm", subtitle: "Arka plan saydamlığı", symbol: "circle.lefthalf.filled")
+            preferenceRow(index: 0, title: "Shortcuts", subtitle: "Keyboard shortcuts", symbol: "keyboard")
+            preferenceRow(index: 1, title: "Appearance", subtitle: "Background transparency", symbol: "circle.lefthalf.filled")
             Spacer(minLength: 2)
             HStack(spacing: 5) {
                 Circle().fill(BavbavTheme.accent).frame(width: 4, height: 4)
-                Text("Değişiklikler otomatik kaydedilir.")
+                Text("Changes are saved automatically.")
                     .font(BavbavTheme.mono(8))
                     .foregroundStyle(BavbavTheme.muted).readableForeground()
             }
@@ -127,15 +127,15 @@ struct AppPreferencesView: View {
             VStack(alignment: .leading, spacing: 13) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("ARKA PLAN SAYDAMLIĞI")
+                        Text("BACKGROUND TRANSPARENCY")
                             .font(BavbavTheme.mono(9, weight: .semibold))
                             .foregroundStyle(BavbavTheme.text).readableForeground()
-                        Text("Tüm sohbet ve köşe pencereleri")
+                        Text("All chats and panels")
                             .font(BavbavTheme.mono(8))
                             .foregroundStyle(BavbavTheme.muted).readableForeground()
                     }
                     Spacer(minLength: 4)
-                    Text("%\(Int(preferences.transparencyPercent))")
+                    Text("\(Int(preferences.transparencyPercent))%")
                         .font(BavbavTheme.mono(28, weight: .light))
                         .foregroundStyle(BavbavTheme.accent).readableForeground()
                         .monospacedDigit()
@@ -146,12 +146,12 @@ struct AppPreferencesView: View {
                         set: { preferences.setTransparency($0) }
                     ), in: 0...100)
                     .tint(BavbavTheme.accent)
-                    .accessibilityLabel("Arka plan saydamlığı")
-                    .accessibilityValue("Yüzde \(Int(preferences.transparencyPercent))")
+                    .accessibilityLabel("Background transparency")
+                    .accessibilityValue("\(Int(preferences.transparencyPercent)) percent")
                     HStack {
-                        Text("%0 · OPAK")
+                        Text("0% · OPAQUE")
                         Spacer()
-                        Text("%100 · ŞEFFAF ZEMİN")
+                        Text("100% · TRANSPARENT")
                     }
                     .font(BavbavTheme.mono(7, weight: .medium))
                     .foregroundStyle(BavbavTheme.muted).readableForeground()
@@ -160,7 +160,7 @@ struct AppPreferencesView: View {
                     Image(systemName: "info.circle")
                         .font(.system(size: 10))
                         .foregroundStyle(BavbavTheme.accent).readableForeground()
-                    Text("Zemin saydamlaşır; yazılar solmaz. Yüksek saydamlıkta otomatik kontrast ve ince koyu gölge okunurluğu destekler. %100’de de kontroller çalışır.")
+                    Text("Only backgrounds fade. Text stays opaque, with extra contrast at high transparency. Controls remain active at 100%.")
                         .font(BavbavTheme.mono(8))
                         .foregroundStyle(BavbavTheme.muted).readableForeground()
                         .fixedSize(horizontal: false, vertical: true)
@@ -173,7 +173,7 @@ struct AppPreferencesView: View {
                     HStack(spacing: 6) {
                         Text(preferences.keyBindings.label("prefs.appearance.resetAppearance.space"))
                             .foregroundStyle(BavbavTheme.accent).readableForeground()
-                        Text("Sıfırla · %0")
+                        Text("Reset · 0%")
                             .foregroundStyle(BavbavTheme.text).readableForeground()
                     }
                     .font(BavbavTheme.mono(9, weight: .medium))
@@ -191,26 +191,26 @@ struct AppPreferencesView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             if preferences.keyBindings.recording {
-                footerKey("●", "TUŞ BEKLENİYOR")
+                footerKey("●", "WAITING FOR KEYS")
             } else if preferences.keyBindings.editingID != nil {
-                footerKey(preferences.keyBindings.label("prefs.confirm.applyShortcut.key"), "UYGULA")
-                footerKey(preferences.keyBindings.label("prefs.confirm.recordShortcut.key"), "TEKRAR")
-                footerKey(preferences.keyBindings.label("prefs.confirm.cancelShortcut.key"), "VAZGEÇ")
+                footerKey(preferences.keyBindings.label("prefs.confirm.applyShortcut.key"), "APPLY")
+                footerKey(preferences.keyBindings.label("prefs.confirm.recordShortcut.key"), "RETRY")
+                footerKey(preferences.keyBindings.label("prefs.confirm.cancelShortcut.key"), "CANCEL")
             } else {
             switch preferences.page {
             case .home:
-                footerKey(preferences.keyBindings.label("prefs.home.down.key"), "SEÇ")
-                footerKey(preferences.keyBindings.label("prefs.home.activatePreference.space"), "AÇ")
-                footerKey(preferences.keyBindings.label("prefs.home.backPreference.key"), "KAPAT")
+                footerKey(preferences.keyBindings.label("prefs.home.down.key"), "SELECT")
+                footerKey(preferences.keyBindings.label("prefs.home.activatePreference.space"), "OPEN")
+                footerKey(preferences.keyBindings.label("prefs.home.backPreference.key"), "CLOSE")
             case .shortcuts:
-                footerKey(preferences.keyBindings.label("prefs.shortcuts.down.key"), "SEÇ")
-                footerKey(preferences.keyBindings.label("prefs.shortcuts.activatePreference.key"), "DÜZENLE")
-                footerKey(preferences.keyBindings.label("prefs.shortcuts.backPreference.key"), "GERİ")
+                footerKey(preferences.keyBindings.label("prefs.shortcuts.down.key"), "SELECT")
+                footerKey(preferences.keyBindings.label("prefs.shortcuts.activatePreference.key"), "EDIT")
+                footerKey(preferences.keyBindings.label("prefs.shortcuts.backPreference.key"), "BACK")
             case .appearance:
                 footerKey(preferences.keyBindings.label("prefs.appearance.less5.key"), "−5")
                 footerKey(preferences.keyBindings.label("prefs.appearance.more5.key"), "+5")
-                footerKey(preferences.keyBindings.label("prefs.appearance.resetAppearance.space"), "SIFIRLA")
-                footerKey(preferences.keyBindings.label("prefs.appearance.backPreference.key"), "GERİ")
+                footerKey(preferences.keyBindings.label("prefs.appearance.resetAppearance.space"), "RESET")
+                footerKey(preferences.keyBindings.label("prefs.appearance.backPreference.key"), "BACK")
             }
             }
             Spacer(minLength: 0)
