@@ -107,6 +107,70 @@ private actor InteractionProbe {
     }
 }
 
+enum RolloutConversationChecks {
+    static func run() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-rollout-check-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("fixture.jsonl")
+        func event(_ id: String, thread: String = "root", type: String = "AgentMessage", text: String = "Merhaba dünya") throws -> Data {
+            var data = try JSONSerialization.data(withJSONObject: ["type": "event_msg", "timestamp": "2026-09-11T00:00:00.000Z",
+                "payload": ["type": "item_completed", "thread_id": thread,
+                    "item": ["id": id, "type": type, "content": [["type": "Text", "text": text]]]]], options: [.sortedKeys])
+            data.append(10)
+            return data
+        }
+        func require(_ value: Bool, _ reason: String) throws {
+            if !value { throw NSError(domain: "RolloutChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: reason]) }
+        }
+        var data = try event("first", type: "UserMessage")
+        data.append(try event("child", thread: "child"))
+        data.append(try event("secret", type: "Reasoning", text: "Do not render private reasoning"))
+        data.append(try event("second"))
+        try data.write(to: path)
+        let reader = RolloutConversationReader()
+        let initial = try await reader.read(path: path.path, threadID: "root")
+        try require(initial.map(\.id) == ["first", "second"], "only this thread's public messages are read")
+        let repeated = try await reader.read(path: path.path, threadID: "root")
+        try require(repeated == initial, "unchanged log has no duplicates")
+        let third = try event("third", text: String(repeating: "ğ", count: 600))
+        let file = try FileHandle(forWritingTo: path)
+        try file.seekToEnd()
+        try file.write(contentsOf: third.dropLast())
+        let partial = try await reader.read(path: path.path, threadID: "root")
+        try require(partial == initial, "partial last line waits for completion")
+        try file.write(contentsOf: Data([10])); try file.close()
+        let appended = try await reader.read(path: path.path, threadID: "root")
+        try require(appended.map(\.id) == ["first", "second", "third"], "incremental UTF-8 message becomes visible")
+        let merged = RolloutConversationReader.merge([appended[1]], with: appended)
+        try require(merged.map(\.id) == ["first", "second", "third"], "indexed overlap preserves chronology and identity")
+        try require(RolloutConversationReader.merge(appended, with: appended) == appended, "caught-up projection does not duplicate messages")
+        try (try event("replacement")).write(to: path)
+        let replaced = try await reader.read(path: path.path, threadID: "root")
+        try require(replaced.map(\.id) == ["replacement"], "truncated log discards old cache")
+        try (try event("atomic-replacement", text: String(repeating: "a", count: 1_000))).write(to: path, options: .atomic)
+        let atomic = try await reader.read(path: path.path, threadID: "root")
+        try require(atomic.map(\.id) == ["atomic-replacement"], "larger atomic replacement resets the file cursor")
+        if let live = ProcessInfo.processInfo.environment["BAVBAV_READ_ONLY_ROLLOUT"],
+           let thread = ProcessInfo.processInfo.environment["BAVBAV_READ_ONLY_THREAD"] {
+            let messages = try await reader.read(path: live, threadID: thread)
+            print("READ-ONLY ROLLOUT: \(messages.count) public messages; latest timestamp \(messages.last?.timestamp?.description ?? "unknown")")
+        }
+        let sentAt = Date(timeIntervalSince1970: 100)
+        let local = CodexMessage(id: "local", role: .user, text: "same", timestamp: sentAt)
+        let old = CodexMessage(id: "old", role: .user, text: "same", timestamp: sentAt.addingTimeInterval(-10))
+        var pending = [OptimisticUserMessage(threadID: "root", localID: "local", text: "same")]
+        let waiting = MessageReconciler.refreshedHistory([old], current: [old, local], threadID: "root", pending: &pending)
+        try require(waiting.map(\.id) == ["old", "local"] && pending[0].serverID == nil, "old identical prompt cannot swallow pending send")
+        let echo = CodexMessage(id: "echo", role: .user, text: "same", timestamp: sentAt)
+        let confirmed = MessageReconciler.refreshedHistory([old, echo], current: waiting, threadID: "root", pending: &pending)
+        try require(confirmed.map(\.id) == ["old", "echo"] && pending[0].serverID == "echo", "new persisted echo replaces optimistic row exactly once")
+        let repeatedEcho = MessageReconciler.refreshedHistory([old, echo], current: confirmed, threadID: "root", pending: &pending)
+        try require(repeatedEcho == confirmed, "repeated refresh does not duplicate send")
+        print("✓ rollout fallback: identity, isolation, partial append, UTF-8, chronology, truncation")
+    }
+}
+
 @main
 struct BavbavChecks {
     static func main() async {
@@ -115,6 +179,7 @@ struct BavbavChecks {
             try checkInteraction()
             try checkRuntimeModels()
             try checkMessageReconciliation()
+            try await RolloutConversationChecks.run()
             print("✓ ordering")
             print("✓ keyboard interaction")
             print("✓ runtime settings models")

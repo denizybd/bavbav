@@ -506,6 +506,12 @@ enum ComposerActionsCheck {
             try check(store.queuedPromptCount(for: desktopOwned.id) == 1, "attachment queue can form while writer handoff is in flight")
             try await waitUntil { !store.messageSending && requests("turn/start").count == beforeFork + 2 }
             let forkTurns = Array(requests("turn/start").suffix(2))
+            let forkPanel = NSApp.windows.compactMap { $0 as? OverlayPanel }
+                .first { $0.representedThread?.id == "fixture-fork" }
+            try check(forkPanel?.chatPresentation?.snapshot.thread.id == "fixture-fork",
+                      "writer handoff updates the displayed window thread, not only its panel registry")
+            try check(forkPanel?.chatPresentation?.isActive == true,
+                      "writer handoff keeps the live presentation active")
             try check(forkTurns.allSatisfy { $0["threadId"] as? String == "fixture-fork" },
                       "writer-conflict handoff targets fork for original and queued turn")
             try check((forkTurns[0]["collaborationMode"] as? [String: Any])?["mode"] as? String == "plan"

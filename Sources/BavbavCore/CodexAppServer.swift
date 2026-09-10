@@ -69,6 +69,7 @@ public actor CodexAppServer {
     private var pendingServerRequests: [CodexRequestID: PendingServerRequest] = [:]
     private var runtimeByThreadID: [String: CodexThreadRuntime] = [:]
     private var rolloutPathByThreadID: [String: String] = [:]
+    private let conversationRollout = RolloutConversationReader()
 
     private let journalWorker: Bool
     private var journalThreadID: String?
@@ -766,6 +767,24 @@ public actor CodexAppServer {
     }
 
     public func readThread(id: String, maxMessages: Int? = nil) async throws -> [CodexMessage] {
+        let indexed = try await readIndexedThread(id: id, maxMessages: maxMessages)
+        guard maxMessages == nil || maxMessages! > 0 else { return [] }
+        var path = rolloutPathByThreadID[id]
+        if path == nil, !serverMetadata.codexHome.isEmpty {
+            let home = serverMetadata.codexHome
+            path = await Task.detached(priority: .utility) { Self.findRolloutPath(codexHome: home, threadID: id) }.value
+            if let path { rolloutPathByThreadID[id] = path }
+        }
+        guard let path else { return indexed }
+        do {
+            let persisted = try await conversationRollout.read(path: path, threadID: id)
+            let merged = RolloutConversationReader.merge(indexed, with: persisted)
+            return maxMessages.map { Array(merged.suffix($0)) } ?? merged
+        } catch is CancellationError { throw CancellationError() }
+        catch { return indexed } // A missing/unreadable log must not hide API history.
+    }
+
+    private func readIndexedThread(id: String, maxMessages: Int?) async throws -> [CodexMessage] {
         try await ensureConnected()
         if let maxMessages, maxMessages <= 0 { return [] }
         let metadata: ThreadMetadata

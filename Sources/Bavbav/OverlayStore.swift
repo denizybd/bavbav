@@ -368,13 +368,13 @@ final class OverlayStore: ObservableObject {
     /// closed, inactive, or reconnecting are not dependent on missed live events.
     func syncVisibleConversation() {
         guard let threadID = detailThread?.id,
-              !sendingThreadIDs.contains(threadID),
               !detailReadInFlight,
-              !activityReadInFlight,
-              !optimisticUserMessages.contains(where: { $0.threadID == threadID })
+              !activityReadInFlight
         else { return }
         startDetailLoad(threadID: threadID)
-        startActivityLoad(threadID: threadID)
+        // Recover missing live messages even during a running turn. Heavy
+        // activity history still waits until the turn is no longer sending.
+        if !sendingThreadIDs.contains(threadID) { startActivityLoad(threadID: threadID) }
     }
 
     func navigate(_ panel: OverlayKind, delta: Int) {
@@ -2485,7 +2485,9 @@ final class OverlayStore: ObservableObject {
                       generation == detailLoadGeneration
                 else { return }
                 if revision == conversationRevision {
-                    detailMessages = messages.filter { $0.kind.isConversation }.map { self.datedMessage($0) }
+                    let history = messages.filter { $0.kind.isConversation }.map { self.datedMessage($0) }
+                    detailMessages = MessageReconciler.refreshedHistory(history, current: detailMessages,
+                        threadID: threadID, pending: &optimisticUserMessages)
                 }
                 detailLoading = false
             } catch {

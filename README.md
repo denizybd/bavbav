@@ -195,6 +195,8 @@ flowchart LR
 
 The UI keeps runtime state per conversation, reconciles optimistic sends with server events, and protects current content from stale history responses. Closing a detail window releases its view without clearing the running turn or its queue. Rich-text, formula, and image caches have explicit size limits.
 
+When an App Server history projection stops advancing, Bavbav supplements the indexed conversation with completed public user/assistant messages from that thread's local rollout. This read-only compatibility path does not repair or write the Codex databases, replay tool calls, or expose encrypted/private reasoning. It incrementally reads appended records off the UI thread, ignores incomplete lines, and caches at most two transcripts (2,000 messages / 8 MiB of text each; lines over 8 MiB and messages over 1 MiB are skipped). The local rollout format is not a substitute for the supported App Server protocol and can change upstream. Active conversations may refresh while sending; optimistic rows are retained until their persisted echo arrives. Writer handoffs update both the native window identity and its displayed thread.
+
 The transport follows the [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server). Markdown uses the pinned `swift-markdown` dependency; mathematical notation is rendered with the vendored SwiftMath package.
 
 ## Development and checks

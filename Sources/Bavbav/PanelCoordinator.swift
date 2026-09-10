@@ -577,6 +577,13 @@ final class PanelCoordinator: NSObject, NSWindowDelegate {
         }
         detailPanels[target.id] = panel
         panel.representedThread = target
+        // ChatWindowRoot passes this thread into the live detail view too.
+        // Updating only the registry left the header, input routing and drop
+        // target bound to the old (now redirected) conversation after a fork.
+        if let snapshot = panel.chatPresentation?.snapshot {
+            panel.chatPresentation?.snapshot = snapshot.replacingThread(target)
+        }
+        panel.title = target.title
         if let index = detailOrder.firstIndex(of: source.id) { detailOrder[index] = target.id }
     }
 

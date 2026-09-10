@@ -17,6 +17,30 @@ public struct OptimisticUserMessage: Equatable, Sendable {
 }
 
 public enum MessageReconciler {
+    /// Refresh while a send is in flight without dropping its optimistic row
+    /// or mistaking an older identical prompt for this submission's echo.
+    public static func refreshedHistory(_ history: [CodexMessage], current: [CodexMessage],
+                                        threadID: String, pending: inout [OptimisticUserMessage]) -> [CodexMessage] {
+        var result = history
+        var claimed = Set(pending.compactMap(\.serverID))
+        for index in pending.indices where pending[index].threadID == threadID {
+            let candidate = pending[index]
+            guard let row = current.first(where: { $0.id == candidate.localID || $0.id == candidate.serverID }) else { continue }
+            let match = history.first { incoming in
+                if incoming.id == candidate.localID || incoming.id == candidate.serverID { return true }
+                guard candidate.serverID == nil, !claimed.contains(incoming.id), incoming.role == .user,
+                      normalized(incoming.text) == normalized(candidate.text),
+                      let sent = row.timestamp, let received = incoming.timestamp else { return false }
+                return received >= sent.addingTimeInterval(-1)
+            }
+            if let match {
+                pending[index].serverID = match.id
+                claimed.insert(match.id)
+            } else if !result.contains(where: { $0.id == row.id }) { result.append(row) }
+        }
+        return result
+    }
+
     /// Queue-aware variant used when an active turn receives one or more steer
     /// messages before it completes. Identity wins; text only matches an echo
     /// that has not received a persisted server id yet.
