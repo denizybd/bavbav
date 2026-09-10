@@ -13,12 +13,12 @@ enum RunningChatStatusCheck {
         var checks = 0; var failures: [String] = []
         func expect(_ condition: Bool, _ label: String) { checks += 1; if !condition { failures.append(label) } }
         func expectCount(_ count: Int, _ label: String) {
-            expect(store.runningChatCount == count && button.attributedTitle.string == String(count), label)
+            expect(store.runningChatCount == count && button.image?.accessibilityDescription == String(count), label)
         }
         expectCount(0, "idle shows zero, never an icon")
-        expect(button.image == nil && button.imagePosition == .noImage, "number only")
-        expect(button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == BavbavTheme.focusAccent,
-               "exact same color object as window focus ring")
+        expect(button.title.isEmpty && button.imagePosition == .imageOnly, "number only without system-colored title")
+        expect(button.image?.isTemplate == false && button.contentTintColor == nil,
+               "system template tint cannot replace the focus-ring ink")
         store.handleServerEvent(.turnStarted(threadID: "hidden-a", turnID: "a1"))
         expectCount(1, "hidden chat counts without any open window")
         store.handleServerEvent(.turnStarted(threadID: "hidden-a", turnID: "a1"))
@@ -45,15 +45,63 @@ enum RunningChatStatusCheck {
         expectCount(0, "transport loss clears stale working count")
         presenter = nil
         store.handleServerEvent(.turnStarted(threadID: "released", turnID: "t"))
-        expect(button.attributedTitle.string == "0", "presenter releases subscription")
+        expect(button.image?.accessibilityDescription == "0", "presenter releases subscription")
         for name in [NSAppearance.Name.aqua, .darkAqua] {
             button.appearance = NSAppearance(named: name)
             RunningChatStatus.apply(count: 12, to: button)
-            expect(button.attributedTitle.string == "12" && button.attributedAlternateTitle.string == "12",
+            expect(button.image?.accessibilityDescription == "12" && button.alternateImage === button.image,
                    "plain digits retained across appearances")
+            for count in [0, 1, 12, 123] {
+                RunningChatStatus.apply(count: count, to: button)
+                var opaque = 0
+                var wrongColor = 0
+                var sample = ""
+                button.effectiveAppearance.performAsCurrentDrawingAppearance {
+                    guard let image = button.image,
+                          let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                            pixelsWide: Int(image.size.width * 2) + 8, pixelsHigh: 36,
+                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                          let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+                        wrongColor += 1
+                        return
+                    }
+                    // Compare ink to a focus-ring swatch in the SAME output
+                    // context, avoiding TIFF export/display-profile retagging.
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current = context
+                    image.draw(in: NSRect(x: 0, y: 0, width: image.size.width * 2, height: 36))
+                    BavbavTheme.focusAccent.setFill()
+                    NSRect(x: bitmap.pixelsWide - 8, y: 0, width: 8, height: 36).fill()
+                    NSGraphicsContext.restoreGraphicsState()
+                    guard let expected = bitmap.colorAt(x: bitmap.pixelsWide - 4, y: 18)?.usingColorSpace(.deviceRGB) else {
+                        wrongColor += 1
+                        return
+                    }
+                    for y in 0..<bitmap.pixelsHigh {
+                        for x in 0..<(bitmap.pixelsWide - 8) {
+                            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), color.alphaComponent > 0.9 else { continue }
+                            opaque += 1
+                            if sample.isEmpty { sample = "\(color) expected \(expected)" }
+                            if abs(color.redComponent - expected.redComponent) > 0.04
+                                || abs(color.greenComponent - expected.greenComponent) > 0.04
+                                || abs(color.blueComponent - expected.blueComponent) > 0.04 { wrongColor += 1 }
+                        }
+                    }
+                    if count == 12, let data = bitmap.representation(using: .png, properties: [:]) {
+                        let path = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-green-count-\(name.rawValue).png")
+                        do {
+                            try data.write(to: path)
+                            print("STATUS COUNT UI ARTIFACT: \(path.path)")
+                        } catch { wrongColor += 1 }
+                    }
+                }
+                expect(opaque > 0 && wrongColor == 0, "actual digit pixels match focus green: \(name.rawValue), \(count); opaque=\(opaque), wrong=\(wrongColor), \(sample)")
+                expect(button.image?.isTemplate == false && button.title.isEmpty, "colored digits never use system text tint")
+            }
         }
         withExtendedLifetime(presenter) {}
-        if failures.isEmpty { print("BAVBAV STATUS COUNT CHECK PASSED: \(checks) checks; lifecycle, background, waiting, duplicates and native title styling") }
+        if failures.isEmpty { print("BAVBAV STATUS COUNT CHECK PASSED: \(checks) checks; lifecycle, background, waiting, duplicates and light/dark digit pixels") }
         else { failures.forEach { print("STATUS COUNT CHECK FAILED: \($0)") } }
         return failures.isEmpty
     }

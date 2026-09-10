@@ -40,6 +40,8 @@ sohbet sayısı görünür (`0` dahil). Q ile kapatılmış arka plan sohbetleri
 yalnız sırada duran veya kullanıcıdan yanıt/izin bekleyenler sayılmaz. Sayaç
 yerel çalışma olaylarından anında güncellenir; ek sorgu veya zamanlayıcı kullanmaz.
 Tıklayınca mevcut Bavbav menüsü açılmaya devam eder.
+Sayı, macOS'un siyah/beyaz metin rengiyle değiştirmemesi için template olmayan
+saydam bir görsel olarak çizilir; açık/koyu görünümde çerçeve yeşili korunur.
 
 `Enter` ile yazmayı açınca sağ kenardaki `+` (varsayılan `⌘K`), sohbetin içinde
 koyu bir özellik kartı açar. `W/S`, oklar ve `Space/Enter` ile seçilir; `Q` menüyü
