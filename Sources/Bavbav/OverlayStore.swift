@@ -237,6 +237,7 @@ final class OverlayStore: ObservableObject {
     private var settingsRefreshing = false
     private var lastFreshModelCatalogAt: Date?
     private var sendingThreadIDs: Set<String> = []
+    private var userFacingThreadIDs: Set<String> = []
     private var optimisticUserMessages: [OptimisticUserMessage] = []
     private var queuedThreadOrder: [String] = []
     private var draftsByThreadID: [String: String] = [:]
@@ -814,6 +815,7 @@ final class OverlayStore: ObservableObject {
     }
 
     private func updateChatCatalogs() {
+        registerUserFacingThreads(allThreads.map(\.id))
         let sorted = allThreads.sorted { $0.updatedAt > $1.updatedAt }
         recentChats = applySavedOrder(Array(sorted.filter { !self.isStandalone($0) }.prefix(8)), key: "order.recents")
         standaloneChats = applySavedOrder(Array(sorted.filter { self.isStandalone($0) }.prefix(3)), key: "order.standalone")
@@ -1727,6 +1729,7 @@ final class OverlayStore: ObservableObject {
         // Notifications may precede the start RPC response. Capture the mode
         // before exposing a running turn, and never overwrite it with a late ack.
         turnModesByThreadID[threadID] = mode
+        registerUserFacingThreads([threadID])
         markThreadSending(threadID)
         optimisticUserMessages.append(OptimisticUserMessage(
             threadID: threadID,
@@ -1983,14 +1986,24 @@ final class OverlayStore: ObservableObject {
         updateRunningChatCount()
     }
 
+    /// Only call with user-owned conversations: the source-filtered catalog or
+    /// a thread explicitly targeted by the composer, never arbitrary events.
+    func registerUserFacingThreads(_ ids: [String]) {
+        userFacingThreadIDs.formUnion(ids)
+        updateRunningChatCount()
+    }
+
     private func updateRunningChatCount() {
         let running = sendingThreadIDs.union(activeTurnIDsByThreadID.keys)
         let waiting = Set(pendingInteractions.map(\.threadID))
-        let count = running.subtracting(waiting).count
+        let count = running.intersection(userFacingThreadIDs).subtracting(waiting).count
         if runningChatCount != count { runningChatCount = count }
     }
 
     private func moveSendingState(from sourceThreadID: String, to destinationThreadID: String) {
+        if userFacingThreadIDs.contains(sourceThreadID) {
+            userFacingThreadIDs.insert(destinationThreadID)
+        }
         let turnID = activeTurnIDsByThreadID.removeValue(forKey: sourceThreadID)
         sendingThreadIDs.remove(sourceThreadID)
         markThreadSending(destinationThreadID, turnID: turnID)

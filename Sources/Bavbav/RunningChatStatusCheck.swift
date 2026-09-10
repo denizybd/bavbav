@@ -8,6 +8,7 @@ enum RunningChatStatusCheck {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = OverlayStore(defaults: defaults)
+        store.registerUserFacingThreads(["hidden-a", "hidden-b", "released"] + (0..<12).map { "many-\($0)" })
         let button = NSButton(frame: NSRect(x: 0, y: 0, width: 80, height: 24))
         var presenter: RunningChatStatus? = RunningChatStatus(store: store, button: button)
         var checks = 0; var failures: [String] = []
@@ -25,6 +26,22 @@ enum RunningChatStatusCheck {
         expectCount(1, "duplicate events cannot double count")
         store.handleServerEvent(.turnStarted(threadID: "hidden-b", turnID: "b1"))
         expectCount(2, "simultaneous independent chats")
+        store.registerUserFacingThreads(["third-root"])
+        store.handleServerEvent(.turnStarted(threadID: "third-root", turnID: "r3"))
+        for index in 0..<6 {
+            store.handleServerEvent(.turnStarted(threadID: "child-\(index)", turnID: "child-turn-\(index)"))
+        }
+        expectCount(3, "three user chats plus six subagents count as three, not nine")
+        store.handleServerEvent(.turnCompleted(threadID: "child-0", turnID: "child-turn-0", status: "completed", error: nil))
+        expectCount(3, "subagent completion does not decrement main chats")
+        store.handleServerEvent(.turnCompleted(threadID: "third-root", turnID: "r3", status: "completed", error: nil))
+        expectCount(2, "parent completion is independent of remaining child work")
+        store.handleServerEvent(.turnStarted(threadID: "late-catalog-root", turnID: "late"))
+        expectCount(2, "unclassified server events cannot inflate the counter")
+        store.registerUserFacingThreads(["late-catalog-root"])
+        expectCount(3, "late catalog discovery reconciles an already-running user chat")
+        store.handleServerEvent(.turnCompleted(threadID: "late-catalog-root", turnID: "late", status: "completed", error: nil))
+        expectCount(2, "late-discovered root completes normally")
         store.clearCurrentDetail(threadID: "hidden-a")
         expectCount(2, "Q closing UI does not stop or discount background work")
         let request = CodexInteractionRequest(requestID: .string("ask-a"), threadID: "hidden-a", turnID: "a1", itemID: nil,
