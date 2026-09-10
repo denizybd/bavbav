@@ -1,6 +1,7 @@
 import SwiftUI
 
 enum BavbavTheme {
+    static let focusAccent = NSColor(calibratedRed: 0.314, green: 0.886, blue: 0.722, alpha: 1)
     static let background = Color(red: 0.043, green: 0.051, blue: 0.063)
     static let surface = Color(red: 0.070, green: 0.082, blue: 0.102)
     static let raised = Color(red: 0.090, green: 0.106, blue: 0.129)

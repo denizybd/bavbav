@@ -20,6 +20,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeys: HotKeyCenter?
     private var inputRouter: InputRouter!
     private var statusItem: NSStatusItem!
+    private var runningChatStatus: RunningChatStatus?
     private var appIconController: AppIconController?
     private var refreshTimer: Timer?
     private var conversationSyncTimer: Timer?
@@ -27,6 +28,9 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
+        if environment["BAVBAV_STATUS_COUNT_CHECK"] == "1" {
+            Foundation.exit(RunningChatStatusCheck.run() ? 0 : 1)
+        }
         if environment["BAVBAV_IMAGE_CHECK"] == "1" {
             Task { Foundation.exit(await MessageImageCheck.run() ? 0 : 1) }
             return
@@ -740,12 +744,9 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installStatusMenu() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            let image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Bavbav")
-            image?.isTemplate = true
-            button.image = image
-            button.imageScaling = .scaleProportionallyDown
+            runningChatStatus = RunningChatStatus(store: store, button: button)
         }
 
         let menu = NSMenu()

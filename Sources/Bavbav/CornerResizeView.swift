@@ -99,7 +99,7 @@ final class WindowFocusRing: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard focused else { return }
-        NSColor(calibratedRed: 0.314, green: 0.886, blue: 0.722, alpha: 1).setStroke()
+        BavbavTheme.focusAccent.setStroke()
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.8, dy: 0.8), xRadius: 8, yRadius: 8)
         path.lineWidth = 0.8
         path.stroke()

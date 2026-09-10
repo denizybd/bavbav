@@ -201,7 +201,10 @@ final class OverlayStore: ObservableObject {
     @Published private(set) var queuedPromptsByThreadID: [String: [QueuedPrompt]] = [:]
     @Published private(set) var queueModeVisible = false
     @Published var queueInteraction = ListInteractionState()
-    @Published private(set) var pendingInteractions: [CodexInteractionRequest] = []
+    @Published private(set) var pendingInteractions: [CodexInteractionRequest] = [] {
+        didSet { updateRunningChatCount() }
+    }
+    @Published private(set) var runningChatCount = 0
     @Published private(set) var interactionSelection = 0
     @Published private(set) var interactionQuestionIndex = 0
     @Published private(set) var interactionResolving = false
@@ -1977,6 +1980,14 @@ final class OverlayStore: ObservableObject {
         sendingThreadIDs.insert(threadID)
         if let turnID { activeTurnIDsByThreadID[threadID] = turnID }
         messageSending = !sendingThreadIDs.isEmpty
+        updateRunningChatCount()
+    }
+
+    private func updateRunningChatCount() {
+        let running = sendingThreadIDs.union(activeTurnIDsByThreadID.keys)
+        let waiting = Set(pendingInteractions.map(\.threadID))
+        let count = running.subtracting(waiting).count
+        if runningChatCount != count { runningChatCount = count }
     }
 
     private func moveSendingState(from sourceThreadID: String, to destinationThreadID: String) {
@@ -1996,6 +2007,7 @@ final class OverlayStore: ObservableObject {
             || activeTurnIDsByThreadID[threadID] != nil
         activeTurnIDsByThreadID.removeValue(forKey: threadID)
         messageSending = !sendingThreadIDs.isEmpty
+        updateRunningChatCount()
         return wasTracked
     }
 

@@ -35,6 +35,12 @@ BAVBAV_APP_ICON_CHECK=1 BAVBAV_ICON_RESOURCE_DIR="$PWD/AppResources" .build/debu
 
 ## Yazma alanı: ekler, Plan ve Goal
 
+Menü barındaki simge yerine, odak çerçevesiyle aynı yeşilde yalnızca çalışan
+sohbet sayısı görünür (`0` dahil). Q ile kapatılmış arka plan sohbetleri sayılır;
+yalnız sırada duran veya kullanıcıdan yanıt/izin bekleyenler sayılmaz. Sayaç
+yerel çalışma olaylarından anında güncellenir; ek sorgu veya zamanlayıcı kullanmaz.
+Tıklayınca mevcut Bavbav menüsü açılmaya devam eder.
+
 `Enter` ile yazmayı açınca sağ kenardaki `+` (varsayılan `⌘K`), sohbetin içinde
 koyu bir özellik kartı açar. `W/S`, oklar ve `Space/Enter` ile seçilir; `Q` menüyü
 kapatıp yazmaya döner. Metin yazarken `Q` normal harftir. Bu yeni kısayollar da

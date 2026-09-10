@@ -37,6 +37,7 @@ codesign --force --deep --sign - "$staged_app_dir" >/dev/null
 codesign --verify --deep --strict "$staged_app_dir"
 BAVBAV_APP_ICON_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_APP_SWITCH_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_STATUS_COUNT_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_RICH_MESSAGE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_LINK_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_IMAGE_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
