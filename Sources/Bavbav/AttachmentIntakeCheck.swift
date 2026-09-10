@@ -30,7 +30,10 @@ enum AttachmentIntakeCheck {
             try createPNG(at: png)
             let note = sourceDirectory.appendingPathComponent("notes.txt")
             try Data("These are attachment test notes.\n".utf8).write(to: note)
-            let intake = AttachmentIntake(directory: importedDirectory, promiseTimeout: 0.8)
+            // Exercise the production deadline. A 0.8s deadline also covered
+            // ordinary file decoding/metadata work and failed on both released
+            // and new binaries under load before reaching the promise checks.
+            let intake = AttachmentIntake(directory: importedDirectory)
             let picked = await intake.ingest(urls: [png, note])
             try check(picked.errors.isEmpty && picked.attachments.count == 2, "file picker imports image and document: \(picked.errors)")
             try check(picked.attachments.map(\.isImage) == [true, false], "image/document kind retained")

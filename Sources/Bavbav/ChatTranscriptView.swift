@@ -23,14 +23,22 @@ final class ChatScrollController: NSObject, ObservableObject {
     private var touchScrolling = false
     private var momentumScrolling = false
     private var interactionGeneration = 0
+    private var readingOffset: CGFloat?
+    private var restoringReadingPosition = false
+    private weak var attachmentOwner: AnyObject?
     private var gestureActive: Bool { liveScrolling || touchScrolling || momentumScrolling }
 
-    func attach(_ scroll: NSScrollView) {
+    func attach(_ scroll: NSScrollView, owner: AnyObject? = nil) {
         guard let document = scroll.documentView else { return }
-        guard scrollView !== scroll || observedDocument !== scroll.documentView else { return }
+        if scrollView === scroll && observedDocument === document {
+            attachmentOwner = owner
+            return
+        }
         detach()
+        attachmentOwner = owner
         scrollView = scroll
         observedDocument = document
+        restoringReadingPosition = !followingBottom && readingOffset != nil
         scroll.contentView.postsBoundsChangedNotifications = true
         scroll.contentView.postsFrameChangedNotifications = true
         document.postsFrameChangedNotifications = true
@@ -65,6 +73,9 @@ final class ChatScrollController: NSObject, ObservableObject {
     }
 
     func detach() {
+        if !followingBottom, !restoringReadingPosition, let scrollView {
+            readingOffset = scrollView.contentView.bounds.minY
+        }
         attachmentGeneration &+= 1
         interactionGeneration &+= 1
         liveScrolling = false
@@ -78,6 +89,12 @@ final class ChatScrollController: NSObject, ObservableObject {
         eventMonitor = nil
         scrollView = nil
         observedDocument = nil
+        attachmentOwner = nil
+    }
+
+    func detach(owner: AnyObject) {
+        guard attachmentOwner === owner else { return }
+        detach()
     }
 
     deinit {
@@ -107,6 +124,8 @@ final class ChatScrollController: NSObject, ObservableObject {
         scrollEndWork?.cancel()
         scrollEndWork = nil
         followingBottom = true
+        restoringReadingPosition = false
+        readingOffset = nil
         setAwayFromBottom(false)
         contentChanged()
     }
@@ -124,16 +143,23 @@ final class ChatScrollController: NSObject, ObservableObject {
 
     func correctAfterLayout() {
         guard let scrollView else { return }
-        if followingBottom {
+        if followingBottom || (restoringReadingPosition && !gestureActive) {
             adjusting = true
             scrollView.layoutSubtreeIfNeeded()
             let clip = scrollView.contentView
-            let target = bottomOffset
+            let clipMaximum = max(clip.documentRect.minY, clip.documentRect.maxY - clip.bounds.height)
+            let desired = followingBottom ? bottomOffset : (readingOffset ?? clip.bounds.minY)
+            let target = min(clipMaximum, max(clip.documentRect.minY, desired))
             if abs(clip.bounds.minY - target) > 0.5 {
                 clip.scroll(to: NSPoint(x: clip.bounds.minX, y: target))
                 scrollView.reflectScrolledClipView(clip)
             }
             adjusting = false
+            // A replacement SwiftUI document may initially be empty. Keep the
+            // saved position until layout has enough content to restore it.
+            if !followingBottom && abs(target - desired) <= 0.5 {
+                restoringReadingPosition = false
+            }
         }
         setAwayFromBottom(!followingBottom && !isAtBottom)
     }
@@ -155,8 +181,12 @@ final class ChatScrollController: NSObject, ObservableObject {
         scrollEndWork?.cancel()
         scrollEndWork = nil
         followingBottom = false
+        restoringReadingPosition = false
     }
     @objc func userDidScroll() {
+        if let scrollView, !restoringReadingPosition {
+            readingOffset = scrollView.contentView.bounds.minY
+        }
         if gestureActive { followingBottom = false }
         setAwayFromBottom(!followingBottom && !isAtBottom)
         scrollEndWork?.cancel()
@@ -217,23 +247,27 @@ private struct TranscriptScrollProbe: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: Probe, context: Context) { view.connectAfterLayout() }
-    static func dismantleNSView(_ view: Probe, coordinator: ()) { view.controller?.detach() }
+    static func dismantleNSView(_ view: Probe, coordinator: ()) {
+        view.isDismantled = true
+        view.controller?.detach(owner: view)
+    }
 
     final class Probe: NSView {
         weak var controller: ChatScrollController?
         private var connectionScheduled = false
+        var isDismantled = false
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); connectAfterLayout() }
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); connectAfterLayout() }
         override func layout() { super.layout(); connectAfterLayout() }
         func connectAfterLayout() {
-            guard !connectionScheduled else { return }
+            guard !isDismantled, !connectionScheduled else { return }
             connectionScheduled = true
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.connectionScheduled = false
-                guard let scroll = self.enclosingScrollView else { return }
-                self.controller?.attach(scroll)
+                guard !self.isDismantled, let scroll = self.enclosingScrollView else { return }
+                self.controller?.attach(scroll, owner: self)
             }
         }
     }

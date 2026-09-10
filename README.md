@@ -228,6 +228,7 @@ sisteme ait olduğu için bunun dışındadır.
 - `Enter`: Açık sohbet penceresinde yazma alanını göster; proje seçiliyken yeni sohbet aç
 - Sohbet içindeyken `Shift+Tab`: Komut, plan, dosya değişikliği ve araç mesajlarını göster/gizle. Senin mesajların, Codex yanıtları, düşünce özetleri ve alt ajan mesajları her iki görünümde de kalır. Yazarken de çalışır; taslağı değiştirmez.
 - Sohbet ilk açıldığında son mesajdan başlar; geçmiş geç yüklense veya yanıt uzasa da alt konum korunur. Küçük trackpad hareketleri ve momentum dahil, yukarı kaydırıp okurken yeni mesajlar konumunu değiştirmez.
+- Sohbet görünümü yeniden oluşturulursa okuma konumu yeni kaydırma alanına taşınır; geçmiş geç yüklendiğinde de geri yüklenir. Eski görünümün gecikmiş kapanışı yeni görünümün kaydırma takibini kesmez.
 - Trackpad hareketinin sonu bir sessizlik süresiyle tahmin edilmez: parmaklar hâlâ yüzeydeyken duraklamak veya hızla yön değiştirmek otomatik alta takibi yeniden açmaz. Değişmeyen mesajların metin ölçümü kaydırma sırasında tekrar kullanılabilir.
 - Açık sohbetler arasında geçişte mevcut görünüm, okuma konumu ve metin seçimi korunur; geçmiş yenilenirken boş ekran gösterilmez. Q ile kapatmak görünümü ve pencere önbelleğini bırakır, arka plandaki Codex işini sonlandırmaz. Q sonrası yeniden açılış son mesajdan başlar.
 - `B` / `End` (`Fn+→`): Yazmıyorken etkin sohbetin en altına git. Yukarı kaydırınca sağ altta çıkan küçük `↓` düğmesi de aynı işi yapar; diğer sohbetleri etkilemez.

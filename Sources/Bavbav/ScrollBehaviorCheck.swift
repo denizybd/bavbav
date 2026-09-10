@@ -8,11 +8,12 @@ enum ScrollBehaviorCheck {
     private final class Document: NSView { override var isFlipped: Bool { true } }
     private final class TranscriptFixture: ObservableObject {
         @Published var items: [CodexMessage] = []
+        @Published var generation = 0
     }
     private struct FixtureView: View {
         @ObservedObject var fixture: TranscriptFixture
         let scroll: ChatScrollController
-        var body: some View { ChatTranscriptView(items: fixture.items, scroll: scroll) }
+        var body: some View { ChatTranscriptView(items: fixture.items, scroll: scroll).id(fixture.generation) }
     }
 
     /// Hidden native and SwiftUI windows only. No account, send, focus change,
@@ -50,6 +51,37 @@ enum ScrollBehaviorCheck {
             }
             let (panel, native, document, controller) = nativeFixture()
             await settle()
+            // SwiftUI can replace a transcript while retaining its per-window
+            // controller. The new native clip starts at zero, not our reading position.
+            let (_, oldScroll, _, remountController) = nativeFixture()
+            let oldOwner = NSObject()
+            remountController.attach(oldScroll, owner: oldOwner)
+            await settle()
+            remountController.userWillScroll()
+            oldScroll.contentView.scroll(to: NSPoint(x: 0, y: 1_200))
+            remountController.userDidScroll()
+            await settle()
+            let replacement = NSScrollView(frame: oldScroll.frame)
+            let replacementDocument = Document(frame: NSRect(x: 0, y: 0, width: 500, height: 100))
+            replacement.documentView = replacementDocument
+            let newOwner = NSObject()
+            remountController.attach(replacement, owner: newOwner)
+            remountController.detach(owner: oldOwner)
+            await settle()
+            replacementDocument.setFrameSize(NSSize(width: 500, height: 3_000))
+            await settle()
+            try check(abs(replacement.contentView.bounds.minY - 1_200) < 1,
+                      "replacement restores reading position after delayed history layout and stale teardown")
+            try check(!remountController.followingBottom, "restoring reading does not force bottom following")
+            remountController.jumpToBottom()
+            await settle()
+            try check(remountController.isAtBottom && replacement.contentView.bounds.minY > 2_000,
+                      "stale probe teardown cannot disconnect the replacement controller")
+            remountController.detach(owner: newOwner)
+            replacement.contentView.scroll(to: .zero)
+            remountController.contentChanged()
+            await settle()
+            try check(replacement.contentView.bounds.minY == 0, "current owner can still detach cleanly")
             try check(controller.isAtBottom && controller.followingBottom, "initial long history starts at bottom")
             try check(!controller.awayFromBottom && native.contentView.bounds.minY > 2_000, "initial arrow hidden, actual offset moved")
 
@@ -334,6 +366,19 @@ enum ScrollBehaviorCheck {
                 let drift = after.convert(after.bounds, to: nil).minY - expectedY
                 try check(abs(drift) < 2, "incremental scroll keeps visible text stable, step \(step), drift \(drift)pt")
             }
+            let beforeRemount = realScroll.contentView.bounds.minY
+            try check(beforeRemount > 100, "real transcript remount test starts away from top")
+            fixture.generation += 1
+            await settle(realPanel.contentView)
+            guard let remountedScroll = descendants(hosted).compactMap({ $0 as? NSScrollView }).first else {
+                throw Failure(message: "missing remounted native scroll view")
+            }
+            try check(remountedScroll !== realScroll, "fixture actually replaces the native scroll view")
+            try check(abs(remountedScroll.contentView.bounds.minY - beforeRemount) < 2,
+                      "SwiftUI remount retains nonzero reading position")
+            realController.jumpToBottom()
+            await settle(realPanel.contentView)
+            try check(realController.isAtBottom, "remounted SwiftUI transcript still follows explicit jump")
             fixture.items = [message(1)]
             await settle(realPanel.contentView)
             try check(realController.isAtBottom && !realController.awayFromBottom, "short history has no unnecessary jump button")
