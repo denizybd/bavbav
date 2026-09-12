@@ -193,6 +193,41 @@ enum ShortcutCustomizationCheck {
             _ = bindings.resetAll()
 
             prefs.page = .shortcuts; prefs.selectedIndex = 0
+            directions.removeAll()
+            for (vertical, horizontal, expected, dx, dy) in [
+                (UInt16(13), UInt16(0), WindowDirection.upLeft, CGFloat(-100), CGFloat(100)),
+                (13, 2, .upRight, 100, 100), (1, 0, .downLeft, -100, -100),
+                (1, 2, .downRight, 100, -100)
+            ] {
+                for (first, second) in [(vertical, horizontal), (horizontal, vertical)] {
+                    directions.removeAll()
+                    _ = router.handle(key(first, .shift))
+                    try check(directions.isEmpty, "diagonal prefix must not navigate early")
+                    _ = router.handle(key(second, .shift))
+                    _ = router.handle(key(second, .shift, repeated: true))
+                    _ = router.handle(key(first, .shift, type: .keyUp))
+                    _ = router.handle(key(second, .shift, type: .keyUp))
+                    try check(directions == [expected], "diagonal in either key order fires once")
+                    for code in [first, second] {
+                        let event = key(code, .shift, window: textWindow)
+                        try check(router.handle(event) === event, "diagonal keys remain native text while editing")
+                    }
+                    try check(directions == [expected], "editing cannot navigate diagonally")
+                }
+                try check(expected.score(dx: dx, dy: dy) != nil, "matching quadrant accepted")
+                try check(expected.score(dx: -dx, dy: dy) == nil && expected.score(dx: dx, dy: -dy) == nil,
+                          "other quadrants excluded")
+                try check(expected.score(dx: 0, dy: dy) == nil && expected.score(dx: dx, dy: 0) == nil,
+                          "cardinal windows excluded from diagonal")
+                try check(expected.score(dx: dx, dy: dy)! < expected.score(dx: dx * 2, dy: dy)!,
+                          "aligned diagonal preferred")
+            }
+            directions.removeAll()
+            for code: UInt16 in [13, 0, 1, 2] { tap(code, .shift) }
+            try check(directions == [.up, .left, .down, .right], "single direction taps preserved")
+            directions.removeAll()
+            tap(13, .shift); tap(2, .shift)
+            try check(directions == [.up, .right], "released keys are separate moves, not a chord")
             try set("prefs.shortcuts.down.key", 38)
             tap(1)
             try check(prefs.selectedIndex == 0, "old settings navigation removed")

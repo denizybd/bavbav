@@ -151,6 +151,7 @@ For `Space` + `Enter`, press Enter while holding Space, before the long press en
 | Hold `Space`, then `W` / `S` | Reorder an entry or queued message |
 | `Space` + `Enter` | Create a project/chat in Projects; toggle the queue in a conversation |
 | `⇧W` / `⇧A` / `⇧S` / `⇧D` | Focus the window above / left / below / right |
+| `⇧W+A`, `⇧W+D`, `⇧S+A`, `⇧S+D` | Focus a diagonal window; hold both letters together, in either order |
 | `Enter` | Open the composer; send while writing; close an empty composer |
 | `⇧Enter` / `⌘.` | Insert a newline / leave text editing |
 | `⌘K` / `⌘O` | Open composer tools / choose an attachment while writing |

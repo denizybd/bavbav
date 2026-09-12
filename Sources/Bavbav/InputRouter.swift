@@ -219,6 +219,10 @@ final class InputRouter {
         case "focusLeft": navigateWindow(.left)
         case "focusDown": navigateWindow(.down)
         case "focusRight": navigateWindow(.right)
+        case "focusUpLeft": navigateWindow(.upLeft)
+        case "focusUpRight": navigateWindow(.upRight)
+        case "focusDownLeft": navigateWindow(.downLeft)
+        case "focusDownRight": navigateWindow(.downRight)
         case "selectAll", "copy", "paste":
             if let text = window?.firstResponder as? NSTextView {
                 if op == "selectAll" { text.selectAll(nil) }

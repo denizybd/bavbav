@@ -113,6 +113,17 @@ enum ShortcutCatalog {
             ("focusDown","Focus the window below",1), ("focusRight","Focus the window on the right",2)] {
             add("*read","Window navigation · outside text editing",op,title,UInt16(code),.shift)
         }
+        for (op, title, vertical, horizontal) in [
+            ("focusUpLeft", "Focus the upper-left window", 13, 0),
+            ("focusUpRight", "Focus the upper-right window", 13, 2),
+            ("focusDownLeft", "Focus the lower-left window", 1, 0),
+            ("focusDownRight", "Focus the lower-right window", 1, 2)
+        ] {
+            add("*read", "Window navigation · outside text editing", op, title + " · vertical key first",
+                UInt16(horizontal), .shift, prefix: .init(UInt16(vertical), .shift))
+            add("*read", "Window navigation · outside text editing", op, title + " · horizontal key first",
+                UInt16(vertical), .shift, alias: "reverse", prefix: .init(UInt16(horizontal), .shift))
+        }
         for (op,title,code) in [("selectAll","Select all text",0), ("copy","Copy selected text",8),
             ("paste","Paste text",9)] {
             add("*text","Text selection and clipboard",op,title,UInt16(code),.command)

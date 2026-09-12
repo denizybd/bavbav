@@ -175,6 +175,9 @@ enum AppPreferencesCheck {
             for (code, letter) in [(UInt16(13), "w"), (0, "a"), (1, "s"), (2, "d")] {
                 try check(router.handle(key(code, letter.uppercased(), modifiers: .shift)) == nil,
                           "Shift+\(letter) routes window navigation")
+                // A single direction commits on release so overlapping keys can form a diagonal.
+                try check(router.handle(key(code, letter.uppercased(), type: .keyUp, modifiers: .shift)) == nil,
+                          "Shift+\(letter) release commits single direction")
             }
             try check(directions == [.up, .left, .down, .right], "Shift WASD maps all four directions")
             for (code, letter) in [(UInt16(13), "w"), (1, "s"), (2, "d"), (125, "")] {

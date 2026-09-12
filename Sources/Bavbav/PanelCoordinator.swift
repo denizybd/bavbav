@@ -7,6 +7,26 @@ enum WindowDirection: Equatable {
     case left
     case down
     case right
+    case upLeft, upRight, downLeft, downRight
+
+    func score(dx: CGFloat, dy: CGFloat) -> CGFloat? {
+        let primary: CGFloat
+        let perpendicular: CGFloat
+        switch self {
+        case .up: primary = dy; perpendicular = abs(dx)
+        case .left: primary = -dx; perpendicular = abs(dy)
+        case .down: primary = -dy; perpendicular = abs(dx)
+        case .right: primary = dx; perpendicular = abs(dy)
+        case .upLeft, .upRight, .downLeft, .downRight:
+            let x = (self == .upLeft || self == .downLeft) ? -dx : dx
+            let y = (self == .downLeft || self == .downRight) ? -dy : dy
+            // A diagonal targets its quadrant, never an intermediate cardinal window.
+            primary = min(x, y)
+            perpendicular = abs(x - y) / sqrt(2)
+        }
+        guard primary > 4 else { return nil }
+        return hypot(dx, dy) + perpendicular * 4
+    }
 }
 
 /// AppKit can emit several key-window changes in one run-loop turn. Only the
@@ -335,27 +355,8 @@ final class PanelCoordinator: NSObject, NSWindowDelegate {
             let candidate = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
             let dx = candidate.x - currentCenter.x
             let dy = candidate.y - currentCenter.y
-            let primary: CGFloat
-            let perpendicular: CGFloat
-            switch direction {
-            case .up:
-                primary = dy
-                perpendicular = abs(dx)
-            case .left:
-                primary = -dx
-                perpendicular = abs(dy)
-            case .down:
-                primary = -dy
-                perpendicular = abs(dx)
-            case .right:
-                primary = dx
-                perpendicular = abs(dy)
-            }
-            guard primary > 4 else { return nil }
-            let distance = hypot(dx, dy)
-            // Favor the intended row/column. A slightly offset window on the
-            // wrong diagonal must not beat the clearly aligned destination.
-            return (panel, distance + perpendicular * 4.0)
+            guard let score = direction.score(dx: dx, dy: dy) else { return nil }
+            return (panel, score)
         }
         .min { $0.1 < $1.1 }?.0
 
