@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// Zero transparency is a genuinely opaque window, including gaps between fills.
+@MainActor
+enum PanelWindowAppearance {
+    static func apply(to window: NSWindow, opacity: Double) {
+        let opaque = opacity >= 1
+        window.alphaValue = 1
+        window.ignoresMouseEvents = false
+        window.backgroundColor = opaque ? NSColor(BavbavTheme.background).withAlphaComponent(1) : .clear
+        window.isOpaque = opaque
+        window.hasShadow = !opaque && opacity > 0
+    }
+}
+
 private struct PanelBackdropOpacityKey: EnvironmentKey {
     static let defaultValue = 1.0
 }
@@ -52,5 +65,6 @@ struct PanelAppearanceRoot<Content: View>: View {
         content.environment(\.panelBackdropOpacity, preferences.backgroundOpacity)
             .environment(\.shortcutLabels, ShortcutLabels(overrides: preferences.keyBindings.overrides))
             .environment(\.locale, Locale(identifier: "en_US"))
+            .background(preferences.backgroundOpacity >= 1 ? BavbavTheme.background : Color.clear)
     }
 }

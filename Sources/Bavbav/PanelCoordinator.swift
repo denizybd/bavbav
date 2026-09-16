@@ -215,6 +215,7 @@ final class PanelCoordinator: NSObject, NSWindowDelegate {
         appSettings.window.delegate = self
         journalWindow.window.delegate = self
         appPreferences.onTransparencyChanged = { [weak self] _ in self?.applyTransparencyToAll() }
+        applyTransparencyToAll()
         appSettings.onCloseWithoutReturnWindow = { [weak self] in
             guard let self else { return }
             self.activePanel = nil
@@ -389,14 +390,12 @@ final class PanelCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func applyTransparency(to panel: OverlayPanel) {
-        panel.alphaValue = 1
-        panel.ignoresMouseEvents = false
-        panel.hasShadow = appPreferences.backgroundOpacity > 0
+        PanelWindowAppearance.apply(to: panel, opacity: appPreferences.backgroundOpacity)
     }
 
     private func applyTransparencyToAll() {
-        journalWindow.window.alphaValue = 1
-        journalWindow.window.hasShadow = appPreferences.backgroundOpacity > 0
+        PanelWindowAppearance.apply(to: journalWindow.window, opacity: appPreferences.backgroundOpacity)
+        PanelWindowAppearance.apply(to: appSettings.window, opacity: appPreferences.backgroundOpacity)
         for panel in [projectPanel, recentPanel, chatGPTPanel, settingsPanel, primaryDetailPanel] + Array(detailPanels.values) {
             applyTransparency(to: panel)
         }

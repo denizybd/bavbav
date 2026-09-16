@@ -119,11 +119,17 @@ enum AppPreferencesCheck {
                     try check(panel.alphaValue == 1, "\(panel.overlayKind) foreground alpha at \(percent)%")
                     try check(!panel.ignoresMouseEvents,
                               "\(panel.overlayKind) remains interactive at \(percent)%")
-                    try check(panel.hasShadow == (percent < 100),
+                    try check(panel.hasShadow == (percent > 0 && percent < 100),
                               "\(panel.overlayKind) shadow at \(percent)%")
                 }
                 try check(controller.window.alphaValue == 1 && !controller.window.ignoresMouseEvents,
                           "recovery window at \(percent)%")
+                for window in overlays.map({ $0 as NSWindow }) + [controller.window, coordinator.journalWindow.window] {
+                    try check(window.isOpaque == (percent == 0), "native opaque mode at \(percent)%")
+                    try check(window.backgroundColor?.alphaComponent == (percent == 0 ? 1 : 0),
+                              "native backing fill at \(percent)%")
+                    try check(window.hasShadow == (percent > 0 && percent < 100), "shadow fast path at \(percent)%")
+                }
                 try check(overlays.allSatisfy { !$0.isVisible }, "opacity changes must not show hidden windows")
             }
 
@@ -147,6 +153,22 @@ enum AppPreferencesCheck {
             coordinator.appPreferences.resetTransparency()
             try check(ownedOverlays().allSatisfy { $0.alphaValue == 1 && !$0.ignoresMouseEvents },
                       "reset restores all panels and mouse input")
+            try check(ownedOverlays().allSatisfy { $0.isOpaque && $0.backgroundColor?.alphaComponent == 1 && !$0.hasShadow },
+                      "reset makes existing and newly allocated chats fully opaque")
+            for percent in [0.0, 50.0, 100.0, 0.0] {
+                coordinator.appPreferences.setTransparency(percent)
+                let fixture = PanelAppearanceRoot(preferences: coordinator.appPreferences,
+                    content: Color.blue.opacity(0.985).panelBackdrop().frame(width: 32, height: 32))
+                let renderer = ImageRenderer(content: fixture)
+                renderer.scale = 1
+                guard let image = renderer.cgImage else { throw Failure(message: "opaque root render failed") }
+                let bitmap = NSBitmapImageRep(cgImage: image)
+                let expected = percent == 0 ? 1 : 0.985 * (1 - percent / 100)
+                for point in [(0, 0), (16, 16), (31, 31)] {
+                    try check(abs((bitmap.colorAt(x: point.0, y: point.1)?.alphaComponent ?? -1) - expected) < 0.005,
+                              "root covers residual fill transparency including edges at \(percent)%")
+                }
+            }
 
             var settingsRequests = 0
             var directions: [WindowDirection] = []

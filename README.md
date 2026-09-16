@@ -47,6 +47,8 @@ Open the queue to change the order, bring an instruction back into the composer,
 
 Background transparency runs from fully opaque to fully transparent. Message surfaces and code blocks follow the same setting, while the foreground remains readable. A thin green outline identifies the focused window.
 
+At 0%, windows use a solid opaque backing and native opaque-window mode; window shadows and transparency-related foreground effects are disabled. Higher values restore background-only transparency. This avoids the transparent-window path, but is not a measured CPU or GPU performance guarantee.
+
 The windows behave like regular macOS windows: bring them forward with shortcuts, arrange them around your editor or preview, and use `⌘Tab` to move between apps.
 
 ![Two transparent Bavbav conversation windows showing command activity and an English coding discussion](docs/assets/screenshots/03-transparent-workflow.png)

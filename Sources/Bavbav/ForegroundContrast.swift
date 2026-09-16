@@ -33,10 +33,14 @@ private struct ReadableForegroundModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         let strength = ForegroundContrast.strength(backgroundOpacity: backgroundOpacity)
-        content
-            .brightness(0.22 * strength)
-            .shadow(color: .black.opacity(0.95 * strength), radius: 0.4 * strength)
-            .shadow(color: .black.opacity(0.9 * strength), radius: 1.4 * strength)
+        if strength > 0 {
+            content
+                .brightness(0.22 * strength)
+                .shadow(color: .black.opacity(0.95 * strength), radius: 0.4 * strength)
+                .shadow(color: .black.opacity(0.9 * strength), radius: 1.4 * strength)
+        } else {
+            content
+        }
     }
 }
 
