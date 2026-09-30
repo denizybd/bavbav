@@ -17,11 +17,24 @@ public struct OptimisticUserMessage: Equatable, Sendable {
 }
 
 public enum MessageReconciler {
+    /// Loaded history supplies the prefix and ordering; protected live rows keep
+    /// their exact text. A lagging server projection must not
+    /// delete them or replace a final answer with an older partial answer.
+    public static func mergeHistory(_ history: [CodexMessage], current: [CodexMessage],
+                                    protecting ids: Set<String> = []) -> [CodexMessage] {
+        let live = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        let base = history.map { ids.contains($0.id) ? (live[$0.id] ?? $0) : $0 }
+        var seen = Set<String>()
+        return RolloutConversationReader.merge(base, with: current).filter { seen.insert($0.id).inserted }
+    }
+
     /// Refresh while a send is in flight without dropping its optimistic row
     /// or mistaking an older identical prompt for this submission's echo.
     public static func refreshedHistory(_ history: [CodexMessage], current: [CodexMessage],
-                                        threadID: String, pending: inout [OptimisticUserMessage]) -> [CodexMessage] {
+                                        threadID: String, pending: inout [OptimisticUserMessage],
+                                        protecting ids: Set<String> = []) -> [CodexMessage] {
         var result = history
+        var replacedLocalIDs = Set<String>()
         var claimed = Set(pending.compactMap(\.serverID))
         for index in pending.indices where pending[index].threadID == threadID {
             let candidate = pending[index]
@@ -36,9 +49,10 @@ public enum MessageReconciler {
             if let match {
                 pending[index].serverID = match.id
                 claimed.insert(match.id)
+                if candidate.localID != match.id { replacedLocalIDs.insert(candidate.localID) }
             } else if !result.contains(where: { $0.id == row.id }) { result.append(row) }
         }
-        return result
+        return mergeHistory(result, current: current.filter { !replacedLocalIDs.contains($0.id) }, protecting: ids)
     }
 
     /// Queue-aware variant used when an active turn receives one or more steer

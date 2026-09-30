@@ -167,6 +167,19 @@ enum RolloutConversationChecks {
         try require(confirmed.map(\.id) == ["old", "echo"] && pending[0].serverID == "echo", "new persisted echo replaces optimistic row exactly once")
         let repeatedEcho = MessageReconciler.refreshedHistory([old, echo], current: confirmed, threadID: "root", pending: &pending)
         try require(repeatedEcho == confirmed, "repeated refresh does not duplicate send")
+        let partialAnswer = CodexMessage(id: "answer", role: .agent, text: "Old unfinished text")
+        let final = CodexMessage(id: "answer", role: .agent, text: "Correct final", status: "final_answer")
+        try require(MessageReconciler.mergeHistory([old, partialAnswer], current: [final], protecting: [final.id]) == [old, final],
+                    "late history loads its prefix without overwriting a completed live answer")
+        try require(MessageReconciler.mergeHistory([old], current: [old, final]) == [old, final],
+                    "lagging projection cannot erase missing live rows")
+        let gap = CodexMessage(id: "gap", role: .agent, text: "Older commentary")
+        let command = CodexMessage(id: "command", role: .agent, text: "tool log", kind: .command)
+        let timeline = ChatTimeline.visible(activity: [old, command, final], conversation: [old, gap, final], commandsVisible: false)
+        try require(timeline == [old, gap, final], "recovered commentary precedes final instead of appearing at the bottom")
+        try require(ChatTimeline.visible(activity: [old, command, final], conversation: [old, gap, final], commandsVisible: true)
+            .map(\.id) == ["old", "command", "gap", "answer"], "commands toggle retains chronological anchors")
+        print("✓ history recovery: live final protection, late prefix, missing rows, timeline anchors")
         print("✓ rollout fallback: identity, isolation, partial append, UTF-8, chronology, truncation")
     }
 }
@@ -175,6 +188,24 @@ enum RolloutConversationChecks {
 struct BavbavChecks {
     static func main() async {
         do {
+            if let index = CommandLine.arguments.firstIndex(of: "--read-only-thread"),
+               CommandLine.arguments.indices.contains(index + 1) {
+                let id = CommandLine.arguments[index + 1]
+                let client = CodexAppServer()
+                do {
+                    _ = try await client.connect()
+                    let messages = try await client.readThread(id: id)
+                    let activity = try await client.readThreadActivity(id: id)
+                    try require(!messages.isEmpty, "Selected conversation returned no messages")
+                    try require(Set(messages.map(\.id)).count == messages.count, "Duplicate conversation IDs")
+                    print("READ-ONLY THREAD: \(messages.count) conversation rows, \(activity.count) activity rows, \(ChatTimeline.visible(activity: activity, conversation: messages, commandsVisible: false).count) visible rows")
+                    await client.shutdown()
+                } catch {
+                    await client.shutdown()
+                    throw error
+                }
+                return
+            }
             try checkOrdering()
             try checkInteraction()
             try checkRuntimeModels()
@@ -186,6 +217,8 @@ struct BavbavChecks {
             print("✓ optimistic message echo reconciliation")
 
             if CommandLine.arguments.contains("--protocol-fixture") {
+                try require(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true,
+                            "--protocol-fixture requires BAVBAV_CODEX_BIN pointing to BavbavFakeCodex; no real turns will be sent")
                 try await checkProtocolInteractions()
                 print("✓ approval + question protocol round-trips")
                 print("✓ full-access new + existing thread protocol")

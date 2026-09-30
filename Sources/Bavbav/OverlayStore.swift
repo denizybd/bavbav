@@ -115,10 +115,15 @@ struct ChatWindowSnapshot {
     let showsActivity: Bool
     let loading: Bool
     let error: String?
+    var liveConversationIDs: Set<String> = []
+    var liveActivityIDs: Set<String> = []
+    var completedItemIDs: Set<String> = []
 
     func replacingThread(_ thread: CodexThread) -> ChatWindowSnapshot {
         ChatWindowSnapshot(thread: thread, items: items, conversation: conversation, activity: activity,
-                           showsActivity: showsActivity, loading: loading, error: error)
+                           showsActivity: showsActivity, loading: loading, error: error,
+                           liveConversationIDs: liveConversationIDs, liveActivityIDs: liveActivityIDs,
+                           completedItemIDs: completedItemIDs)
     }
 }
 
@@ -244,8 +249,9 @@ final class OverlayStore: ObservableObject {
     private var creatingWritableThread = false
     private var detailLoadGeneration = 0
     private var detailFocusGeneration = 0
-    private var conversationRevision = 0
-    private var activityRevision = 0
+    private var liveConversationIDs = Set<String>()
+    private var liveActivityIDs = Set<String>()
+    private var completedItemIDs = Set<String>()
     private var detailReadInFlight = false
     private var activityReadInFlight = false
     private var detailLoadTask: Task<Void, Never>?
@@ -1203,7 +1209,9 @@ final class OverlayStore: ObservableObject {
             activity: detailActivityItems,
             showsActivity: detailShowsActivity,
             loading: visibleDetailLoading,
-            error: composerError
+            error: composerError,
+            liveConversationIDs: liveConversationIDs, liveActivityIDs: liveActivityIDs,
+            completedItemIDs: completedItemIDs
         )
     }
 
@@ -1230,6 +1238,9 @@ final class OverlayStore: ObservableObject {
         detailThread = nil
         detailMessages = []
         detailActivityItems = []
+        liveConversationIDs = []
+        liveActivityIDs = []
+        completedItemIDs = []
         detailShowsActivity = false
         detailOperation = nil
         detailLoading = false
@@ -2305,6 +2316,7 @@ final class OverlayStore: ObservableObject {
 
         case .itemCompleted(let threadID, _, let message):
             guard detailThread?.id == threadID else { return }
+            completedItemIDs.insert(message.id)
             upsertActivity(message)
             if message.kind.isConversation {
                 mergeConversationEvent(message, threadID: threadID)
@@ -2401,7 +2413,7 @@ final class OverlayStore: ObservableObject {
 
     private func upsertConversation(_ message: CodexMessage) {
         let message = datedMessage(message, isLive: true)
-        conversationRevision &+= 1
+        liveConversationIDs.insert(message.id)
         if let index = detailMessages.firstIndex(where: { $0.id == message.id }) {
             detailMessages[index] = message
         } else {
@@ -2411,7 +2423,7 @@ final class OverlayStore: ObservableObject {
 
     private func mergeConversationEvent(_ message: CodexMessage, threadID: String) {
         let message = datedMessage(message, isLive: true)
-        conversationRevision &+= 1
+        liveConversationIDs.insert(message.id)
         if MessageReconciler.mergeUserEcho(
             messages: &detailMessages,
             incoming: message,
@@ -2426,7 +2438,7 @@ final class OverlayStore: ObservableObject {
     private func upsertActivity(_ message: CodexMessage) {
         guard detailShowsActivity || message.isChatVisible else { return }
         let message = datedMessage(message, isLive: true)
-        activityRevision &+= 1
+        liveActivityIDs.insert(message.id)
         if let index = detailActivityItems.firstIndex(where: { $0.id == message.id }) {
             detailActivityItems[index] = message
         } else {
@@ -2458,7 +2470,10 @@ final class OverlayStore: ObservableObject {
             id: id,
             role: .agent,
             text: (currentMessage?.text ?? "") + delta,
-            kind: .agent
+            kind: .agent,
+            title: currentMessage?.title ?? currentActivity?.title,
+            status: currentMessage?.status ?? currentActivity?.status,
+            timestamp: currentMessage?.timestamp
         ))
     }
 
@@ -2467,10 +2482,10 @@ final class OverlayStore: ObservableObject {
     }
 
     private func startDetailLoad(threadID: String) {
+        guard detailThread?.id == threadID else { return }
         detailLoadTask?.cancel()
         detailLoadGeneration &+= 1
         let generation = detailLoadGeneration
-        let revision = conversationRevision
         detailReadInFlight = true
         detailLoadTask = Task { [weak self] in
             guard let self else { return }
@@ -2484,11 +2499,10 @@ final class OverlayStore: ObservableObject {
                       detailThread?.id == threadID,
                       generation == detailLoadGeneration
                 else { return }
-                if revision == conversationRevision {
-                    let history = messages.filter { $0.kind.isConversation }.map { self.datedMessage($0) }
-                    detailMessages = MessageReconciler.refreshedHistory(history, current: detailMessages,
-                        threadID: threadID, pending: &optimisticUserMessages)
-                }
+                let history = messages.filter { $0.kind.isConversation }.map { self.datedMessage($0) }
+                detailMessages = MessageReconciler.refreshedHistory(history, current: detailMessages,
+                    threadID: threadID, pending: &optimisticUserMessages,
+                    protecting: sendingThreadIDs.contains(threadID) ? liveConversationIDs : completedItemIDs)
                 detailLoading = false
             } catch {
                 guard !Task.isCancelled,
@@ -2502,10 +2516,10 @@ final class OverlayStore: ObservableObject {
     }
 
     private func startActivityLoad(threadID: String) {
+        guard detailThread?.id == threadID else { return }
         activityLoadTask?.cancel()
         activityLoadGeneration &+= 1
         let generation = activityLoadGeneration
-        let revision = activityRevision
         activityReadInFlight = true
         detailActivityLoading = detailActivityItems.isEmpty
         activityLoadTask = Task { [weak self] in
@@ -2522,16 +2536,8 @@ final class OverlayStore: ObservableObject {
                 else { return }
                 let retained = items.filter { self.detailShowsActivity || $0.isChatVisible }
                     .map { self.datedMessage($0) }
-                if revision == activityRevision {
-                    detailActivityItems = retained
-                } else {
-                    // History may finish after live deltas. Keep the loaded prefix
-                    // and overlay newer rows rather than dropping all history.
-                    let live = Dictionary(detailActivityItems.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-                    let loadedIDs = Set(retained.map(\.id))
-                    detailActivityItems = retained.map { live[$0.id] ?? $0 }
-                        + detailActivityItems.filter { !loadedIDs.contains($0.id) }
-                }
+                detailActivityItems = MessageReconciler.mergeHistory(retained, current: detailActivityItems,
+                    protecting: sendingThreadIDs.contains(threadID) ? liveActivityIDs : completedItemIDs)
                 detailActivityLoading = false
             } catch {
                 guard !Task.isCancelled,
@@ -2793,6 +2799,9 @@ final class OverlayStore: ObservableObject {
         detailHost = targetHost
         loadOverrides(for: thread.id)
         detailMessages = cached?.conversation ?? []
+        liveConversationIDs = cached?.liveConversationIDs ?? []
+        liveActivityIDs = cached?.liveActivityIDs ?? []
+        completedItemIDs = cached?.completedItemIDs ?? []
         detailShowsActivity = defaults.bool(forKey: "commands-visible.\(thread.id)")
         detailActivityItems = (cached?.activity ?? []).filter { detailShowsActivity || $0.isChatVisible }
         detailOperation = nil

@@ -196,6 +196,37 @@ enum InteractionPerformanceCheck {
                       "fresh opening after Q starts at latest message")
 
             // Exercise Q during actual fake-server work, not just idle history.
+            // Completion schedules history work. A same-run-loop focus change
+            // must not let that old work cancel the newly selected chat's reads.
+            let third = CodexThread(id: "fixture-completion-race", projectID: nil, cwd: "/tmp/fixture",
+                                    title: "Completion race", preview: "", updatedAt: Date(), state: .idle, hasMessages: true)
+            store.handleServerEvent(.turnCompleted(threadID: second.id, turnID: "race-turn", status: "completed", error: nil))
+            store.focusDetailWindow(third)
+            try await loadHistory()
+            try check(store.detailThread?.id == third.id && !store.visibleDetailItems.isEmpty,
+                      "late final refresh cannot blank the newly selected conversation")
+            coordinator.dismiss(.detail)
+            store.focusDetailWindow(second)
+            try await loadHistory()
+
+            let liveFinal = CodexMessage(id: "late-final", role: .agent, text: "A completed live answer", status: "final_answer")
+            store.handleServerEvent(.itemCompleted(threadID: second.id, turnID: "late-turn", message: liveFinal))
+            store.syncVisibleConversation()
+            await settle(reopened.contentView)
+            try check(store.visibleDetailItems.contains { $0.id == liveFinal.id && $0.text == liveFinal.text },
+                      "stale history cannot erase a completed live answer")
+            store.focusDetailWindow(first)
+            store.focusDetailWindow(second)
+            await settle(reopened.contentView)
+            try check(store.visibleDetailItems.contains { $0.id == liveFinal.id && $0.text == liveFinal.text },
+                      "completed live answer protection survives cached window switching")
+            let interruptedID = "\(second.id)-message-119"
+            store.handleServerEvent(.agentMessageDelta(threadID: second.id, turnID: "lost-completion", itemID: interruptedID, delta: "partial"))
+            store.syncVisibleConversation()
+            await settle(reopened.contentView)
+            try check(store.detailMessages.first { $0.id == interruptedID }?.text.hasSuffix("partial") == false,
+                      "idle history can repair a stream whose completion notification was missed")
+
             store.beginWriting(from: .detail)
             store.composerText = "STEER_BASE"
             store.submitMessage()

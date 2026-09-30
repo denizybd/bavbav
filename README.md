@@ -214,6 +214,8 @@ codesign --verify --deep --strict dist/Bavbav.app
 
 The build script exercises native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, and standalone chats. Its fixture checks do not send prompts to your real Codex account.
 
+Conversation regression checks cover final-response/focus races, delayed history overwriting live replies, and recovered messages appearing out of order. For an explicitly selected real conversation, `.build/release/BavbavChecks --read-only-thread THREAD_ID` checks history retrieval; `BAVBAV_HISTORY_REPLAY_CHECK=THREAD_ID .build/release/Bavbav` additionally verifies that the last message is visible in a hidden native window. These diagnostics do not send or resume turns, and print counts rather than conversation text. They do not prove the state of an already-running older app.
+
 For core changes and explicit protocol checks without packaging:
 
 ```sh

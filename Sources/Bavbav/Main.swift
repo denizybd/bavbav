@@ -28,6 +28,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
+        if let threadID = environment["BAVBAV_HISTORY_REPLAY_CHECK"], !threadID.isEmpty {
+            Task { Foundation.exit(await HistoryReplayCheck.run(threadID: threadID) ? 0 : 1) }
+            return
+        }
         if environment["BAVBAV_STATUS_COUNT_CHECK"] == "1" {
             Foundation.exit(RunningChatStatusCheck.run() ? 0 : 1)
         }
