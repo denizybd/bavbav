@@ -1565,19 +1565,7 @@ public actor CodexAppServer {
     }
 
     private static func resolveCodexExecutable() throws -> URL {
-        var candidates: [String] = []
-        if let override = ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"], !override.isEmpty {
-            candidates.append(override)
-        }
-        candidates.append(contentsOf: [
-            "/Applications/ChatGPT.app/Contents/Resources/codex",
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex"
-        ])
-        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        throw CodexClientError.executableNotFound
+        try CodexExecutableResolver.resolve()
     }
 
     private func finishConnecting(with result: Result<CodexHealth, Error>) {

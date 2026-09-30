@@ -35,6 +35,9 @@ cp "$project_dir/.build/checkouts/swift-cmark/COPYING" "$staged_app_dir/Contents
 chmod +x "$staged_app_dir/Contents/MacOS/Bavbav"
 codesign --force --deep --sign - "$staged_app_dir" >/dev/null
 codesign --verify --deep --strict "$staged_app_dir"
+BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavChecks" --protocol-fixture
+BAVBAV_CONNECTION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_HEADLESS_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_APP_ICON_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_APP_SWITCH_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_STATUS_COUNT_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"

@@ -206,6 +206,7 @@ struct BavbavChecks {
                 }
                 return
             }
+            try checkExecutableDiscovery()
             try checkOrdering()
             try checkInteraction()
             try checkRuntimeModels()
@@ -219,6 +220,8 @@ struct BavbavChecks {
             if CommandLine.arguments.contains("--protocol-fixture") {
                 try require(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true,
                             "--protocol-fixture requires BAVBAV_CODEX_BIN pointing to BavbavFakeCodex; no real turns will be sent")
+                try await checkConnectionRecovery()
+                print("✓ reconnect + concurrent handshake + streamed completion")
                 try await checkProtocolInteractions()
                 print("✓ approval + question protocol round-trips")
                 print("✓ full-access new + existing thread protocol")
@@ -253,6 +256,74 @@ struct BavbavChecks {
         } catch {
             fputs("CHECK FAILED: \(error.localizedDescription)\n", stderr)
             Foundation.exit(1)
+        }
+    }
+
+    private static func checkExecutableDiscovery() throws {
+        let roots = ["/Applications", "/Users/fixture/Applications"]
+        let nested = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+        let legacy = "/Applications/ChatGPT.app/Contents/Resources/codex"
+        let brew = "/opt/homebrew/bin/codex"
+        var checks = 0
+        func expect(_ expected: String, available: Set<String>, environment: [String: String] = [:]) throws {
+            let result = try CodexExecutableResolver.resolve(environment: environment,
+                applicationDirectories: roots, isExecutable: { available.contains($0) })
+            try require(result.path == expected, "Executable discovery: expected \(expected), got \(result.path)")
+            checks += 1
+        }
+        for root in roots {
+            for app in ["ChatGPT.app", "Codex.app"] {
+                for relative in ["codex-cli/CodexCLI.app/Contents/MacOS/codex", "codex-cli/bin/codex", "codex"] {
+                    let path = "\(root)/\(app)/Contents/Resources/\(relative)"
+                    try expect(path, available: [path])
+                }
+            }
+        }
+        try expect(nested, available: [nested, legacy, brew])
+        try expect(legacy, available: [legacy, brew])
+        try expect(brew, available: [brew, "/usr/local/bin/codex"])
+        try expect("/usr/local/bin/codex", available: ["/usr/local/bin/codex"])
+        try expect("/custom/bin/codex", available: ["/custom/bin/codex"], environment: ["PATH": "/usr/bin:/custom/bin"])
+        try expect("/custom/codex", available: [nested, "/custom/codex"], environment: ["BAVBAV_CODEX_BIN": "/custom/codex"])
+        try expect(nested, available: [nested], environment: ["BAVBAV_CODEX_BIN": ""])
+        for override in ["/does/not/exist", "relative/codex", FileManager.default.temporaryDirectory.path] {
+            do {
+                _ = try CodexExecutableResolver.resolve(environment: ["BAVBAV_CODEX_BIN": override])
+                throw CheckFailure.failed("Invalid explicit executable fell back to a real installation")
+            } catch CodexClientError.processFailed { checks += 1 }
+        }
+        var probed: [String] = []
+        do {
+            _ = try CodexExecutableResolver.resolve(environment: ["PATH": ":.:relative:/safe/bin:"],
+                applicationDirectories: [], isExecutable: { probed.append($0); return false })
+            throw CheckFailure.failed("Missing executable unexpectedly resolved")
+        } catch CodexClientError.executableNotFound { checks += 1 }
+        try require(probed == [brew, "/usr/local/bin/codex", "/safe/bin/codex"], "Relative/empty PATH entries must not launch project executables")
+        checks += 1
+        print("✓ executable discovery: \(checks) checks (new/legacy bundles, Finder, PATH, strict override)")
+    }
+
+    private static func checkConnectionRecovery() async throws {
+        let client = CodexAppServer()
+        do {
+            for _ in 0..<3 {
+                let probe = TurnProbe()
+                await client.setEventHandler { event in Task { await probe.record(event) } }
+                async let first = client.connect()
+                async let second = client.connect()
+                let (a, b) = try await (first, second)
+                try require(a.authenticated && b.authenticated && a.codexHome == b.codexHome,
+                            "Concurrent connections did not share one successful handshake")
+                let threads = try await client.listThreads(limit: 10)
+                guard let thread = threads.first else { throw CheckFailure.failed("No fixture catalog after reconnect") }
+                let turn = try await client.startTurn(threadID: thread.id, text: "ECHO")
+                let outcome = await probe.wait(for: turn.id, timeoutSeconds: 3)
+                try require(outcome?.status == "completed", "Stream did not recover after process replacement")
+                await client.shutdown()
+            }
+        } catch {
+            await client.shutdown()
+            throw error
         }
     }
 

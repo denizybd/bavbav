@@ -450,7 +450,7 @@ public enum CodexClientError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .executableNotFound:
-            return "Codex executable not found."
+            return "Codex executable not found. Install ChatGPT or Codex in Applications, or set BAVBAV_CODEX_BIN to your Codex executable. Bavbav will retry while a window is open."
         case .processFailed(let detail):
             return "Could not start Codex: \(detail)"
         case .invalidResponse(let detail):

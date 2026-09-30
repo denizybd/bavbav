@@ -329,6 +329,18 @@ final class OverlayStore: ObservableObject {
 
     func refresh() async {
         guard !refreshing else { return }
+        // A failed initial handshake has not installed streaming or loaded
+        // settings. Retrying just thread/list can appear connected while every
+        // new reply is lost. Reuse the normal bootstrap on the existing timer;
+        // connectAndLoad sets .connected before re-entering refresh below.
+        if !eventHandlerInstalled {
+            await connectAndLoad()
+            return
+        }
+        if case .failed = connection {
+            await connectAndLoad()
+            return
+        }
         refreshing = true
         defer { refreshing = false }
         let nameRevision = threadNameRevision

@@ -235,6 +235,10 @@ while let line = readLine() {
             let existed = composerGoals.removeValue(forKey: threadID) != nil
             send(["id": id, "result": ["cleared": existed]])
         case "initialize":
+            if ProcessInfo.processInfo.environment["BAVBAV_FIXTURE_INITIALIZE_FAILURE"] == "1" {
+                send(["id": id, "error": ["code": -32000, "message": "Fixture startup failure"]])
+                continue
+            }
             send(["id": id, "result": [
                 "codexHome": "/tmp/bavbav-fixture-home",
                 "platformOs": "macos",

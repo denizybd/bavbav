@@ -107,9 +107,9 @@ BAVBAV_CODEX_BIN="$(command -v codex)" ./dist/Bavbav.app/Contents/MacOS/Bavbav
 
 Without an override, Bavbav looks for an executable in this order:
 
-1. `/Applications/ChatGPT.app/Contents/Resources/codex`
-2. `/opt/homebrew/bin/codex`
-3. `/usr/local/bin/codex`
+1. ChatGPT, then Codex app bundles in `/Applications`, followed by the user's `Applications` folder. Each bundle supports the new `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`, the `codex-cli/bin/codex` wrapper, and the legacy `Contents/Resources/codex` location.
+2. `/opt/homebrew/bin/codex`, then `/usr/local/bin/codex`.
+3. `codex` in absolute directories from the inherited `PATH` (relative and empty entries are ignored).
 
 If your installation is in one of those locations, you can launch normally:
 
@@ -123,7 +123,9 @@ For another location, supply an absolute path when launching the executable:
 BAVBAV_CODEX_BIN="/absolute/path/to/codex" ./dist/Bavbav.app/Contents/MacOS/Bavbav
 ```
 
-`BAVBAV_CODEX_BIN` takes priority over the automatic locations. Bavbav does not otherwise search the shell's `PATH`, and Finder launches do not inherit terminal-only environment variables. Authenticate using the same Codex installation you select here.
+`BAVBAV_CODEX_BIN` takes priority over the automatic locations. An invalid explicit override reports an error instead of silently launching a different installation. Finder launches do not inherit terminal-only environment variables; the known bundle locations work without them. Authenticate using the same Codex installation you select here.
+
+Bavbav resolves the executable again whenever it starts a new Codex process. After an initial connection failure, the existing 15-second refresh retries the complete handshake, message subscription, and settings load while a window is open. Reconnection does not automatically resend prompts.
 
 </details>
 
@@ -212,7 +214,7 @@ zsh scripts/build-app.sh
 codesign --verify --deep --strict dist/Bavbav.app
 ```
 
-The build script exercises native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, and standalone chats. Its fixture checks do not send prompts to your real Codex account.
+The build script exercises executable discovery, connection failure/recovery and streamed replies, protocol round-trips, native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, and standalone chats. Its fixture checks do not send prompts to your real Codex account.
 
 Conversation regression checks cover final-response/focus races, delayed history overwriting live replies, and recovered messages appearing out of order. For an explicitly selected real conversation, `.build/release/BavbavChecks --read-only-thread THREAD_ID` checks history retrieval; `BAVBAV_HISTORY_REPLAY_CHECK=THREAD_ID .build/release/Bavbav` additionally verifies that the last message is visible in a hidden native window. These diagnostics do not send or resume turns, and print counts rather than conversation text. They do not prove the state of an already-running older app.
 

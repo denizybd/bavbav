@@ -28,6 +28,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
+        if environment["BAVBAV_CONNECTION_CHECK"] == "1" {
+            Task { Foundation.exit(await ConnectionRecoveryCheck.run() ? 0 : 1) }
+            return
+        }
         if let threadID = environment["BAVBAV_HISTORY_REPLAY_CHECK"], !threadID.isEmpty {
             Task { Foundation.exit(await HistoryReplayCheck.run(threadID: threadID) ? 0 : 1) }
             return
@@ -652,7 +656,11 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                     } else {
                         print("BAVBAV HEADLESS CHECK PASSED")
                     }
-                    NSApplication.shared.terminate(nil)
+                    // This branch is an explicit diagnostic run. Calling
+                    // terminate from the main-actor task can enter AppKit's
+                    // terminateLater loop before its async cleanup can run.
+                    await store.shutdown()
+                    Foundation.exit(0)
                 }
             }
         }
