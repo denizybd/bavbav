@@ -11,6 +11,7 @@ private var activeTurns: [String: String] = [:]
 private var turnCounter = 0
 private var recordedItems: [String: [[String: Any]]] = [:]
 private var standaloneRows: [String: [String: Any]] = [:]
+private var createdRows: [String: [String: Any]] = [:]
 private var threadNames: [String: String] = [:]
 private var composerGoals: [String: [String: Any]] = [:]
 private let outputLock = NSLock()
@@ -259,6 +260,12 @@ while let line = readLine() {
             }
             if ProcessInfo.processInfo.environment["BAVBAV_RENAME_CHECK"] == "1" {
                 rows.append(threadRow(id: "fixture-standalone", cwd: "/tmp/rename-standalone"))
+                // Like the real server, a newly named empty thread is readable
+                // by ID but absent from the persisted catalog until its first turn.
+                rows.append(contentsOf: createdRows.values.filter {
+                    !(recordedItems[$0["id"] as? String ?? ""] ?? []).isEmpty
+                })
+                if let cwd = params["cwd"] as? String { rows = rows.filter { $0["cwd"] as? String == cwd } }
                 // Snapshot before rename, deliver after its acknowledgment to
                 // exercise an in-flight catalog response with an obsolete name.
                 let response: [String: Any] = ["id": id, "result": ["data": rows, "nextCursor": NSNull()]]
@@ -270,6 +277,15 @@ while let line = readLine() {
                 "nextCursor": NSNull()
             ]])
         case "thread/start":
+            if ProcessInfo.processInfo.environment["BAVBAV_RENAME_CHECK"] == "1" {
+                let threadID = "created-\(createdRows.count + 1)"
+                var row = threadRow(id: threadID, cwd: params["cwd"] as? String ?? "/tmp/fixture")
+                row["preview"] = ""
+                row["name"] = NSNull()
+                createdRows[threadID] = row
+                send(["id": id, "result": ["thread": row]])
+                continue
+            }
             if ProcessInfo.processInfo.environment["BAVBAV_JOURNAL_CHECK"] == "1", params["ephemeral"] as? Bool == true {
                 let config = params["config"] as? [String: Any]
                 guard params["sandbox"] as? String == "read-only", params["approvalPolicy"] as? String == "never",
@@ -340,6 +356,8 @@ while let line = readLine() {
                 }
                 threadNames[threadID] = name
                 if standaloneRows[threadID] != nil { standaloneRows[threadID]?["name"] = name }
+                if createdRows[threadID] != nil { createdRows[threadID]?["name"] = name }
+                if name == "ARCHIVE_CREATED_FIXTURE" { createdRows.removeValue(forKey: threadID) }
             }
             send(["id": id, "result": [:]])
         case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_IMAGE_CHECK"] == "1":

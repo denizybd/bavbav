@@ -18,10 +18,14 @@ enum RenameCheck {
         setenv("BAVBAV_FIXTURE_TWO_THREADS", "1", 1)
         let suite = "Bavbav.RenameCheck.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
+        let createdProjectName = "Bavbav-RenameCheck-\(UUID().uuidString)"
+        let createdProjectURL = URL(fileURLWithPath: "/tmp").appendingPathComponent(createdProjectName)
+        guard !FileManager.default.fileExists(atPath: createdProjectURL.path) else { return false }
         let initialWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         defer {
             defaults.removePersistentDomain(forName: suite)
             NSApp.windows.filter { !initialWindows.contains(ObjectIdentifier($0)) }.forEach { $0.close() }
+            try? FileManager.default.removeItem(at: createdProjectURL) // Only the unique fixture project created below.
         }
         let store = OverlayStore(defaults: defaults, standaloneDirectory: URL(fileURLWithPath: "/tmp/rename-standalone"))
         let panels = PanelCoordinator(store: store, windowSizeDefaults: defaults)
@@ -223,10 +227,97 @@ enum RenameCheck {
             store.beginWriting(from: .detail)
             let ordinary = key(49, .option, in: chat)
             try check(router.handle(ordinary) === ordinary && store.renameTarget == nil, "Option Space stays native while composing a chat")
+
+            // Exercise the actual first-chat flow, not only pre-existing rows.
+            store.prepareToClose(.projects)
+            store.selectLeft(id: project.id)
+            projects.makeFirstResponder(nil)
+            _ = router.handle(key(49, in: projects))
+            tap(36, in: projects)
+            _ = router.handle(key(49, in: projects, type: .keyUp))
+            try check(store.leftCreationTarget == .project, "Space Enter opens new-project name slot")
+            await frame(projects)
+            guard let creationField = descendants(projects.contentView!).compactMap({ $0 as? NSTextField })
+                .first(where: { $0.isEditable && $0.placeholderString == "NEW PROJECT" }) else {
+                throw Failure(message: "missing native project creation field")
+            }
+            projects.makeFirstResponder(creationField)
+            guard let creationEditor = creationField.currentEditor() as? NSTextView else {
+                throw Failure(message: "creation field has no native editor")
+            }
+            creationEditor.selectAll(nil)
+            creationEditor.insertText(createdProjectName, replacementRange: creationEditor.selectedRange())
+            await frame(projects)
+            try check(store.leftCreationName == createdProjectName, "typed project name reaches creation state")
+            tap(36, in: projects)
+            try await waitUntil { !store.leftCreationSubmitting }
+            try check(store.leftCreationError == nil && !store.leftCreationActive, "project creation finishes")
+            guard let firstChat = store.detailThread, firstChat.id.hasPrefix("created-") else {
+                throw Failure(message: "new project's first chat did not open")
+            }
+            try check(!firstChat.hasMessages && firstChat.title == "New chat", "first chat starts empty with a default name")
+            await store.refresh()
+            try check(store.projectChats.contains { $0.id == firstChat.id }, "first empty chat survives server catalog omission")
+            await frame(projects)
+            try check(router.scope(for: projects) == "projects.chats", "creation field relinquishes keyboard context")
+            tap(49, .option, in: projects)
+            try check(store.renameTarget?.id == firstChat.id, "Option Space opens rename for the first new chat")
+            try await typeName("İlk sohbet · yeni ad", in: projects)
+            tap(36, in: projects)
+            try await waitUntil { !store.renameSubmitting }
+            try check(store.renameError == nil && store.renameTarget == nil, "first empty chat rename is saved")
+            await store.refresh()
+            try check(store.projectChats.first?.title == "İlk sohbet · yeni ad", "first chat name survives catalog refresh")
+            try check(store.detailThread?.title == "İlk sohbet · yeni ad", "new chat window title follows rename")
+            guard case .chats(let newProject) = store.leftRoute else { throw Failure(message: "new project route lost") }
+            store.prepareToClose(.projects)
+            try check(store.projects.contains { $0.id == newProject.id }, "new empty project stays in root list")
+            store.selectLeft(id: newProject.id)
+            store.activateSelection(.projects)
+            try await waitUntil { store.projectChats.contains { $0.id == firstChat.id } }
+            try check(store.projectChats.first?.title == "İlk sohbet · yeni ad", "Q/back then reopen preserves named first chat")
+
+            store.beginLeftCreation()
+            store.leftCreationName = "İkinci boş sohbet"
+            store.commitLeftCreation()
+            try await waitUntil { !store.leftCreationSubmitting }
+            guard let secondChat = store.detailThread, secondChat.id != firstChat.id else {
+                throw Failure(message: "second named empty chat did not open")
+            }
+            await store.refresh()
+            try check(Set(store.projectChats.map(\.id)) == [firstChat.id, secondChat.id], "two unlisted drafts stay distinct without duplicates")
+            store.selectLeft(id: firstChat.id)
+            await store.refresh()
+            try check(store.leftInteraction.selectedID == firstChat.id, "refresh keeps selected chat instead of selecting a project ID")
+            projects.makeFirstResponder(nil)
+            tap(49, .option, in: projects)
+            try check(store.renameTarget?.id == firstChat.id, "rename still targets selected first chat after refresh")
+            try await typeName("İlk sohbet · ikinci ad", in: projects)
+            tap(36, in: projects)
+            try await waitUntil { !store.renameSubmitting }
+            await store.refresh()
+            try check(store.projectChats.contains { $0.id == firstChat.id && $0.title == "İlk sohbet · ikinci ad" }, "pending metadata follows subsequent rename")
+            try check(store.projectChats.contains { $0.id == secondChat.id && $0.title == "İkinci boş sohbet" }, "another empty chat's name stays intact")
+
+            store.focusDetailWindow(store.projectChats.first { $0.id == firstChat.id }!)
+            store.beginWriting(from: .detail)
+            store.composerText = "ECHO"
+            store.submitMessage()
+            try await waitUntil { !store.messageSending && store.visibleDetailItems.contains { $0.text == "BAVBAV_ECHO_OK" } }
+            await store.refresh()
+            try check(store.projectChats.filter { $0.id == firstChat.id }.count == 1, "server indexing adopts draft without a duplicate")
+            store.selectLeft(id: firstChat.id)
+            store.beginRename(in: .projects)
+            store.renameName = "ARCHIVE_CREATED_FIXTURE"
+            store.commitRename()
+            try await waitUntil { !store.renameSubmitting }
+            await store.refresh()
+            try check(!store.projectChats.contains { $0.id == firstChat.id }, "once indexed, a removed server row is not resurrected from draft metadata")
+            try check(store.projectChats.contains { $0.id == secondChat.id }, "other unlisted draft is still preserved")
             try check(NSApp.windows.filter { !initialWindows.contains(ObjectIdentifier($0)) }.allSatisfy { !$0.isVisible },
                       "all QA windows remained hidden")
             await store.shutdown()
-            print("BAVBAV RENAME CHECK PASSED: \(checks) checks; project/inside-project/recent/standalone, save/cancel/error, durable names, stale refresh, live/frozen titles, configurable shortcuts, native editing; fake server only")
+            print("BAVBAV RENAME CHECK PASSED: \(checks) checks; new project/first empty chat, unlisted drafts, selection/reopen, indexing/removal, existing/standalone names, stale refresh and native editing; fake server only")
             return true
         } catch {
             await store.shutdown()

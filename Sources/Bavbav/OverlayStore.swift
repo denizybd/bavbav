@@ -234,6 +234,10 @@ final class OverlayStore: ObservableObject {
     private var allThreads: [CodexThread] = []
     private var threadNameRevision = 0
     private var threadNameChanges: [String: (revision: Int, name: String)] = [:]
+    // The server can name/read a new empty chat before thread/list indexes it.
+    // Keep only locally created draft metadata until the full catalog sees it;
+    // retaining every missing historical row would resurrect archived chats.
+    private var unlistedCreatedThreads: [String: CodexThread] = [:]
     private var connecting = false
     private var refreshing = false
     private var consecutiveRefreshFailures = 0
@@ -348,7 +352,8 @@ final class OverlayStore: ObservableObject {
         do {
             // Fetch every practical local record rather than silently cutting
             // the project catalog at the newest 80 conversations.
-            let fetched = reconcileFetchedNames(visibleThreads(try await client.listThreads(limit: 2_000)), since: nameRevision)
+            let listed = try await client.listThreads(limit: 2_000)
+            let fetched = reconcileFetchedNames(visibleThreads(mergingCreatedThreads(with: listed, acknowledge: true)), since: nameRevision)
             allThreads = fetched
 
             let saved = ProjectCatalog.loadSavedProjects(codexHome: codexHome)
@@ -767,6 +772,7 @@ final class OverlayStore: ObservableObject {
                     threadNameChanges[thread.id] = (threadNameRevision, name)
                     let latest = allThreads.first { $0.id == thread.id } ?? thread
                     let renamed = renamedThread(latest, name: name, updatedAt: latest.updatedAt)
+                    if unlistedCreatedThreads[thread.id] != nil { unlistedCreatedThreads[thread.id] = renamed }
                     allThreads = allThreads.map { $0.id == thread.id ? self.renamedThread($0, name: name, updatedAt: $0.updatedAt) : $0 }
                     projectChats = projectChats.map { $0.id == thread.id ? self.renamedThread($0, name: name, updatedAt: $0.updatedAt) : $0 }
                     updateChatCatalogs()
@@ -797,6 +803,30 @@ final class OverlayStore: ObservableObject {
             guard let change = threadNameChanges[thread.id], change.revision > revision else { return thread }
             return renamedThread(thread, name: change.name, updatedAt: thread.updatedAt)
         }
+    }
+
+    private func rememberCreatedThread(_ thread: CodexThread) {
+        if !thread.hasMessages { unlistedCreatedThreads[thread.id] = thread }
+    }
+
+    private func mergingCreatedThreads(
+        with listed: [CodexThread], cwd: String? = nil, acknowledge: Bool = false
+    ) -> [CodexThread] {
+        guard !unlistedCreatedThreads.isEmpty else { return listed }
+        let ids = Set(listed.map(\.id))
+        if acknowledge {
+            for id in ids { unlistedCreatedThreads.removeValue(forKey: id) }
+        }
+        let canonicalCWD = cwd.map(ProjectCatalog.canonicalPath)
+        let pending = unlistedCreatedThreads.values.filter {
+            !ids.contains($0.id) && (canonicalCWD == nil || ProjectCatalog.canonicalPath($0.cwd) == canonicalCWD)
+        }.sorted {
+            $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt
+        }
+        guard !pending.isEmpty else { return listed }
+        // Preserve the server's order for equal dates, including ordinary
+        // refreshes where no local draft needs to be merged.
+        return (listed + pending).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     func isInteractionInputPresented(in panel: OverlayKind) -> Bool {
@@ -849,6 +879,7 @@ final class OverlayStore: ObservableObject {
                 try FileManager.default.createDirectory(at: standaloneDirectory, withIntermediateDirectories: true)
                 let thread = try await client.startThread(cwd: standaloneDirectory.path,
                     sandbox: "danger-full-access", approvalPolicy: "never")
+                rememberCreatedThread(thread)
                 standaloneIDs.insert(thread.id)
                 defaults.set(Array(standaloneIDs), forKey: "chat.standalone-ids")
                 allThreads.removeAll { $0.id == thread.id }
@@ -2185,6 +2216,7 @@ final class OverlayStore: ObservableObject {
                     sandbox: "danger-full-access",
                     approvalPolicy: "never"
                 )
+                rememberCreatedThread(thread)
                 allThreads.insert(thread, at: 0)
                 updateChatCatalogs()
                 open(thread, beginWriting: true)
@@ -2202,6 +2234,7 @@ final class OverlayStore: ObservableObject {
         )
         try await client.setThreadName(id: thread.id, name: name)
         let namedThread = renamedThread(thread, name: name)
+        rememberCreatedThread(namedThread)
         allThreads.removeAll { $0.id == namedThread.id }
         allThreads.insert(namedThread, at: 0)
         projectChats.removeAll { $0.id == namedThread.id }
@@ -2251,6 +2284,7 @@ final class OverlayStore: ObservableObject {
         )
         try await client.setThreadName(id: thread.id, name: "New chat")
         let namedThread = renamedThread(thread, name: "New chat")
+        rememberCreatedThread(namedThread)
         let project = CodexProject(
             id: thread.projectID ?? "cwd:\(projectURL.path)",
             name: name,
@@ -2850,7 +2884,8 @@ final class OverlayStore: ObservableObject {
         let generation = projectChatsLoadGeneration
         let nameRevision = threadNameRevision
         do {
-            let fetched = reconcileFetchedNames(visibleThreads(try await client.listThreads(limit: 2_000, cwd: project.path)), since: nameRevision)
+            let listed = try await client.listThreads(limit: 2_000, cwd: project.path)
+            let fetched = reconcileFetchedNames(visibleThreads(mergingCreatedThreads(with: listed, cwd: project.path)), since: nameRevision)
             guard case .chats(let currentProject) = leftRoute,
                   currentProject.id == project.id,
                   generation == projectChatsLoadGeneration
@@ -2916,8 +2951,9 @@ final class OverlayStore: ObservableObject {
     }
 
     private func ensureSelections() {
-        if !projects.contains(where: { $0.id == leftInteraction.selectedID }) {
-            leftInteraction.selectedID = projects.first?.id
+        let leftIDs = leftVisibleIDs
+        if !leftIDs.contains(where: { $0 == leftInteraction.selectedID }) {
+            leftInteraction.selectedID = leftIDs.first
         }
         if !recentChats.contains(where: { $0.id == recentInteraction.selectedID }) {
             recentInteraction.selectedID = recentChats.first?.id

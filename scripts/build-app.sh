@@ -13,7 +13,9 @@ fi
 export CLANG_MODULE_CACHE_PATH="$project_dir/.build/clang-module-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$project_dir/.build/swiftpm-module-cache"
 zsh "$project_dir/scripts/build-icons.sh"
-swift build --disable-sandbox -c release
+# Keep the SDKROOT and bundle layout this packaging script uses. Swift 6.3
+# changed the default engine to swiftbuild, which chooses a different SDK/layout.
+swift build --build-system native --disable-sandbox -c release
 
 # Do not overwrite a mapped executable or re-sign the currently running bundle.
 # Keep the previous bundle intact so existing chats can finish in that process.

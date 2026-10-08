@@ -127,6 +127,8 @@ BAVBAV_CODEX_BIN="/absolute/path/to/codex" ./dist/Bavbav.app/Contents/MacOS/Bavb
 
 Bavbav resolves the executable again whenever it starts a new Codex process. After an initial connection failure, the existing 15-second refresh retries the complete handshake, message subscription, and settings load while a window is open. Reconnection does not automatically resend prompts.
 
+Newly created chats can be renamed before their first message. While Codex has not yet included an empty chat in its stored catalog, Bavbav keeps its small draft metadata in the current session, so refresh and project navigation do not discard its name or selection. Once the server lists it, normal catalog ownership resumes; this is not a cache of every missing or archived chat.
+
 </details>
 
 ### Your first conversation
