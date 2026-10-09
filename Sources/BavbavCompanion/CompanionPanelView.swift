@@ -86,25 +86,90 @@ public struct CompanionPanelView: View {
                 section("TÜRKÇE SES") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Button(speech.finalizing ? "Metin tamamlanıyor…" : (speech.listening ? "Dinlemeyi bitir" : "Başlat · konuş")) {
+                            Button(session.voiceConversationActive ? "Sesli sohbeti bitir" : "Sesli sohbeti başlat") {
+                                if session.voiceConversationActive { session.pauseVoiceConversation() }
+                                else { Task { await session.startVoiceConversation() } }
+                            }
+                            .disabled(!session.voiceConversationActive && (session.stopping || session.connecting || session.sending || session.capturing || speech.dictationBusy))
+                            .accessibilityIdentifier("companion.voiceConversation")
+                            Spacer()
+                            Text(session.voiceConversationActive ? "● SESLİ SOHBET" : "○ KAPALI")
+                                .font(.system(.caption, design: .monospaced).bold())
+                                .foregroundStyle(session.voiceConversationActive ? appearance.accent : appearance.muted)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        }
+                        Text("Konuşman bitince otomatik gönderilir; gerçek yanıt seslendirilir, ardından mikrofon yeniden açılır. Yanıt okunurken mikrofon kapalıdır.")
+                            .font(.caption).foregroundStyle(appearance.muted)
+                            .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        if session.voiceConversationActive && speech.listening {
+                            Button("Konuşmayı bitir · yanıtla") { session.finishDictation() }
+                                .help("Sessizlik algısını beklemeden söylediğin metni tamamlayıp gönderir.")
+                                .accessibilityIdentifier("companion.finishVoiceTurn")
+                        }
+                        if !session.voiceStatus.isEmpty {
+                            Text(session.voiceStatus).font(.callout).textSelection(.enabled)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                                .accessibilityIdentifier("companion.voiceStatus")
+                        }
+                        if !session.voiceTranscript.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text("SEN · TANINAN KONUŞMA")
+                                    .font(.system(.caption, design: .monospaced).bold())
+                                    .foregroundStyle(appearance.accent)
+                                Text(session.voiceTranscript).font(.callout).lineLimit(6).textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(appearance.raised.opacity(appearance.backgroundOpacity), in: RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(appearance.border, lineWidth: 1))
+                            .accessibilityIdentifier("companion.voiceTranscript")
+                        }
+                        if session.sending && !session.liveReply.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text("CODEX · CANLI YANIT")
+                                    .font(.system(.caption, design: .monospaced).bold())
+                                    .foregroundStyle(appearance.accent)
+                                Text(session.liveReply).font(.callout).lineLimit(8).textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(appearance.raised.opacity(appearance.backgroundOpacity), in: RoundedRectangle(cornerRadius: 7))
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(appearance.border, lineWidth: 1))
+                            .accessibilityIdentifier("companion.liveReply")
+                        }
+                        HStack {
+                            Button(speech.finalizing ? "Metin tamamlanıyor…" : (speech.listening ? "Metne yazmayı bitir" : "Yalnızca metne yaz")) {
                                 if speech.listening { session.finishDictation() }
                                 else { Task { await session.startListening() } }
-                            }.disabled(session.sending || session.capturing || session.connecting || session.stopping || speech.preparing || speech.finalizing)
-                            Button("Sustur") { session.mute() }.disabled(!speech.dictationBusy)
-                            Button("Yanıt sesini durdur") { speech.stopSpeaking() }.disabled(!speech.speaking)
+                            }.disabled(session.voiceConversationActive || session.sending || session.capturing || session.connecting || session.stopping || speech.preparing || speech.finalizing)
+                            Button("Sustur") {
+                                if session.voiceConversationActive { session.pauseVoiceConversation() }
+                                session.mute()
+                            }.disabled(!speech.dictationBusy && !session.voiceConversationActive)
+                            Button("Yanıt sesini durdur") { session.stopReplyAudio() }
+                                .disabled(!speech.speaking && !session.voiceConversationActive)
                         }
-                        Text(speech.status).font(.caption).foregroundStyle(appearance.muted)
-                            .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        if !session.voiceConversationActive {
+                            Text(speech.status).font(.caption).foregroundStyle(appearance.muted)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        }
                         Button("Türkçe sesi dene") { speech.speak("Merhaba Deniz. Bavbav ses denemesi. Beni duyabiliyor musun?") }
-                            .disabled(session.sending || session.stopping || speech.dictationBusy)
+                            .disabled(session.voiceConversationActive || session.sending || session.stopping || speech.dictationBusy)
+                            .help("Yalnızca Mac ses çıkışı denemesidir; gerçek sohbet yanıtı değildir.")
                         Toggle("Yanıtları Türkçe seslendir", isOn: $session.speakReplies)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
-                            .onChange(of: session.speakReplies) { if !$0 { speech.stopSpeaking() } }
+                            .onChange(of: session.speakReplies) {
+                                if !$0 { session.pauseVoiceConversation(); session.stopReplyAudio() }
+                            }
                         if !speech.supportsLocalTurkish {
                             Toggle("Cihaz içi Türkçe yoksa Apple konuşma hizmetine izin ver", isOn: $session.allowAppleService)
                                 .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
-                                .onChange(of: session.allowAppleService) { if !$0 { speech.stopListening() } }
-                            Text("Bu seçenek sesin Apple'a gönderilebilmesine izin verir. OpenAI'a yalnızca kontrol edip gönderdiğin metin gider.")
+                                .onChange(of: session.allowAppleService) {
+                                    if !$0 { session.pauseVoiceConversation(); speech.stopListening() }
+                                }
+                            Text("Bu seçenek sesin Apple'a gönderilebilmesine izin verir. Tanınan metin sesli sohbette otomatik, yalnızca metne yaz modunda Gönder'e bastığında mevcut hesabına gider.")
                                 .font(.caption).foregroundStyle(appearance.muted)
                                 .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                         }
@@ -113,14 +178,31 @@ public struct CompanionPanelView: View {
                 section("TÜM EKRAN · ARALIKLI PAYLAŞIM") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Button("Ekranları seç / yenile") { Task { await session.listDisplays() } }
-                                .disabled(session.capturing || session.screenSharing || session.stopping)
+                            Button(session.requestingScreenPermission ? "İzin bekleniyor…" : "Ekranları göster / yenile") {
+                                Task { await session.listDisplays() }
+                            }
+                                .disabled(session.requestingScreenPermission || session.capturing || session.screenSharing || session.stopping)
+                                .help("macOS Ekran Kaydı iznini sorabilir. Görüntü gönderimi ayrıca onaylanıp başlatılır.")
                             Spacer()
                             Text(session.screenSharing ? "● PAYLAŞILIYOR" : "○ KAPALI")
                                 .font(.system(.caption, design: .monospaced).bold())
                                 .foregroundStyle(session.screenSharing ? appearance.accent : appearance.muted)
                                 .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                                 .accessibilityIdentifier("companion.screenSharing")
+                        }
+                        if session.requestingScreenPermission {
+                            Text("macOS Ekran Kaydı iznini bekliyor. İzin ekranında Bavbav'a erişim ver; burada ekran görüntüsü henüz gönderilmiyor.")
+                                .font(.caption).foregroundStyle(appearance.muted)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        } else if session.displays.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Ekran görünmüyorsa Sistem Ayarları → Gizlilik ve Güvenlik → Ekran ve Sistem Sesi Kaydı bölümünde Bavbav'ı etkinleştir, ardından ekranları yenile. macOS isterse Bavbav'ı yeniden aç.")
+                                    .font(.caption).foregroundStyle(appearance.muted)
+                                    .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                                Button("Sistem Ayarları") {
+                                    NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+                                }
+                            }
                         }
                         if !session.displays.isEmpty {
                             Menu {
@@ -144,7 +226,7 @@ public struct CompanionPanelView: View {
                             .disabled(session.screenSharing || session.capturing || session.stopping)
                         }
                         Stepper(value: $session.screenShareInterval, in: 3...60, step: 1) {
-                            Text("Her \(Int(session.screenShareInterval)) saniyede bir kare")
+                            Text("Kareler arasında en az \(Int(session.screenShareInterval)) saniye")
                                 .font(.system(size: 12, design: .monospaced))
                                 .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                         }.accessibilityLabel("Ekran paylaşımı aralığı, saniye")
@@ -159,7 +241,7 @@ public struct CompanionPanelView: View {
                         HStack {
                             Button(session.capturing ? "Kare hazırlanıyor…" : "Paylaşımı başlat · tüm ekran") {
                                 Task { await session.startScreenSharing() }
-                            }.disabled(!shareConsent || session.displaySelection == nil || !session.connected || session.connecting || session.stopping || session.screenSharing || session.capturing || session.sending || speech.dictationBusy)
+                            }.disabled(!shareConsent || session.displaySelection == nil || !session.connected || session.connecting || session.stopping || session.screenSharing || session.capturing || session.sending || (speech.dictationBusy && !session.voiceConversationActive))
                             Button("Paylaşımı durdur", role: .destructive) {
                                 shareConsent = false
                                 session.stopScreenSharing()
@@ -202,15 +284,15 @@ public struct CompanionPanelView: View {
                         .padding(8)
                         .background(appearance.raised.opacity(appearance.backgroundOpacity), in: RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(appearance.border, lineWidth: 1))
-                        .disabled(session.sending || speech.dictationBusy)
+                        .disabled(session.voiceConversationActive || session.sending || speech.dictationBusy)
                         .accessibilityLabel("Companion mesajı")
                     HStack {
-                        Text("Konuşma kendiliğinden gönderilmez.").font(.caption).foregroundStyle(appearance.muted)
+                        Text(session.voiceConversationActive ? "Sesli sohbet açık · bu yazılı taslak korunuyor." : "Yalnızca metne yaz modu otomatik göndermez.").font(.caption).foregroundStyle(appearance.muted)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                         Spacer()
                         Button(session.sending ? "Yanıt bekleniyor…" : "Gönder") { Task { await session.send() } }
                             .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(!session.connected || session.sending || session.capturing || session.stopping || speech.dictationBusy || (session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.includePreview))
+                            .disabled(session.voiceConversationActive || !session.connected || session.sending || session.capturing || session.stopping || speech.dictationBusy || (session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.includePreview))
                     }
                 }
                 Text("LOGIC PRO KONTROLÜ · HAZIR DEĞİL\nBu sürüm yalnızca konuşur ve açıkça paylaştığın ekran karelerini yorumlar. Fare, klavye veya Logic Pro işlemi yapmaz.")

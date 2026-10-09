@@ -157,3 +157,72 @@ Account report: unique local temporary acceptance directory
 Final launch and duplicate logs: `bavbav-final-launch.uzhBTq` and
 `bavbav-final-duplicate.gppIti` in the macOS temporary directory. Paths may expire;
 no private account storage or screen contents were copied into this report.
+
+## Automatic Turkish voice and screen-selection repair — 0.10.2 (58)
+
+The user's live feedback identified a real workflow gap: the original native
+voice control only dictated into a draft and required manual Send. An explicit
+**Sesli sohbeti başlat** now authorizes automatic recognized-text turns, without
+submitting the existing typed/manual draft. Approximately1.35s of quiet ends a
+recognized utterance; audio energy protects continuing phrases. The final text
+submits once, actual correlated account reply deltas appear in the panel, and
+the completed real answer is sent to macOS Turkish speech synthesis. Only the
+current utterance's natural completion resumes listening. Initial silence is
+bounded to15s and recognition to55s. Manual review-before-Send dictation remains
+separate. These are Mac STT → existing account → Mac TTS turns, not full-duplex
+ChatGPT native Voice or a separate paid Realtime API connection.
+
+Mute, voice-end and reply-audio-stop revoke automatic microphone restart. Full
+STOP fences old turns and closes the dedicated account transport. Voice-end
+alone lets an already-submitted answer drain silently and leaves independent
+screen sharing unchanged. Recognition/device/account failures preserve the last
+recognized text and manual draft without automatic retries. Pending screen
+observations have one writer; a recognized voice turn has one bounded priority
+slot. Natural reply completion now drains any existing observation before
+reopening the microphone, fixing an otherwise-stalled automatic voice loop.
+
+The observed screen selection error on the running app was native TCC denial
+("The user declined TCCs for application, window, display capture"), not an
+image-upload success. The visible screen button now explicitly requests/checks
+Screen Recording permission before enumeration, shows retry/Settings guidance,
+and selects a sole display without capturing it. Multiple displays still require
+selection. The unchecked full-screen confirmation remains separate from list,
+selection and Start; no frame is captured/uploaded merely by connecting.
+
+Canonical checks now pass670 Companion assertions, including automatic voice
+chain with a speech-driver fixture, reply streaming/early-ACK/stale-item fences,
+duplicate submission, natural resume, pause/STOP/error, observation priority,
+resume-after-held-screen and permission-denial/retry/sole-screen cases. Existing
+native theme/signature/full app checks also pass. These are not actual microphone
+or full-display image-to-model acceptance.
+
+Real runtime evidence during this update:
+
+- Candidate57 opened through LaunchServices as the single normal app, PID23361,
+  connected the existing account and registered Command1–6. No API key, cookies
+  or original Companion keys were copied. Mac speakers were the actual default
+  output, unmuted; microphone and screen sharing remained closed for the test.
+- A bounded text-only prompt was sent through the visible Companion editor to
+  the real account. The actual reply was **“Merhaba, bugün birlikte konuşabiliriz!”**,
+  not the built-in demo sentence. The real native panel reported natural playback
+  completion, and the user independently confirmed **“Evet, duydum”**. This proves
+  real-account reply → audible Mac TTS for that candidate, not voice-input or
+  automatic multi-turn acceptance.
+- Fresh native preflight on candidate57 still reported microphone0/speech0 and
+  screenfalse. No OS Allow button was clicked on behalf of the user, no microphone
+  was opened automatically, and no full-display image was sent. The user's earlier
+  report of displayed speech is not substituted for new automatic-loop evidence.
+
+Remaining live acceptance: user-started Turkish microphone utterance → one
+automatic account request → audible response → return to listening, independent
+voice/audio STOP, and explicitly consented full-display changed-frame → model.
+The original goal is **not product complete** on fixture/build/audio-only proof.
+
+Final58 launch: the idle candidate was quit through its normal Cmd-Q action and
+the packaged update opened through LaunchServices, PID23728/parent1. The actual
+panel connected the account and logged registered shortcuts1–6 at normal window
+level0. The user's selected5s interval was restored via its visible native
+stepper; no draft was pending at restart. Native microphone/speech preflight
+remained0 and screenfalse; automatic voice and sharing remained OFF. Final
+deep/strict signature verification passed. Earlier account conversations remain
+stored; no projects, chats, attachments or keys were deleted.

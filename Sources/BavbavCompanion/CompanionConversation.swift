@@ -6,10 +6,12 @@ import Foundation
     func send(text: String, image: URL?) async throws -> String
     func stop() async
     func setDisconnectionHandler(_ handler: ((String) -> Void)?)
+    func setReplyHandler(_ handler: ((String) -> Void)?)
 }
 
 public extension CompanionConversation {
     func setDisconnectionHandler(_ handler: ((String) -> Void)?) {}
+    func setReplyHandler(_ handler: ((String) -> Void)?) {}
 }
 
 public struct CompanionFailure: LocalizedError {
@@ -31,6 +33,7 @@ public struct CompanionFailure: LocalizedError {
         var completed: (String, String?)?
         var messages: [String: CodexMessage] = [:]
         var messageOrder: [String] = []
+        var completedItems: Set<String> = []
     }
     @MainActor private final class PendingSend {
         let generation: UUID
@@ -43,6 +46,7 @@ public struct CompanionFailure: LocalizedError {
         var transportFailure: String?
         var submitted = false
         var cleanup: Task<Void, Never>?
+        var lastPublishedReply = ""
         init(generation: UUID, server: CodexAppServer, threadID: String) {
             self.generation = generation; self.server = server; self.threadID = threadID
         }
@@ -53,6 +57,7 @@ public struct CompanionFailure: LocalizedError {
     private var busy = false
     private var disconnectedCleanup: Task<Void, Never>?
     private var disconnectionHandler: ((String) -> Void)?
+    private var replyHandler: ((String) -> Void)?
     private let directory: URL
     private let ephemeral: Bool
 
@@ -63,6 +68,8 @@ public struct CompanionFailure: LocalizedError {
     public func setDisconnectionHandler(_ handler: ((String) -> Void)?) {
         disconnectionHandler = handler
     }
+
+    public func setReplyHandler(_ handler: ((String) -> Void)?) { replyHandler = handler }
 
     public func connect() async throws -> String {
         if let cleanup = disconnectedCleanup {
@@ -154,6 +161,7 @@ public struct CompanionFailure: LocalizedError {
         request.turnID = turn.id
         request.results = [turn.id: request.results[turn.id] ?? TurnResult()]
         request.bufferedTurns = [turn.id]
+        publishReply(request)
         // A terminal RPC status does not mean the notification stream has
         // drained. Its ordered turn/completed event follows the final items.
         let deadline = Date().addingTimeInterval(120)
@@ -170,9 +178,7 @@ public struct CompanionFailure: LocalizedError {
             throw CompanionFailure("Yanıt zaman aşımına uğradı. Mesaj otomatik yeniden gönderilmedi.", requiresReconnect: true)
         }
         guard completed.0 == "completed" else { throw CompanionFailure(completed.1 ?? "Yanıt tamamlanmadı: \(completed.0)") }
-        let ordered = result.messageOrder.compactMap { result.messages[$0] }
-        let finals = ordered.filter { $0.status == "final_answer" || $0.title == "FINAL ANSWER" }
-        let reply = (finals.isEmpty ? Array(ordered.suffix(1)) : finals).map(\.text).joined(separator: "\n\n")
+        let reply = selectedReply(result)
         guard !reply.isEmpty else { throw CompanionFailure("Tur bitti ama okunabilir yanıt gelmedi. Başarı olarak gösterilmedi.") }
         return reply
     }
@@ -189,11 +195,39 @@ public struct CompanionFailure: LocalizedError {
         }
         guard let request = pendingSend, request.generation == token else { return }
         switch event {
+        case .itemStarted(let id, let turn, let message) where id == request.threadID:
+            guard request.turnID == nil || request.turnID == turn, message.kind == .agent else { return }
+            var result = bufferedResult(turn: turn, request: request)
+            guard !result.completedItems.contains(message.id) else { return }
+            let existing = result.messages[message.id]
+            if existing == nil { result.messageOrder.append(message.id) }
+            result.messages[message.id] = CodexMessage(id: message.id, role: .agent,
+                text: existing?.text ?? message.text, kind: .agent,
+                title: message.title ?? existing?.title, status: message.status ?? existing?.status)
+            request.results[turn] = result
+            publishReply(request)
+        case .agentMessageDelta(let id, let turn, let item, let delta) where id == request.threadID:
+            guard request.turnID == nil || request.turnID == turn else { return }
+            var result = bufferedResult(turn: turn, request: request)
+            guard !result.completedItems.contains(item) else { return }
+            let existing = result.messages[item]
+            if existing == nil { result.messageOrder.append(item) }
+            let text = existing?.text ?? ""
+            // Bound partial-preview storage without altering the authoritative
+            // final item received on completion.
+            let remaining = max(0, 128_000 - text.count)
+            result.messages[item] = CodexMessage(id: item, role: .agent,
+                text: text + String(delta.prefix(remaining)), kind: .agent,
+                title: existing?.title, status: existing?.status)
+            request.results[turn] = result
+            publishReply(request)
         case .itemCompleted(let id, let turn, let message) where id == request.threadID:
             guard request.turnID == nil || request.turnID == turn, message.kind == .agent else { return }
             var result = bufferedResult(turn: turn, request: request)
             if result.messages[message.id] == nil { result.messageOrder.append(message.id) }
-            result.messages[message.id] = message; request.results[turn] = result
+            result.messages[message.id] = message; result.completedItems.insert(message.id)
+            request.results[turn] = result
+            publishReply(request)
         case .turnCompleted(let id, let turn, let status, let error) where id == request.threadID:
             guard request.turnID == nil || request.turnID == turn else { return }
             var result = bufferedResult(turn: turn, request: request)
@@ -201,6 +235,23 @@ public struct CompanionFailure: LocalizedError {
             request.results[turn] = result
         default: break
         }
+    }
+
+    private func selectedReply(_ result: TurnResult) -> String {
+        let ordered = result.messageOrder.compactMap { result.messages[$0] }
+        let finals = ordered.filter { $0.status == "final_answer" || $0.title == "FINAL ANSWER" }
+        return (finals.isEmpty ? Array(ordered.suffix(1)) : finals).map(\.text).joined(separator: "\n\n")
+    }
+
+    private func publishReply(_ request: PendingSend) {
+        // Never let pre-acknowledgement or previous-turn notifications choose
+        // what the user sees. Only our verified active RPC's turn can publish.
+        guard pendingSend === request, generation == request.generation,
+              let turn = request.turnID, let result = request.results[turn] else { return }
+        let text = selectedReply(result)
+        guard !text.isEmpty, text != request.lastPublishedReply else { return }
+        request.lastPublishedReply = text
+        replyHandler?(text)
     }
 
     private func disconnectIdleTransport(_ error: String) {

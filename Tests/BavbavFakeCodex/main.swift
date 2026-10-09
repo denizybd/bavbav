@@ -492,6 +492,51 @@ while let line = readLine() {
                     send(["id": id, "error": ["code": -32000, "message": "fixture: lost acknowledgement after accepting turn"]])
                     continue
                 }
+                if scenario == "COMPANION_STREAM_BEFORE_ACK" {
+                    send(["method": "item/started", "params": ["threadId": threadID, "turnId": turnID,
+                        "item": ["id": turnID + "-agent", "type": "agentMessage", "text": "PRE", "phase": "final_answer"]]])
+                    send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
+                        "itemId": turnID + "-agent", "delta": "ACK"]])
+                    recordCompanionRequest(["method": "fixture/stream-before-ack"])
+                    let gate = ProcessInfo.processInfo.environment["BAVBAV_COMPANION_STREAM_ACK_GATE"]
+                    DispatchQueue.global().async {
+                        if let gate {
+                            let deadline = Date().addingTimeInterval(3)
+                            while !FileManager.default.fileExists(atPath: gate), Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
+                            guard FileManager.default.fileExists(atPath: gate) else { Foundation.exit(74) }
+                        }
+                        send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                        recordCompanionRequest(["method": "fixture/turn-ack"])
+                        Thread.sleep(forTimeInterval: 0.15)
+                        send(["method": "item/agentMessage/delta", "params": ["threadId": "unrelated", "turnId": turnID,
+                            "itemId": "wrong-chat", "delta": "WRONG CHAT STREAM"]])
+                        send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": "old-turn",
+                            "itemId": "wrong-turn", "delta": "WRONG OLD STREAM"]])
+                        send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
+                            "itemId": turnID + "-agent", "delta": "_LIVE"]])
+                        Thread.sleep(forTimeInterval: 0.15)
+                        for _ in 0..<2 {
+                            send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+                                "item": ["id": turnID + "-agent", "type": "agentMessage", "text": "PREACK_LIVE", "phase": "final_answer"]]])
+                        }
+                        send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
+                            "itemId": turnID + "-agent", "delta": "WRONG LATE DELTA"]])
+                        send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+                            "item": ["id": turnID + "-commentary", "type": "agentMessage", "text": "WRONG COMMENTARY PREFERENCE", "phase": "commentary"]]])
+                        send(["method": "turn/completed", "params": ["threadId": threadID, "turn": ["id": turnID, "status": "completed"]]])
+                    }
+                    continue
+                }
+                if scenario == "COMPANION_STREAM_CANCEL" || scenario == "COMPANION_STREAM_HOLD_BEFORE_ACK" {
+                    activeTurns[threadID] = turnID
+                    if scenario == "COMPANION_STREAM_CANCEL" {
+                        send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                    }
+                    send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
+                        "itemId": turnID + "-agent", "delta": "CANCELLABLE_PARTIAL"]])
+                    recordCompanionRequest(["method": "fixture/stream-held"])
+                    continue
+                }
                 if scenario == "COMPANION_TERMINAL_ACK_FIRST" {
                     send(["id": id, "result": ["turn": ["id": turnID, "status": "completed"]]])
                     DispatchQueue.global().asyncAfter(deadline: .now() + 0.03) {
@@ -519,6 +564,8 @@ while let line = readLine() {
                         let stale = "stale-\(index)"
                         send(["method": "turn/started", "params": ["threadId": threadID,
                             "turn": ["id": stale, "status": "inProgress"]]])
+                        send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": stale,
+                            "itemId": stale + "-agent", "delta": "WRONG OLD STREAM"]])
                         send(["method": "item/completed", "params": ["threadId": threadID, "turnId": stale,
                             "item": ["id": stale + "-agent", "type": "agentMessage", "text": "WRONG OLD TURN", "phase": "final_answer"]]])
                         send(["method": "turn/completed", "params": ["threadId": threadID,

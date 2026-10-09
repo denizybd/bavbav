@@ -27,7 +27,12 @@ public struct CompanionLine: Identifiable {
     @Published public private(set) var displays: [CompanionDisplay] = []
     @Published public private(set) var displaySelection: CompanionDisplay?
     @Published public private(set) var screenSharing = false
+    @Published public private(set) var requestingScreenPermission = false
     @Published public private(set) var lastSharedAt: Date?
+    @Published public private(set) var voiceConversationActive = false
+    @Published public private(set) var voiceStatus = "Sesli sohbet kapalı"
+    @Published public private(set) var voiceTranscript = ""
+    @Published public private(set) var liveReply = ""
     @Published public var screenShareInterval: Double = 10 {
         didSet {
             let safe = screenShareInterval.isFinite ? min(60, max(3, screenShareInterval)) : 10
@@ -35,6 +40,7 @@ public struct CompanionLine: Identifiable {
         }
     }
     public let speech: CompanionSpeech
+    private let speechDriver: any CompanionSpeechDriving
     private let conversation: any CompanionConversation
     private let screen: any CompanionScreenSource
     private let directory: URL
@@ -46,15 +52,27 @@ public struct CompanionLine: Identifiable {
     private var screenShareTask: Task<Void, Never>?
     private var screenShareSending = false
     private var stopped = true
+    private enum VoicePhase { case idle, starting, listening, finalizing, queued, awaitingReply, speaking }
+    private var voicePhase = VoicePhase.idle
+    private var voiceGeneration = UUID()
+    private var voiceCycle = UUID()
+    private var voiceTask: Task<Void, Never>?
+    private var pendingVoiceText: String?
+    private var voiceSendInFlight = false
+    private var voiceSendID: UUID?
+    private var displayListingID: UUID?
 
     public init(conversation: any CompanionConversation, screen: any CompanionScreenSource,
-                directory: URL, speech: CompanionSpeech? = nil) {
-        self.conversation = conversation; self.screen = screen; self.directory = directory; self.speech = speech ?? CompanionSpeech()
-        self.speech.onTranscript = { [weak self] text in
+                directory: URL, speech: CompanionSpeech? = nil,
+                speechDriver: (any CompanionSpeechDriving)? = nil) {
+        let nativeSpeech = speech ?? CompanionSpeech()
+        self.conversation = conversation; self.screen = screen; self.directory = directory; self.speech = nativeSpeech
+        self.speechDriver = speechDriver ?? nativeSpeech
+        self.speechDriver.onTranscript = { [weak self] text in
             guard let self, !self.stopped, !self.muted else { return }
             guard var dictationDraft = self.dictationDraft else { return }
             guard let merged = dictationDraft.merge(transcript: text, currentDraft: self.draft) else {
-                self.dictationDraft = nil; self.speech.stopListening()
+                self.dictationDraft = nil; self.speechDriver.stopListening()
                 self.status = "Metin değiştirildi; düzenlemen korundu ve dikte durduruldu."
                 return
             }
@@ -62,12 +80,19 @@ public struct CompanionLine: Identifiable {
         }
         conversation.setDisconnectionHandler { [weak self] reason in
             guard let self, !self.stopped, !self.stopping else { return }
+            self.pauseVoiceConversation()
             self.stopScreenSharing()
-            self.sessionFence.revoke(); self.captureFence.revoke(); self.speech.stop()
+            self.sessionFence.revoke(); self.captureFence.revoke(); self.speechDriver.stop()
             self.dictationDraft = nil
             self.connected = false; self.connecting = false; self.threadID = nil
             self.capturing = false; self.sending = false; self.screenShareSending = false
+            self.voiceSendInFlight = false; self.voiceSendID = nil
+            self.requestingScreenPermission = false; self.displayListingID = nil
             self.status = "Hesap bağlantısı koptu: \(reason) Metin korundu; ⌘6 veya Hesaba bağlan ile yeniden bağlan."
+        }
+        conversation.setReplyHandler { [weak self] text in
+            guard let self, !self.stopped, self.sending, !self.screenShareSending else { return }
+            self.liveReply = text
         }
     }
 
@@ -88,28 +113,185 @@ public struct CompanionLine: Identifiable {
     }
 
     public func startListening() async {
-        guard !sending, !capturing, !speech.dictationBusy, !connecting, !stopping else { return }
+        guard !sending, !capturing, !speechDriver.dictationBusy, !connecting, !stopping, !voiceConversationActive else { return }
         let token = sessionFence.token
         if !connected { await connect() }
         guard connected, sessionFence.accepts(token), !stopped else { return }
         muted = false; dictationDraft = CompanionDictationDraft(original: draft)
-        await speech.start(allowAppleService: allowAppleService)
+        speechDriver.onTranscript = { [weak self] text in self?.receiveManualTranscript(text) }
+        speechDriver.onDictationFinished = nil; speechDriver.onDictationFailed = nil
+        await speechDriver.start(allowAppleService: allowAppleService, endOnSilence: false)
     }
-    public func mute() { muted = true; dictationDraft = nil; speech.stopListening() }
-    public func finishDictation() { speech.finishListening() }
+    private func receiveManualTranscript(_ text: String) {
+        guard !stopped, !muted, !voiceConversationActive, var dictationDraft else { return }
+        guard let merged = dictationDraft.merge(transcript: text, currentDraft: draft) else {
+            self.dictationDraft = nil; speechDriver.stopListening()
+            status = "Metin değiştirildi; düzenlemen korundu ve dikte durduruldu."; return
+        }
+        self.dictationDraft = dictationDraft; draft = merged
+    }
+    public func mute() { pauseVoiceConversation(); muted = true; dictationDraft = nil; speechDriver.stopListening() }
+    public func finishDictation() {
+        if voiceConversationActive, voicePhase == .listening { voicePhase = .finalizing }
+        speechDriver.finishListening()
+    }
+
+    /// Only this explicit start authorizes repeated recognized voice turns.
+    /// It never submits the existing typed/manual-dictation draft.
+    public func startVoiceConversation() async {
+        guard !voiceConversationActive, !sending, !capturing, !speechDriver.dictationBusy,
+              !connecting, !stopping, !voiceSendInFlight, !Task.isCancelled else { return }
+        voiceGeneration = UUID(); let generation = voiceGeneration
+        voiceConversationActive = true; voicePhase = .starting; muted = false; speakReplies = true
+        voiceStatus = "Sesli sohbet hazırlanıyor…"; liveReply = ""; dictationDraft = nil
+        if !connected { await connect() }
+        guard voiceConversationActive, voiceGeneration == generation, !Task.isCancelled else { return }
+        guard connected, !stopped else { pauseVoiceConversation(); voiceStatus = status; return }
+        await beginVoiceListening(generation)
+    }
+
+    private func beginVoiceListening(_ generation: UUID) async {
+        guard voiceConversationActive, voiceGeneration == generation, connected, !stopped,
+              !stopping, !speechDriver.dictationBusy, !Task.isCancelled else { return }
+        voicePhase = .starting; voiceStatus = "Mikrofon hazırlanıyor · devam eden ekran yanıtı varsa bekleniyor…"
+        // A periodic observation may have started while the preceding reply
+        // was being spoken. Reserve the next voice cycle and drain that writer;
+        // a busy guard here would silently abandon the automatic conversation.
+        while sending || capturing {
+            guard voiceConversationActive, voiceGeneration == generation, connected,
+                  !stopped, !stopping, !Task.isCancelled else { return }
+            do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
+        }
+        guard voiceConversationActive, voiceGeneration == generation, connected,
+              !stopped, !stopping, !Task.isCancelled else { return }
+        voiceCycle = UUID(); let cycle = voiceCycle
+        voiceTranscript = ""; pendingVoiceText = nil
+        voiceStatus = "Mikrofon ve Türkçe konuşma tanıma hazırlanıyor…"
+        speechDriver.onTranscript = { [weak self] text in
+            guard let self, self.acceptsVoice(generation, cycle),
+                  self.voicePhase == .listening || self.voicePhase == .finalizing else { return }
+            self.voiceTranscript = text
+        }
+        speechDriver.onDictationFinished = { [weak self] text in
+            guard let self, self.acceptsVoice(generation, cycle),
+                  self.voicePhase == .listening || self.voicePhase == .finalizing else { return }
+            let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                self.pauseVoiceConversation(); self.voiceStatus = "Konuşma algılanmadı; yeniden başlatabilirsin."; return
+            }
+            self.voiceTranscript = text; self.pendingVoiceText = text; self.voicePhase = .queued
+            self.voiceStatus = self.sending || self.capturing ? "Ekran yanıtı bitsin; konuşman sırada" : "Gerçek yanıt bekleniyor…"
+            self.scheduleVoiceSend(generation, cycle)
+        }
+        speechDriver.onDictationFailed = { [weak self] reason in
+            guard let self, self.acceptsVoice(generation, cycle) else { return }
+            self.pauseVoiceConversation(); self.voiceStatus = reason
+        }
+        await speechDriver.start(allowAppleService: allowAppleService, endOnSilence: true)
+        guard acceptsVoice(generation, cycle), voicePhase == .starting else { return }
+        if !speechDriver.dictationBusy {
+            pauseVoiceConversation(); voiceStatus = speechDriver.status
+        } else {
+            voicePhase = .listening; voiceStatus = "Dinliyorum · konuşman bitince otomatik göndereceğim"
+        }
+    }
+    private func acceptsVoice(_ generation: UUID, _ cycle: UUID) -> Bool {
+        voiceConversationActive && voiceGeneration == generation && voiceCycle == cycle && connected && !stopped && !muted
+    }
+    private func scheduleVoiceSend(_ generation: UUID, _ cycle: UUID) {
+        guard acceptsVoice(generation, cycle), voicePhase == .queued, !voiceSendInFlight else { return }
+        voiceTask = Task { [weak self] in
+            guard let self else { return }
+            while self.sending || self.capturing {
+                guard self.acceptsVoice(generation, cycle), !Task.isCancelled else { return }
+                do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
+            }
+            guard self.acceptsVoice(generation, cycle), let text = self.pendingVoiceText,
+                  self.voicePhase == .queued, !Task.isCancelled else { return }
+            self.pendingVoiceText = nil; self.voicePhase = .awaitingReply
+            await self.sendVoice(text, generation: generation, cycle: cycle)
+        }
+    }
+    private func sendVoice(_ text: String, generation: UUID, cycle: UUID) async {
+        guard acceptsVoice(generation, cycle), !sending, !capturing, !speechDriver.dictationBusy else { return }
+        let token = sessionFence.token
+        let sendID = UUID(); voiceSendID = sendID
+        voiceSendInFlight = true; sending = true; liveReply = ""
+        speechDriver.stopListening(); voiceStatus = "Gerçek yanıt bekleniyor…"; status = voiceStatus
+        // Surface the accepted request immediately, not only after the reply.
+        lines.append(CompanionLine(speaker: "YOU", text: text)); lines = Array(lines.suffix(80))
+        defer {
+            if voiceSendID == sendID {
+                voiceSendID = nil; voiceSendInFlight = false
+                if sessionFence.accepts(token) { sending = false }
+            }
+        }
+        do {
+            let reply = try await conversation.send(text: text, image: nil)
+            guard sessionFence.accepts(token), !stopped else { return }
+            liveReply = ""; lines.append(CompanionLine(speaker: "CODEX", text: reply)); lines = Array(lines.suffix(80))
+            sending = false
+            guard acceptsVoice(generation, cycle) else { status = "Yanıt alındı · sesli sohbet kapalı"; return }
+            guard speakReplies else { pauseVoiceConversation(); voiceStatus = "Yanıt sesi kapalı; sesli sohbet duraklatıldı."; return }
+            voicePhase = .speaking; voiceStatus = "Yanıtı seslendiriyorum · mikrofon kapalı"
+            speechDriver.onSpeakingFinished = { [weak self] in
+                guard let self, self.acceptsVoice(generation, cycle), self.voicePhase == .speaking else { return }
+                self.voicePhase = .starting
+                self.voiceTask = Task { [weak self] in
+                    do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
+                    guard let self, self.acceptsVoice(generation, cycle), !Task.isCancelled else { return }
+                    await self.beginVoiceListening(generation)
+                }
+            }
+            speechDriver.speak(reply)
+            if !speechDriver.speaking {
+                pauseVoiceConversation(); voiceStatus = "Yanıt geldi ama ses başlayamadı: \(speechDriver.status)"
+            }
+        } catch {
+            guard sessionFence.accepts(token), !stopped else { return }
+            if (error as? CompanionFailure)?.requiresReconnect == true { connected = false; threadID = nil }
+            pauseVoiceConversation(); voiceStatus = "\(error.localizedDescription) Konuşman korundu; otomatik yeniden gönderilmedi."
+            status = voiceStatus; liveReply = ""
+        }
+    }
+
+    /// Pauses only voice. An already submitted request drains silently;
+    /// STOP closes its own transport. Neither operation touches coding chats.
+    public func pauseVoiceConversation() {
+        voiceConversationActive = false; voiceGeneration = UUID(); voiceCycle = UUID(); pendingVoiceText = nil
+        voicePhase = .idle; voiceStatus = "Sesli sohbet kapalı · mikrofon ve yanıt sesi kapalı"
+        if !voiceSendInFlight { voiceTask?.cancel(); voiceTask = nil }
+        speechDriver.onDictationFinished = nil; speechDriver.onDictationFailed = nil; speechDriver.onSpeakingFinished = nil
+        speechDriver.stop()
+    }
+    public func stopReplyAudio() { pauseVoiceConversation(); speechDriver.stopSpeaking() }
 
     /// Listing is explicit and does not capture or transmit pixels.
     public func listDisplays() async {
-        guard !capturing, !screenSharing else { return }
-        capturing = true
+        guard !capturing, !screenSharing, !stopping else { return }
+        let listingID = UUID(); displayListingID = listingID
+        capturing = true; requestingScreenPermission = true
         let token = captureFence.token
-        defer { if captureFence.accepts(token) { capturing = false } }
+        defer {
+            if displayListingID == listingID {
+                displayListingID = nil; requestingScreenPermission = false
+                if captureFence.accepts(token) { capturing = false }
+            }
+        }
         do {
+            status = "Ekran Kaydı izni ve ekran listesi kontrol ediliyor…"
+            try await screen.prepareDisplaySelection()
+            guard captureFence.accepts(token) else { return }
             let found = try await screen.displays()
             guard captureFence.accepts(token) else { return }
             displays = found
             if let displaySelection, !found.contains(displaySelection) { selectDisplay(nil) }
-            status = "Tam ekran seç. Başlat'a kadar hiçbir görüntü alınmaz veya gönderilmez."
+            if displaySelection == nil, found.count == 1 { selectDisplay(found[0]) }
+            // Selection may revoke the previous capture token; listing itself is now complete.
+            capturing = false
+            status = found.isEmpty ? "Paylaşılabilir ekran bulunamadı. Ekran Kaydı iznini kontrol edip yeniden dene."
+                : displaySelection == nil ? "Tam ekran seç. Başlat'a kadar hiçbir görüntü alınmaz veya gönderilmez."
+                : "\(displaySelection!.label) seçildi. Onay kutusunu işaretleyip Paylaşımı başlat'a bas; henüz hiçbir görüntü paylaşılmadı."
         } catch {
             guard captureFence.accepts(token) else { return }
             status = "Ekran listesi alınamadı. macOS Ekran Kaydı iznini kontrol et: \(error.localizedDescription)"
@@ -126,7 +308,7 @@ public struct CompanionLine: Identifiable {
     /// slow inference cannot accumulate captures, uploads or queued turns.
     public func startScreenSharing() async {
         guard displaySelection != nil, !screenSharing, !capturing, !sending,
-              !speech.dictationBusy, !connecting, !stopping else { return }
+              (!speechDriver.dictationBusy || voiceConversationActive), !connecting, !stopping else { return }
         let token = captureFence.token
         if !connected { await connect() }
         guard connected, !stopped, captureFence.accepts(token), !Task.isCancelled else { return }
@@ -160,7 +342,9 @@ public struct CompanionLine: Identifiable {
     /// Also used by the deterministic regression runner; never a second writer.
     public func shareScreenNow() async {
         guard screenSharing, let display = displaySelection, connected, !stopped,
-              !sending, !capturing, !speech.dictationBusy else { return }
+              !sending, !capturing, pendingVoiceText == nil,
+              (!voiceConversationActive || voicePhase == .listening || voicePhase == .speaking),
+              (!speechDriver.dictationBusy || (voiceConversationActive && voicePhase == .listening)) else { return }
         let shareToken = captureFence.token
         let sessionToken = sessionFence.token
         capturing = true
@@ -175,7 +359,9 @@ public struct CompanionLine: Identifiable {
         }
         do {
             let png = try await screen.captureDisplay(display)
-            guard !Task.isCancelled, screenSharing, !sending, !speech.dictationBusy, captureFence.accepts(shareToken),
+            guard !Task.isCancelled, screenSharing, !sending, pendingVoiceText == nil,
+                  (!voiceConversationActive || voicePhase == .listening || voicePhase == .speaking),
+                  (!speechDriver.dictationBusy || (voiceConversationActive && voicePhase == .listening)), captureFence.accepts(shareToken),
                   sessionFence.accepts(sessionToken), displaySelection == display, !stopped else { return }
             preview = png; capturing = false
             let folder = directory.appendingPathComponent("ScreenFrames", isDirectory: true)
@@ -250,7 +436,7 @@ public struct CompanionLine: Identifiable {
     public func revokeShare() { selectWindow(nil); status = "Pencere paylaşımı kapalı. Önceden gönderilen görüntüler geri alınmaz." }
 
     public func send() async {
-        guard connected, !sending, !capturing, !stopped, !stopping, !speech.dictationBusy else { return }
+        guard connected, !sending, !capturing, !stopped, !stopping, !speechDriver.dictationBusy, !voiceConversationActive else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || includePreview else { return }
         if includePreview {
@@ -258,7 +444,7 @@ public struct CompanionLine: Identifiable {
                 includePreview = false; status = "Önizleme yok veya 60 saniyeden eski. Yeni önizleme alıp paylaşımı tekrar seç."; return
             }
         }
-        dictationDraft = nil; speech.stop(); sending = true
+        dictationDraft = nil; speechDriver.stop(); sending = true; liveReply = ""
         let token = sessionFence.token
         let png = includePreview ? preview : nil
         let scope = selection
@@ -281,16 +467,16 @@ public struct CompanionLine: Identifiable {
             lines.append(CompanionLine(speaker: "YOU", text: prompt + (png == nil ? "" : "\n[Paylaşılan pencere: \(scope?.label ?? "")]")))
             lines.append(CompanionLine(speaker: "CODEX", text: reply))
             lines = Array(lines.suffix(80))
-            draft = ""; sending = false
+            draft = ""; sending = false; liveReply = ""
             if captureFence.accepts(shareToken) { preview = nil; includePreview = false; capturedAt = nil }
             status = "Yanıt alındı · mikrofon kapalı"
-            if speakReplies { speech.speak(reply) }
+            if speakReplies { speechDriver.speak(reply) }
         } catch {
             guard sessionFence.accepts(token) else { return }
             if (error as? CompanionFailure)?.requiresReconnect == true {
                 connected = false; threadID = nil
             }
-            sending = false; status = "\(error.localizedDescription) Metin korundu; otomatik yeniden gönderilmedi."
+            sending = false; liveReply = ""; status = "\(error.localizedDescription) Metin korundu; otomatik yeniden gönderilmedi."
         }
     }
 
@@ -298,10 +484,13 @@ public struct CompanionLine: Identifiable {
     public func stop() {
         guard !stopping else { return }
         let needsConversationStop = !stopped
-        stopped = true; sessionFence.revoke(); stopScreenSharing(); captureFence.revoke(); speech.stop()
+        pauseVoiceConversation(); voiceTask?.cancel(); voiceTask = nil
+        stopped = true; sessionFence.revoke(); stopScreenSharing(); captureFence.revoke(); speechDriver.stop()
         dictationDraft = nil
         connected = false; connecting = false; sending = false; capturing = false
-        screenShareSending = false; displaySelection = nil; lastSharedAt = nil
+        screenShareSending = false; displaySelection = nil; lastSharedAt = nil; liveReply = ""
+        voiceSendInFlight = false; voiceSendID = nil
+        requestingScreenPermission = false; displayListingID = nil
         selection = nil; preview = nil; capturedAt = nil; includePreview = false; threadID = nil
         status = "Durduruldu · mikrofon, paylaşım ve ses kapalı"
         guard needsConversationStop else { return }

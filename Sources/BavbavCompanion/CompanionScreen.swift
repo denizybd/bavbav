@@ -37,6 +37,8 @@ public struct CompanionDisplay: Identifiable, Equatable, Sendable {
 }
 
 @MainActor public protocol CompanionScreenSource: AnyObject {
+    /// Invoked only by the visible selection button, never by connect or a timer.
+    func prepareDisplaySelection() async throws
     func windows() async throws -> [CompanionWindow]
     func capture(_ window: CompanionWindow) async throws -> Data
     func displays() async throws -> [CompanionDisplay]
@@ -46,6 +48,7 @@ public struct CompanionDisplay: Identifiable, Equatable, Sendable {
 /// Legacy window-only adapters remain compatible, but never broaden their scope
 /// by substituting a window or an arbitrary display for a full-screen request.
 public extension CompanionScreenSource {
+    func prepareDisplaySelection() async throws {}
     func displays() async throws -> [CompanionDisplay] {
         throw CompanionFailure("Bu ekran kaynağı tam ekran paylaşımını desteklemiyor.")
     }
@@ -56,6 +59,14 @@ public extension CompanionScreenSource {
 
 @MainActor public final class SelectedWindowSource: CompanionScreenSource {
     public init() {}
+
+    public func prepareDisplaySelection() async throws {
+        try Task.checkCancellation()
+        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+            throw CompanionFailure("Ekran Kaydı izni henüz verilmedi. Sistem Ayarları → Gizlilik ve Güvenlik → Ekran ve Sistem Sesi Kaydı altında Bavbav'ı aç; macOS isterse uygulamayı yeniden başlat. Sonra Ekranları seç / yenile'ye tekrar bas.")
+        }
+        try Task.checkCancellation()
+    }
 
     public func displays() async throws -> [CompanionDisplay] {
         // Enumeration is requested by the user's share controls, never at init

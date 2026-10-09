@@ -23,13 +23,23 @@ This is **macOS speech recognition → text → Codex → macOS speech synthesis
 not built-in ChatGPT Voice, not realtime audio inference. The native panel states
 this distinction. Turkish recognition uses `tr-TR`; if on-device Turkish is
 unavailable, sending audio to Apple's speech service requires the separate
-unchecked opt-in. Dictation lasts at most 55 seconds, can be muted/stopped, and
-never auto-sends. Review text then click Send (Command Return). The microphone
-is stopped while the reply is synthesized. Replies can be stopped independently.
-“Dinlemeyi bitir” closes the microphone immediately, then allows up to two
-seconds for the recognizer's final text. Mute/STOP cancel immediately instead.
-The draft cannot be edited/sent during permission preparation or finalization;
-manual edits outside dictation are preserved.
+unchecked opt-in. **Sesli sohbeti başlat** explicitly starts automatic turn-taking:
+recognized speech ends after about 1.35 seconds of quiet (audio energy prevents
+cutting a continuing phrase), its final text is sent once to the existing account,
+the real completed reply is synthesized, and only natural playback completion
+reopens the microphone. Actual correlated response deltas appear while the model
+works; a partial response is not treated as completed or spoken as a fake answer.
+The microphone is closed while waiting for/speaking the reply. A typed/manual
+draft is kept separate and never silently submitted by voice mode. Fifteen seconds
+without recognized speech pauses the session; each recognition is bounded to55s.
+**Konuşmayı bitir · yanıtla** can finish a turn immediately. **Sustur**, ending
+voice, or stopping reply audio prevents automatic listening from restarting.
+
+**Yalnızca metne yaz** retains the separate review-before-Send (Command Return)
+dictation mode. Finishing recognition closes the microphone immediately, then
+allows up to two seconds for final text. Mute/STOP cancel immediately instead.
+Errors preserve the last recognized text/draft and never automatically resubmit.
+These are bounded Mac recognition/synthesis turns, not full-duplex native Voice.
 
 The visible persistent `ChatGPTWebSession` remains available in a second tab of
 the **same panel** for verifying the website's native Voice with the user's web
@@ -46,6 +56,9 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 - Choose a **full physical display**, set the interval (3–60 seconds; default 10),
   check the visible full-screen consent and click Start. Enumeration/selection
   alone does not capture or send; startup/reconnection never restores consent.
+  The visible screen-list button explicitly checks/requests macOS Screen Recording
+  permission, displays retry/settings guidance if denied, and selects the sole
+  connected screen automatically. Multiple screens still need an explicit choice.
   All visible windows, desktop, Dock and menu bar on that display can contain
   private information and will be shared. Extra displays are not silently added.
 - A ScreenCaptureKit full-display filter (macOS 14+) captures a bounded PNG:
@@ -55,8 +68,11 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 - Each captured frame is sent to the dedicated account-backed conversation and
   its short observation appears silently in this panel. One frame/turn at a time;
   the selected interval starts after the previous response, so slow inference
-  does not accumulate pending captures or upload backlogs. Busy user turns and
-  dictation are skipped. This uses the account's normal allowance, not free video.
+  does not accumulate pending captures or upload backlogs. Manual dictation and
+  busy user turns are skipped. During explicitly started voice, screen observations
+  can proceed while listening; a recognized voice turn holds one bounded priority
+  slot until any already-submitted observation drains. The next screen tick cannot
+  overtake it. This uses the account's normal allowance, not free video.
 - Only the latest preview and at most 80 lines remain in UI memory. Periodic
   `ScreenFrames` files use 0600 permissions in a 0700 directory and are removed
   after their owned request completes/fails. A crash can leave an owned transient
@@ -117,9 +133,12 @@ Manual acceptance:
 
 1. Open Command 6, connect and exchange a short text message.
 2. Click “Türkçe sesi dene”; confirm actual sound and “Yanıt sesini durdur”.
-3. Start dictation, grant microphone/speech permissions yourself, opt into Apple
-   speech if needed, say a fresh Turkish phrase and verify the displayed text.
-   Mute/STOP must close capture; partial text is never sent by itself.
+3. Start **Sesli sohbeti başlat**, grant microphone/speech permissions yourself,
+   opt into Apple speech only if needed, and say a fresh Turkish phrase. Verify
+   the displayed transcript automatically sends once after quiet, a real answer
+   arrives and is audibly spoken, and listening resumes only after playback.
+   Stop reply audio or mute: no automatic restart must follow. Separately verify
+   **Yalnızca metne yaz** still requires manual Send and preserves a typed draft.
 4. Clear private screen content, select the full display, consent, start sharing
    and verify a visual detail absent from your text reaches the model. Wait for
    a second changed frame, then STOP and verify no further update arrives.
