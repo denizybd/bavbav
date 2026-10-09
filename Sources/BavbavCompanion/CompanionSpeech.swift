@@ -5,6 +5,7 @@ import Combine
 @MainActor public final class CompanionSpeech: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published public private(set) var listening = false
     @Published public private(set) var preparing = false
+    @Published public private(set) var finalizing = false
     @Published public private(set) var speaking = false
     @Published public private(set) var status = "Mikrofon kapalı"
     public var onTranscript: ((String) -> Void)?
@@ -13,30 +14,37 @@ import Combine
     private var engine: AVAudioEngine?
     private var recognition: SFSpeechRecognitionTask?
     private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var generation = UUID()
+    private var lifecycle = CompanionDictationLifecycle()
     private var currentUtterance: AVSpeechUtterance?
     private var timeout: Task<Void, Never>?
+    private var finalizationTimeout: Task<Void, Never>?
     private var audioObserver: NSObjectProtocol?
+    private var tapInstalled = false
+    public var dictationBusy: Bool { lifecycle.busy }
     public var supportsLocalTurkish: Bool { recognizer?.supportsOnDeviceRecognition == true }
     public var hasTurkishVoice: Bool { AVSpeechSynthesisVoice(language: "tr-TR") != nil }
 
     public override init() { super.init(); synthesizer.delegate = self }
 
     public func start(allowAppleService: Bool) async {
-        guard !preparing else { return }
+        guard !lifecycle.busy else { return }
         stopListening(); stopSpeaking()
-        let token = generation
-        preparing = true
-        defer { if generation == token { preparing = false } }
+        guard let token = lifecycle.begin() else { return }
+        publishLifecycle()
+        defer {
+            if lifecycle.accepts(token), lifecycle.phase == .preparing {
+                lifecycle.complete(token); publishLifecycle()
+            }
+        }
         status = "Mikrofon ve konuşma tanıma izinleri bekleniyor…"
         let microphone = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             ? true : await AVCaptureDevice.requestAccess(for: .audio)
-        guard generation == token else { return }
+        guard lifecycle.accepts(token) else { return }
         guard microphone else { status = "Sistem Ayarları → Gizlilik → Mikrofon → Bavbav izni gerekiyor."; return }
         let authorization = await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
         }
-        guard generation == token else { return }
+        guard lifecycle.accepts(token) else { return }
         guard authorization == .authorized else { status = "Sistem Ayarları → Gizlilik → Konuşma Tanıma → Bavbav izni gerekiyor."; return }
         guard let recognizer, recognizer.isAvailable else { status = "Türkçe konuşma tanıma şu anda kullanılamıyor."; return }
         guard supportsLocalTurkish || allowAppleService else {
@@ -53,40 +61,83 @@ import Combine
         self.engine = engine; self.request = request
         recognition = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor in
-                guard let self, self.generation == token else { return }
+                guard let self, self.lifecycle.acceptsTranscript(token) else { return }
                 if let result { self.onTranscript?(result.bestTranscription.formattedString) }
+                // The transcript receiver may mute/STOP after detecting a concurrent draft edit.
+                guard self.lifecycle.acceptsTranscript(token) else { return }
                 if error != nil || result?.isFinal == true {
-                    self.stopListening()
-                    self.status = error == nil ? "Metni kontrol edip Gönder'e bas." : "Tanıma sona erdi; metni kontrol et. \(error!.localizedDescription)"
+                    self.completeRecognition(token, status: error == nil
+                        ? "Metni kontrol edip Gönder'e bas."
+                        : "Tanıma sona erdi; mevcut metin korundu. \(error!.localizedDescription)")
                 }
             }
         }
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
+        tapInstalled = true
         do {
             engine.prepare(); try engine.start()
-            listening = true
+            lifecycle.listen(token); publishLifecycle()
             status = supportsLocalTurkish ? "Dinleniyor · cihaz içi Türkçe" : "Dinleniyor · Apple konuşma hizmeti"
             timeout = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 55_000_000_000)
-                guard !Task.isCancelled, let self, self.generation == token else { return }
-                self.stopListening(); self.status = "55 saniye doldu; metni kontrol et. Devam etmek için tekrar Başlat."
+                guard !Task.isCancelled, let self, self.lifecycle.acceptsTranscript(token) else { return }
+                self.finishListening(); self.status = "55 saniye doldu; mikrofon kapalı, son kelimeler tamamlanıyor…"
             }
             audioObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
                 Task { @MainActor in
-                    guard let self, self.generation == token else { return }
+                    guard let self, self.lifecycle.accepts(token) else { return }
                     self.stopListening(); self.status = "Ses aygıtı değişti; mikrofon güvenli biçimde kapatıldı."
                 }
             }
         } catch { stopListening(); status = "Mikrofon başlatılamadı: \(error.localizedDescription)" }
     }
 
-    public func stopListening() {
-        generation = UUID(); preparing = false; timeout?.cancel(); timeout = nil
+    private func publishLifecycle() {
+        preparing = lifecycle.phase == .preparing
+        listening = lifecycle.phase == .listening
+        finalizing = lifecycle.phase == .finalizing
+    }
+
+    /// Removes the audio input immediately, but deliberately leaves recognition alive for endAudio.
+    private func closeMicrophone() {
+        timeout?.cancel(); timeout = nil
         if let audioObserver { NotificationCenter.default.removeObserver(audioObserver) }
         audioObserver = nil
-        engine?.stop(); engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        if tapInstalled { engine?.inputNode.removeTap(onBus: 0) }
+        tapInstalled = false; engine = nil
+    }
+
+    private func disposeRecognition() {
+        finalizationTimeout?.cancel(); finalizationTimeout = nil
+        closeMicrophone()
         request?.endAudio(); recognition?.cancel()
-        engine = nil; request = nil; recognition = nil; listening = false
+        request = nil; recognition = nil
+    }
+
+    private func completeRecognition(_ token: UUID, status: String) {
+        guard lifecycle.complete(token) else { return }
+        // Revoke before cancel() so late completion callbacks cannot resurrect the old draft.
+        disposeRecognition(); publishLifecycle(); self.status = status
+    }
+
+    /// End dictation: microphone closes now; the last recognition result has at most two seconds.
+    public func finishListening() {
+        let token = lifecycle.token
+        guard lifecycle.finalize(token) else { return }
+        closeMicrophone(); publishLifecycle()
+        status = "Mikrofon kapalı · son kelimeler tamamlanıyor…"
+        request?.endAudio()
+        finalizationTimeout = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: CompanionDictationLifecycle.finalizationTimeoutNanoseconds)
+            guard !Task.isCancelled, let self, self.lifecycle.phase == .finalizing else { return }
+            self.completeRecognition(token, status: "Metin hazır; kontrol edip Gönder'e bas.")
+        }
+    }
+
+    /// Mute/STOP: cancel recognition immediately, including permission preparation/finalization.
+    public func stopListening() {
+        lifecycle.cancel(); disposeRecognition(); publishLifecycle()
         status = "Mikrofon kapalı · metin otomatik gönderilmez"
     }
 

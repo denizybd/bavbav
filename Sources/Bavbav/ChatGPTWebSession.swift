@@ -34,13 +34,16 @@ final class ChatGPTWebSession: NSObject, ObservableObject, WKNavigationDelegate,
     var onWindowDirection: ((WindowDirection) -> Void)?
     private var popupWindows: [NSWindow] = []
     private var backgroundOpacity = 1.0
-    private var voicePermissionGeneration = UUID()
+    private(set) var voicePermissionGeneration = UUID()
     var companionVoiceVisible = false {
         didSet { if !companionVoiceVisible { voicePermissionGeneration = UUID() } }
     }
 
-    func stopCompanionMedia() {
-        companionVoiceVisible = false
+    func stopCompanionMedia(revokeRoute: Bool = true) {
+        // Every STOP invalidates a pending consent sheet, even when this route
+        // stays visible. A fresh user-initiated Voice request may ask again.
+        voicePermissionGeneration = UUID()
+        if revokeRoute { companionVoiceVisible = false }
         webView?.setMicrophoneCaptureState(.none, completionHandler: nil)
         webView?.pauseAllMediaPlayback(completionHandler: nil)
     }

@@ -1,7 +1,7 @@
 # Bavbav Companion — first integration
 
-Open with **Command 5** or Bavbav → Companion. Journal has moved to Command 6.
-Both are individually editable in Settings → Shortcuts. Repeating Command 5
+Open with **Command 6** or Bavbav → Companion. Journal stays on Command 5.
+Both are individually editable in Settings → Shortcuts. Repeating Command 6
 focuses the one panel; it never toggles it closed. Closing the panel stops its
 microphone, local voice, capture consent and dedicated conversation connection.
 Other coding chats continue unchanged.
@@ -22,6 +22,10 @@ unavailable, sending audio to Apple's speech service requires the separate
 unchecked opt-in. Dictation lasts at most 55 seconds, can be muted/stopped, and
 never auto-sends. Review text then click Send (Command Return). The microphone
 is stopped while the reply is synthesized. Replies can be stopped independently.
+“Dinlemeyi bitir” closes the microphone immediately, then allows up to two
+seconds for the recognizer's final text. Mute/STOP cancel immediately instead.
+The draft cannot be edited/sent during permission preparation or finalization;
+manual edits outside dictation are preserved.
 
 The visible persistent `ChatGPTWebSession` remains available in a second tab of
 the **same panel** for verifying the website's native Voice with the user's web
@@ -29,6 +33,9 @@ login. No private endpoints or token bridges are used. Only visible, main-frame
 `https://chatgpt.com` microphone requests can ask for permission; camera and
 background requests are denied. Switching away/closing ends capture and pauses
 playback. Web availability or a rendered Voice button is not an audio-call pass.
+“Sesi durdur” also invalidates pending consent, but leaves the visible web route
+eligible for a fresh user-initiated microphone request. Closing/changing routes
+revokes that eligibility. Application quit awaits the dedicated worker teardown.
 
 ## Sharing and stop boundaries
 
@@ -78,11 +85,20 @@ only that window and asks the model for a random number visible only in its
 pixels. A structured report is written to a unique temporary directory. Without
 permission it records a blocked image test and captures nothing. It never
 selects a private user window. Spoken-user recognition and audible playback
-remain separate manual gates regardless of this command's exit code.
+remain separate manual gates. A blocked or failed image gate returns a nonzero
+exit status even if account messaging passed. The report keeps
+`automatedGatesPassed` (account + image) separate from `productComplete` (also
+requires live Turkish microphone recognition and audible-response acceptance).
+
+Read-only permission preflight (no dialog, microphone, capture or model turn):
+
+```sh
+BAVBAV_COMPANION_PREFLIGHT_CHECK=1 dist/Bavbav.app/Contents/MacOS/Bavbav
+```
 
 Manual acceptance:
 
-1. Open Command 5, connect and exchange a short text message.
+1. Open Command 6, connect and exchange a short text message.
 2. Click “Türkçe sesi dene”; confirm actual sound and “Yanıt sesini durdur”.
 3. Start dictation, grant microphone/speech permissions yourself, opt into Apple
    speech if needed, say a fresh Turkish phrase and verify the displayed text.
@@ -92,10 +108,26 @@ Manual acceptance:
 5. Verify the web tab separately using the visible login/Voice UI, if available.
    Do not present sign-in or button presence as a successful Voice session.
 
-`--companion-only` opens the real panel without registering the old coding
-windows' hotkeys or restarting their workers. This is useful during an active
-coding session. Normal global Command 5 needs the updated main Bavbav instance;
-an old running version still owns its old Command 5 until safely restarted.
+`--companion-only` opens the real panel and registers **only Companion's shortcut**,
+leaving the old coding windows' hotkeys/workers untouched. It uses the same app
+bundle and implementation, not a separate Companion app or API account. Launch
+it through LaunchServices while an old Bavbav version is still responsible for
+the coding terminal:
+
+```sh
+/usr/bin/open -n /Users/deniz2/Documents/ChatGPT/bavbav/dist/Bavbav.app --args --companion-only
+```
+
+Executing its binary directly under an old responsible Bavbav can make TCC
+check that old bundle's missing microphone/speech usage descriptions and abort
+the new process. LaunchServices avoids inheriting that old responsible process;
+verify attribution before requesting microphone access. A safe normal-app
+restart later consolidates the panel and existing coding windows into one process.
+
+The panel shares Bavbav's real `AppPreferences` in normal mode. The appearance
+setting changes background fills only: text/icons/borders remain opaque. Zero
+transparency uses an opaque window with no blur/effect view; the green active
+border and corner resizing are the same native components as other panels.
 
 Sources checked on 2026-10-09: [Codex App Server](https://learn.chatgpt.com/docs/app-server)
 (text/localImage input and turn completion), [ChatGPT Voice](https://learn.chatgpt.com/docs/features/voice)

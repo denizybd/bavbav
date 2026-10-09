@@ -7,13 +7,20 @@ import CompanionSafety
     var stopped = 0
     var pending: CheckedContinuation<String, Error>?
     var delay = false
+    var reconnectFailure = false
+    var delayStop = false
+    var pendingStop: CheckedContinuation<Void, Never>?
     func connect() async throws -> String { "fixture-thread" }
     func send(text: String, image: URL?) async throws -> String {
         sent.append((text, image))
+        if reconnectFailure { throw CompanionFailure("Fixture disconnected", requiresReconnect: true) }
         if delay { return try await withCheckedThrowingContinuation { pending = $0 } }
         return "Türkçe deneme yanıtı"
     }
-    func stop() async { stopped += 1 }
+    func stop() async {
+        stopped += 1
+        if delayStop { await withCheckedContinuation { pendingStop = $0 } }
+    }
 }
 @MainActor private final class TestScreen: CompanionScreenSource {
     var captures: [CompanionWindow] = []
@@ -40,6 +47,46 @@ import CompanionSafety
         expectNil(gate.status().ownerID)
         expectEqual(gate.emergencyStop().state, "cancelled")
         expectNil(gate.status().target)
+    }
+
+    func testIndependentAcceptanceGates() {
+        for mask in 0..<16 {
+            var verification = CompanionVerification()
+            verification.accountMessage = mask & 1 != 0
+            verification.selectedWindowToModel = mask & 2 != 0
+            verification.turkishMicrophoneRecognition = mask & 4 != 0
+            verification.audibleTurkishResponse = mask & 8 != 0
+            expectEqual(verification.automatedGatesPassed, mask & 3 == 3)
+            expectEqual(verification.productComplete, mask == 15)
+        }
+    }
+
+    func testDictationFinalizationAndDraftProtection() {
+        var recognition = CompanionDictationLifecycle()
+        let first = recognition.begin()!
+        expectEqual(recognition.phase, .preparing); expectFalse(recognition.acceptsTranscript(first))
+        expectNil(recognition.begin()); expectTrue(recognition.listen(first))
+        expectTrue(recognition.acceptsTranscript(first)); expectTrue(recognition.finalize(first))
+        expectEqual(recognition.phase, .finalizing); expectTrue(recognition.acceptsTranscript(first))
+        expectNil(recognition.begin()); expectEqual(recognition.token, first)
+        expectTrue(recognition.complete(first)); expectFalse(recognition.acceptsTranscript(first))
+        let second = recognition.begin()!
+        expectFalse(recognition.complete(first)); expectEqual(recognition.phase, .preparing)
+        expectTrue(recognition.listen(second)); recognition.cancel()
+        expectFalse(recognition.acceptsTranscript(second)); expectFalse(recognition.complete(second))
+        expectEqual(recognition.phase, .idle); expectNotNil(recognition.begin())
+        expectEqual(CompanionDictationLifecycle.finalizationTimeoutNanoseconds, 2_000_000_000)
+
+        var draft = CompanionDictationDraft(original: "Önceki metin")
+        let partial = draft.merge(transcript: "Merha", currentDraft: "Önceki metin")!
+        expectEqual(partial, "Önceki metin\nMerha")
+        let final = draft.merge(transcript: "Merhaba Deniz", currentDraft: partial)!
+        expectEqual(final, "Önceki metin\nMerhaba Deniz")
+        expectNil(draft.merge(transcript: "Geç sonuç", currentDraft: final + " · elle düzenlendi"))
+        var editedDuringPermission = CompanionDictationDraft(original: "Başlangıç")
+        expectNil(editedDuringPermission.merge(transcript: "Konuşma", currentDraft: "Yeni elle yazılan metin"))
+        var empty = CompanionDictationDraft(original: "")
+        expectEqual(empty.merge(transcript: "Türkçe", currentDraft: ""), "Türkçe")
     }
 
     @MainActor private func makeSession(_ conversation: TestConversation, _ screen: TestScreen) -> CompanionSession {
@@ -115,6 +162,37 @@ import CompanionSafety
         expectTrue(conversation.sent.isEmpty); expectFalse(session.includePreview)
         session.stop()
     }
+
+    func testShutdownWaitsForOneStop() async {
+        let conversation = TestConversation(); conversation.delayStop = true
+        let session = makeSession(conversation, TestScreen()); await session.connect()
+        session.stop()
+        while conversation.pendingStop == nil { await Task.yield() }
+        var firstFinished = false; var secondFinished = false
+        let first = Task { await session.shutdown(); firstFinished = true }
+        let second = Task { await session.shutdown(); secondFinished = true }
+        await Task.yield()
+        expectEqual(conversation.stopped, 1); expectTrue(session.stopping)
+        expectFalse(firstFinished); expectFalse(secondFinished)
+        conversation.pendingStop?.resume(); await first.value; await second.value
+        expectTrue(firstFinished); expectTrue(secondFinished); expectFalse(session.stopping)
+        await session.shutdown(); expectEqual(conversation.stopped, 1)
+        let coldConversation = TestConversation()
+        await makeSession(coldConversation, TestScreen()).shutdown()
+        expectEqual(coldConversation.stopped, 0)
+    }
+
+    func testDisconnectedFailureOffersReconnectAndKeepsDraft() async {
+        let conversation = TestConversation(); conversation.reconnectFailure = true
+        let session = makeSession(conversation, TestScreen()); await session.connect()
+        session.draft = "Bu metin korunsun"; await session.send()
+        expectFalse(session.connected); expectNil(session.threadID); expectFalse(session.sending)
+        expectEqual(session.draft, "Bu metin korunsun"); expectEqual(conversation.sent.count, 1)
+        conversation.reconnectFailure = false
+        await session.connect(); expectTrue(session.connected)
+        await session.send(); expectEqual(session.lines.count, 2)
+        await session.shutdown()
+    }
 }
 
 @MainActor private var checks = 0
@@ -132,12 +210,16 @@ import CompanionSafety
         let tests = CompanionTests()
         defer { tests.cleanUp() }
         tests.testOriginalStopGateRevokesEpochAndNeverGrantsControl()
+        tests.testIndependentAcceptanceGates()
+        tests.testDictationFinalizationAndDraftProtection()
         await tests.testSelectionDoesNotCaptureOrSend()
         await tests.testImageRequiresExplicitOneShotConsent()
         await tests.testChangingTargetRejectsLateCapture()
         await tests.testStopRejectsLateReplyAndKeepsDraft()
         await tests.testDuplicateSendAndNoAutomaticRetry()
         await tests.testStopRejectsLateCaptureAndInvalidConsent()
+        await tests.testShutdownWaitsForOneStop()
+        await tests.testDisconnectedFailureOffersReconnectAndKeepsDraft()
         if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1" {
             expectTrue(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true)
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-companion-protocol-\(UUID())")
@@ -150,10 +232,102 @@ import CompanionSafety
                 try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9WQAAAAASUVORK5CYII=")!.write(to: png)
                 let imageReply = try await bridge.send(text: "fixture image", image: png)
                 expectEqual(imageReply, "COMPANION_IMAGE_OK")
+                let staleReply = try await bridge.send(text: "COMPANION_STALE_SAME_THREAD", image: nil)
+                expectEqual(staleReply, "COMPANION_TEXT_OK")
+                let delayed = try await bridge.send(text: "COMPANION_TERMINAL_ACK_FIRST", image: nil)
+                expectEqual(delayed, "COMPANION_DELAYED_FINAL_OK")
                 await bridge.stop()
+                await checkCancellationAndRecovery(folder: folder)
                 try? FileManager.default.removeItem(at: folder)
             } catch { await bridge.stop(); fputs("COMPANION PROTOCOL FAILED: \(error)\n", stderr); Foundation.exit(1) }
         }
         print("COMPANION CHECKS PASSED: \(checks) assertions; fixtures only, no microphone or account proof")
+    }
+
+    @MainActor private static func requests(_ log: URL) -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: log) else { return [] }
+        return data.split(separator: 0x0A).compactMap { try? JSONSerialization.jsonObject(with: Data($0)) as? [String: Any] }
+    }
+
+    @MainActor private static func waitForRequest(_ method: String, log: URL) async throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if let request = requests(log).last(where: { $0["method"] as? String == method }) { return request }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        throw CompanionFailure("Fixture request was not observed: \(method)")
+    }
+
+    @MainActor private static func checkCancellationAndRecovery(folder: URL) async {
+        for scenario in ["COMPANION_HOLD_AFTER_ACK", "COMPANION_HOLD_BEFORE_ACK"] {
+            let directory = folder.appendingPathComponent(scenario, isDirectory: true)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let log = directory.appendingPathComponent("requests.jsonl")
+            setenv("BAVBAV_COMPANION_REQUEST_LOG", log.path, 1)
+            let bridge = CodexCompanionConversation(directory: directory, ephemeral: true)
+            do {
+                _ = try await bridge.connect()
+                let pending = Task { try await bridge.send(text: scenario, image: nil) }
+                _ = try await waitForRequest("turn/start", log: log)
+                if scenario == "COMPANION_HOLD_AFTER_ACK" {
+                    _ = try await waitForRequest("fixture/turn-ack", log: log)
+                    // Allow the already-written acknowledgement to reach the
+                    // local actor; interruption is verified by the actual RPC.
+                    try await Task.sleep(nanoseconds: 80_000_000)
+                }
+                let cancelledAt = Date(); pending.cancel()
+                do { _ = try await pending.value; expectTrue(false) }
+                catch { expectTrue(error is CancellationError) }
+                expectTrue(Date().timeIntervalSince(cancelledAt) < 3)
+                expectNil(bridge.threadID)
+                let interruptions = requests(log).filter { $0["method"] as? String == "turn/interrupt" }
+                expectEqual(interruptions.count, scenario == "COMPANION_HOLD_AFTER_ACK" ? 1 : 0)
+                _ = try await bridge.connect()
+                let recovered = try await bridge.send(text: "recovered", image: nil)
+                expectEqual(recovered, "COMPANION_TEXT_OK")
+                await bridge.stop()
+            } catch {
+                await bridge.stop(); fputs("COMPANION CANCELLATION FAILED: \(error)\n", stderr); Foundation.exit(1)
+            }
+        }
+        let directory = folder.appendingPathComponent("ambiguous-start", isDirectory: true)
+        let bridge = CodexCompanionConversation(directory: directory, ephemeral: true)
+        do {
+            _ = try await bridge.connect()
+            do {
+                _ = try await bridge.send(text: "COMPANION_AMBIGUOUS_START_FAILURE", image: nil)
+                expectTrue(false)
+            } catch { expectTrue((error as? CompanionFailure)?.requiresReconnect == true) }
+            expectNil(bridge.threadID)
+            _ = try await bridge.connect()
+            let recovered = try await bridge.send(text: "recovered", image: nil)
+            expectEqual(recovered, "COMPANION_TEXT_OK")
+            await bridge.stop()
+        } catch {
+            await bridge.stop(); fputs("COMPANION RECOVERY FAILED: \(error)\n", stderr); Foundation.exit(1)
+        }
+        let stopDirectory = folder.appendingPathComponent("stop-before-ack", isDirectory: true)
+        let stopLog = stopDirectory.appendingPathComponent("requests.jsonl")
+        setenv("BAVBAV_COMPANION_REQUEST_LOG", stopLog.path, 1)
+        let stoppedBridge = CodexCompanionConversation(directory: stopDirectory, ephemeral: true)
+        do {
+            _ = try await stoppedBridge.connect()
+            let oldSend = Task { try await stoppedBridge.send(text: "COMPANION_HOLD_BEFORE_ACK", image: nil) }
+            _ = try await waitForRequest("turn/start", log: stopLog)
+            await stoppedBridge.stop()
+            expectNil(stoppedBridge.threadID)
+            let replacement = try await stoppedBridge.connect()
+            let next = try await stoppedBridge.send(text: "replacement", image: nil)
+            expectEqual(next, "COMPANION_TEXT_OK")
+            do { _ = try await oldSend.value; expectTrue(false) }
+            catch { expectTrue(error is CancellationError || (error as? CompanionFailure)?.requiresReconnect == true) }
+            expectEqual(stoppedBridge.threadID, replacement)
+            let subsequent = try await stoppedBridge.send(text: "still connected", image: nil)
+            expectEqual(subsequent, "COMPANION_TEXT_OK")
+            await stoppedBridge.stop()
+        } catch {
+            await stoppedBridge.stop(); fputs("COMPANION STOP/RECONNECT FAILED: \(error)\n", stderr); Foundation.exit(1)
+        }
+        unsetenv("BAVBAV_COMPANION_REQUEST_LOG")
     }
 }

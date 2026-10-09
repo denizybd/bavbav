@@ -31,7 +31,8 @@ public struct CompanionLine: Identifiable {
     private let sessionFence = CompanionFence()
     private let captureFence = CompanionFence()
     private var capturedAt: Date?
-    private var draftBeforeDictation = ""
+    private var dictationDraft: CompanionDictationDraft?
+    private var stopTask: Task<Void, Never>?
     private var stopped = true
 
     public init(conversation: any CompanionConversation, screen: any CompanionScreenSource,
@@ -39,7 +40,13 @@ public struct CompanionLine: Identifiable {
         self.conversation = conversation; self.screen = screen; self.directory = directory; self.speech = speech ?? CompanionSpeech()
         self.speech.onTranscript = { [weak self] text in
             guard let self, !self.stopped, !self.muted else { return }
-            self.draft = self.draftBeforeDictation + (self.draftBeforeDictation.isEmpty ? "" : "\n") + text
+            guard var dictationDraft = self.dictationDraft else { return }
+            guard let merged = dictationDraft.merge(transcript: text, currentDraft: self.draft) else {
+                self.dictationDraft = nil; self.speech.stopListening()
+                self.status = "Metin değiştirildi; düzenlemen korundu ve dikte durduruldu."
+                return
+            }
+            self.dictationDraft = dictationDraft; self.draft = merged
         }
     }
 
@@ -60,15 +67,15 @@ public struct CompanionLine: Identifiable {
     }
 
     public func startListening() async {
-        guard !sending, !speech.listening else { return }
+        guard !sending, !speech.dictationBusy, !connecting, !stopping else { return }
         let token = sessionFence.token
         if !connected { await connect() }
         guard connected, sessionFence.accepts(token), !stopped else { return }
-        muted = false; draftBeforeDictation = draft
+        muted = false; dictationDraft = CompanionDictationDraft(original: draft)
         await speech.start(allowAppleService: allowAppleService)
     }
-    public func mute() { muted = true; speech.stopListening() }
-    public func finishDictation() { speech.stopListening() }
+    public func mute() { muted = true; dictationDraft = nil; speech.stopListening() }
+    public func finishDictation() { speech.finishListening() }
 
     public func listWindows() async {
         guard !capturing else { return }
@@ -108,7 +115,7 @@ public struct CompanionLine: Identifiable {
     public func revokeShare() { selectWindow(nil); status = "Pencere paylaşımı kapalı. Önceden gönderilen görüntüler geri alınmaz." }
 
     public func send() async {
-        guard connected, !sending, !stopped else { return }
+        guard connected, !sending, !stopped, !speech.dictationBusy else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || includePreview else { return }
         if includePreview {
@@ -116,7 +123,7 @@ public struct CompanionLine: Identifiable {
                 includePreview = false; status = "Önizleme yok veya 60 saniyeden eski. Yeni önizleme alıp paylaşımı tekrar seç."; return
             }
         }
-        speech.stop(); sending = true
+        dictationDraft = nil; speech.stop(); sending = true
         let token = sessionFence.token
         let png = includePreview ? preview : nil
         let scope = selection
@@ -145,6 +152,9 @@ public struct CompanionLine: Identifiable {
             if speakReplies { speech.speak(reply) }
         } catch {
             guard sessionFence.accepts(token) else { return }
+            if (error as? CompanionFailure)?.requiresReconnect == true {
+                connected = false; threadID = nil
+            }
             sending = false; status = "\(error.localizedDescription) Metin korundu; otomatik yeniden gönderilmedi."
         }
     }
@@ -152,11 +162,20 @@ public struct CompanionLine: Identifiable {
     /// Synchronous local revocation comes before any server round-trip.
     public func stop() {
         guard !stopping else { return }
-        stopping = true
+        let needsConversationStop = !stopped
         stopped = true; sessionFence.revoke(); captureFence.revoke(); speech.stop()
+        dictationDraft = nil
         connected = false; connecting = false; sending = false; capturing = false
         selection = nil; preview = nil; capturedAt = nil; includePreview = false; threadID = nil
         status = "Durduruldu · mikrofon, paylaşım ve ses kapalı"
-        Task { await conversation.stop(); stopping = false }
+        guard needsConversationStop else { return }
+        stopping = true
+        stopTask = Task { await conversation.stop(); stopping = false; stopTask = nil }
+    }
+
+    /// Application termination waits for the same STOP task; it never launches a second teardown.
+    public func shutdown() async {
+        stop()
+        await stopTask?.value
     }
 }

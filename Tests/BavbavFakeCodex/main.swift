@@ -16,6 +16,20 @@ private var threadNames: [String: String] = [:]
 private var composerGoals: [String: [String: Any]] = [:]
 private let outputLock = NSLock()
 
+private func recordCompanionRequest(_ message: [String: Any]) {
+    guard ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1",
+          let path = ProcessInfo.processInfo.environment["BAVBAV_COMPANION_REQUEST_LOG"],
+          var data = try? JSONSerialization.data(withJSONObject: message) else { return }
+    data.append(0x0A)
+    if !FileManager.default.fileExists(atPath: path) {
+        FileManager.default.createFile(atPath: path, contents: nil)
+    }
+    guard let handle = FileHandle(forWritingAtPath: path) else { return }
+    defer { try? handle.close() }
+    _ = try? handle.seekToEnd()
+    try? handle.write(contentsOf: data)
+}
+
 private func recordComposerRequest(_ message: [String: Any]) {
     guard ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1",
           let path = ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_REQUEST_LOG"],
@@ -218,7 +232,18 @@ while let line = readLine() {
         guard let id = requestID(message["id"]) else { continue }
         let params = message["params"] as? [String: Any] ?? [:]
         recordComposerRequest(message)
+        recordCompanionRequest(message)
         switch method {
+        case "turn/interrupt" where ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            let turnID = params["turnId"] as? String ?? ""
+            guard activeTurns[threadID] == turnID else {
+                send(["id": id, "error": ["code": -32602, "message": "wrong companion turn interrupted"]]); continue
+            }
+            activeTurns.removeValue(forKey: threadID)
+            send(["id": id, "result": [:]])
+            send(["method": "turn/completed", "params": ["threadId": threadID,
+                "turn": ["id": turnID, "status": "interrupted"]]])
         case "thread/goal/set" where ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1":
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             let goal: [String: Any] = ["threadId": threadID, "objective": params["objective"] as? String ?? "",
@@ -453,6 +478,47 @@ while let line = readLine() {
                     send(["id": id, "error": ["code": -32602, "message": "unsafe companion turn"]]); continue
                 }
                 let hasImage = input.contains { $0["type"] as? String == "localImage" && FileManager.default.fileExists(atPath: $0["path"] as? String ?? "") }
+                guard activeTurns[threadID] == nil else {
+                    send(["id": id, "error": ["code": -32602, "message": "overlapping companion turns"]]); continue
+                }
+                if scenario == "COMPANION_AMBIGUOUS_START_FAILURE" {
+                    activeTurns[threadID] = turnID
+                    send(["id": id, "error": ["code": -32000, "message": "fixture: lost acknowledgement after accepting turn"]])
+                    continue
+                }
+                if scenario == "COMPANION_TERMINAL_ACK_FIRST" {
+                    send(["id": id, "result": ["turn": ["id": turnID, "status": "completed"]]])
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.03) {
+                        send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+                            "item": ["id": turnID + "-agent", "type": "agentMessage", "text": "COMPANION_DELAYED_FINAL_OK", "phase": "final_answer"]]])
+                        send(["method": "turn/completed", "params": ["threadId": threadID,
+                            "turn": ["id": turnID, "status": "completed"]]])
+                    }
+                    continue
+                }
+                if scenario == "COMPANION_HOLD_AFTER_ACK" || scenario == "COMPANION_HOLD_BEFORE_ACK" {
+                    activeTurns[threadID] = turnID
+                    send(["method": "turn/started", "params": ["threadId": threadID,
+                        "turn": ["id": turnID, "status": "inProgress"]]])
+                    if scenario == "COMPANION_HOLD_AFTER_ACK" {
+                        send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                        recordCompanionRequest(["method": "fixture/turn-ack", "params": ["turnId": turnID]])
+                    }
+                    continue
+                }
+                if scenario == "COMPANION_STALE_SAME_THREAD" {
+                    // A completed previous turn cannot choose the identity of
+                    // the turn currently awaiting its acknowledgement.
+                    for index in 0..<24 {
+                        let stale = "stale-\(index)"
+                        send(["method": "turn/started", "params": ["threadId": threadID,
+                            "turn": ["id": stale, "status": "inProgress"]]])
+                        send(["method": "item/completed", "params": ["threadId": threadID, "turnId": stale,
+                            "item": ["id": stale + "-agent", "type": "agentMessage", "text": "WRONG OLD TURN", "phase": "final_answer"]]])
+                        send(["method": "turn/completed", "params": ["threadId": threadID,
+                            "turn": ["id": stale, "status": "completed"]]])
+                    }
+                }
                 // Complete BEFORE acknowledging start; unrelated thread output and
                 // duplicate item notifications must not contaminate the answer.
                 send(["method": "item/completed", "params": ["threadId": "unrelated", "turnId": "other",

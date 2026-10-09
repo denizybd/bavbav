@@ -1,30 +1,48 @@
 import AppKit
 import SwiftUI
 import WebKit
+import Combine
 import BavbavCompanion
 
 @MainActor final class CompanionWindowController: NSObject, NSWindowDelegate {
     let session: CompanionSession
     let window: NSWindow
+    let preferences: AppPreferences
     private let webSession: ChatGPTWebSession
-    init(webSession: ChatGPTWebSession) {
+    private var appearanceSubscription: AnyCancellable?
+    init(webSession: ChatGPTWebSession, preferences: AppPreferences? = nil) {
         self.webSession = webSession
+        self.preferences = preferences ?? AppPreferences()
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Bavbav/Companion", isDirectory: true)
         session = CompanionSession(conversation: CodexCompanionConversation(directory: directory),
                                    screen: SelectedWindowSource(), directory: directory)
         window = CompanionWindow(contentRect: NSRect(x: 0, y: 0, width: 670, height: 810),
-                                 styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+                                 styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
         window.title = "Bavbav · Companion"
         window.identifier = NSUserInterfaceItemIdentifier("bavbav.companion")
         window.level = .normal; window.minSize = NSSize(width: 560, height: 520)
         window.isReleasedWhenClosed = false; window.delegate = self
         window.appearance = NSAppearance(named: .darkAqua)
-        window.contentView = NSHostingView(rootView: CompanionHostView(session: session, webSession: webSession))
+        window.isMovableByWindowBackground = true
+        window.collectionBehavior = [.moveToActiveSpace]
+        window.animationBehavior = .documentWindow
+        let container = CornerResizeContainer(frame: NSRect(origin: .zero, size: window.frame.size))
+        container.setContent(NSHostingView(rootView: PanelAppearanceRoot(preferences: self.preferences,
+            content: CompanionHostView(session: session, webSession: webSession, preferences: self.preferences))))
+        window.contentView = container
+        // Observe the same preference without replacing the coordinator's single callback.
+        // The emitted value is used because @Published fires before its backing value changes.
+        appearanceSubscription = self.preferences.$transparencyPercent.sink { [weak self] percent in
+            guard let self else { return }
+            let opacity = 1 - percent / 100
+            PanelWindowAppearance.apply(to: self.window, opacity: opacity)
+            self.webSession.setBackgroundOpacity(opacity)
+        }
         let previousClose = webSession.onClose
         webSession.onClose = { [weak self, weak webSession] in
-            if let self, webSession?.webView?.window === self.window { self.window.performClose(nil) }
+            if let self, webSession?.webView?.window === self.window { self.window.close() }
             else { previousClose?() }
         }
         window.center()
@@ -85,13 +103,20 @@ import BavbavCompanion
         session.stop()
         webSession.stopCompanionMedia()
     }
+    func shutdown() async {
+        stop()
+        await session.shutdown()
+    }
 }
 
 private final class CompanionWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
     override func keyDown(with event: NSEvent) {
         if event.charactersIgnoringModifiers == "q", event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
            (firstResponder as? NSTextView)?.isEditable != true {
-            performClose(nil); return
+            // Borderless Bavbav panels have no close decoration for performClose to dispatch.
+            close(); return
         }
         super.keyDown(with: event)
     }
@@ -100,22 +125,30 @@ private final class CompanionWindow: NSWindow {
 private struct CompanionHostView: View {
     @ObservedObject var session: CompanionSession
     @ObservedObject var webSession: ChatGPTWebSession
+    @ObservedObject var preferences: AppPreferences
     @State private var web = false
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 routeButton("Bavbav · Mac sesi", useWeb: false)
                 routeButton("ChatGPT web · doğrulama", useWeb: true)
-            }.padding(12).background(Color(red: 0.045, green: 0.055, blue: 0.06))
+            }.padding(12).background(BavbavTheme.surface.panelBackdrop())
             if web {
                 HStack {
                     Text("Görünür mevcut web oturumu. Voice kullanılabilirliği ve giriş ayrıca doğrulanmalı.")
                         .font(.caption)
-                    Button("Sesi durdur") { webSession.stopCompanionMedia() }
+                    Button("Sesi durdur") { webSession.stopCompanionMedia(revokeRoute: false) }
                     Button("Yenile") { webSession.retry() }
                 }.padding(10)
                 CompanionWebView(web: webSession.prepare())
-            } else { CompanionPanelView(session: session) }
+            } else {
+                CompanionPanelView(session: session, appearance: CompanionPanelAppearance(
+                    background: BavbavTheme.background, surface: BavbavTheme.surface, raised: BavbavTheme.raised,
+                    border: BavbavTheme.border, text: BavbavTheme.text, muted: BavbavTheme.muted,
+                    accent: BavbavTheme.accent, danger: BavbavTheme.danger,
+                    backgroundOpacity: preferences.backgroundOpacity,
+                    foregroundStrength: ForegroundContrast.strength(backgroundOpacity: preferences.backgroundOpacity)))
+            }
         }
         .preferredColorScheme(.dark)
         .onChange(of: web) { value in
@@ -126,11 +159,12 @@ private struct CompanionHostView: View {
     private func routeButton(_ title: String, useWeb: Bool) -> some View {
         Button { web = useWeb } label: {
             Text(title).font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(web == useWeb ? Color.mint : Color.secondary)
+                .foregroundStyle(web == useWeb ? BavbavTheme.accent : BavbavTheme.muted)
+                .readableForeground()
                 .frame(maxWidth: .infinity).padding(.vertical, 10)
-                .background(web == useWeb ? Color.mint.opacity(0.10) : Color.white.opacity(0.03),
-                            in: RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(web == useWeb ? Color.mint.opacity(0.4) : Color.clear))
+                .background((web == useWeb ? BavbavTheme.accent.opacity(0.10) : BavbavTheme.surface).panelBackdrop())
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(web == useWeb ? BavbavTheme.accent.opacity(0.4) : BavbavTheme.border))
         }.buttonStyle(.plain)
     }
 }

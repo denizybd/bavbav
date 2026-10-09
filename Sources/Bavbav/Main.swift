@@ -7,7 +7,10 @@ enum BavbavMain {
         let app = NSApplication.shared
         let delegate = BavbavAppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(ProcessInfo.processInfo.environment["BAVBAV_APP_ICON_CHECK"] == "1" ? .prohibited : .regular)
+        let environment = ProcessInfo.processInfo.environment
+        let noUI = ["BAVBAV_APP_ICON_CHECK", "BAVBAV_COMPANION_PREFLIGHT_CHECK", "BAVBAV_COMPANION_WEB_CHECK", "BAVBAV_COMPANION_WINDOW_CHECK"]
+            .contains { environment[$0] == "1" }
+        app.setActivationPolicy(noUI ? .prohibited : .regular)
         app.run()
         withExtendedLifetime(delegate) {}
     }
@@ -31,6 +34,20 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
         diagnosticRun = environment.keys.contains { $0.hasPrefix("BAVBAV_") && $0.contains("CHECK") }
+        if environment["BAVBAV_COMPANION_PREFLIGHT_CHECK"] == "1" {
+            CompanionAcceptanceCheck.printPreflight()
+            Foundation.exit(0)
+        }
+        if environment["BAVBAV_COMPANION_WEB_CHECK"] == "1" {
+            Foundation.exit(CompanionWebMediaCheck.run() ? 0 : 1)
+        }
+        if environment["BAVBAV_COMPANION_WINDOW_CHECK"] == "1" {
+            Task {
+                guard ScopedHotKeyCheck.run() else { Foundation.exit(1) }
+                Foundation.exit(await CompanionThemeCheck.run() ? 0 : 1)
+            }
+            return
+        }
         if environment["BAVBAV_COMPANION_LIVE_CHECK"] == "1" {
             Task { Foundation.exit(await CompanionAcceptanceCheck.run() ? 0 : 1) }
             return
@@ -38,8 +55,21 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--companion-only") {
             // An explicit launch mode for opening the real component without
             // restarting existing coding windows or registering their hotkeys.
-            ApplicationMenu.install()
             showCompanion(nil)
+            if let companion {
+                ApplicationMenu.install(bindings: companion.preferences.keyBindings)
+                do {
+                    hotKeys = try HotKeyCenter(bindings: companion.preferences.keyBindings,
+                                              onlyOperations: ["companion"]) { [weak self] _ in
+                        self?.showCompanion(nil)
+                    }
+                    print("COMPANION SHORTCUT: \(companion.preferences.keyBindings.label("*.companion.key")) registered; other windows untouched")
+                } catch {
+                    companion.preferences.keyBindings.error = error.localizedDescription
+                    print("COMPANION SHORTCUT: registration failed: \(error.localizedDescription)")
+                }
+                fflush(stdout)
+            }
             if CommandLine.arguments.contains("--companion-ui-report") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.companion?.exportPreview() }
             }
@@ -214,8 +244,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                     case 2: self.panels.showGroup(.recents)
                     case 3: self.panels.showGroup(.chatgpt)
                     case 4: self.panels.showGroup(.settings)
-                    case 5: self.showCompanion(nil)
-                    case 6: self.panels.showJournal()
+                    case 5: self.panels.showJournal()
+                    case 6: self.showCompanion(nil)
                     default: break
                     }
                 }
@@ -739,14 +769,15 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard store != nil else { return .terminateNow }
+        guard store != nil || companion != nil else { return .terminateNow }
         guard !terminationRequested else { return .terminateLater }
         terminationRequested = true
         companion?.stop()
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
         Task {
-            await store.shutdown()
+            await companion?.shutdown()
+            if let store { await store.shutdown() }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -773,7 +804,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showCompanion(_ sender: Any?) {
-        if companion == nil { companion = CompanionWindowController(webSession: store?.chatGPTSession ?? ChatGPTWebSession()) }
+        if companion == nil {
+            companion = CompanionWindowController(webSession: store?.chatGPTSession ?? ChatGPTWebSession(),
+                                                   preferences: panels?.appPreferences)
+        }
         companion?.show()
     }
 

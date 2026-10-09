@@ -18,9 +18,12 @@ final class HotKeyCenter {
     private var hotKeyRefs: [EventHotKeyRef] = []
     private var current: [Int: ShortcutStroke] = [:]
     private var suspended = false
+    private let onlyOperations: Set<String>?
     private let callback: (Int) -> Void
 
-    init(bindings: ShortcutSettings? = nil, callback: @escaping (Int) -> Void) throws {
+    init(bindings: ShortcutSettings? = nil, onlyOperations: Set<String>? = nil,
+         callback: @escaping (Int) -> Void) throws {
+        self.onlyOperations = onlyOperations
         self.callback = callback
         try installHandler()
         do { try reconfigure(bindings?.overrides ?? [:]) }
@@ -40,16 +43,20 @@ final class HotKeyCenter {
         callback(number)
     }
 
-    static func configuration(_ overrides: [String: ShortcutBinding]) -> [Int: ShortcutStroke] {
+    static func configuration(_ overrides: [String: ShortcutBinding],
+                              onlyOperations: Set<String>? = nil) -> [Int: ShortcutStroke] {
         var result: [Int: ShortcutStroke] = [:]
         for (index, definition) in ShortcutCatalog.all.filter(\.global).enumerated() {
+            // Preserve the full catalog's event numbers even in a scoped host.
+            // Companion alone remains number 6, rather than becoming number 1.
+            guard onlyOperations?.contains(definition.operation) != false else { continue }
             let value = overrides[definition.id] ?? definition.defaultBinding
             if !value.disabled { result[index + 1] = value.strokes.first }
         }
         return result
     }
     func reconfigure(_ overrides: [String: ShortcutBinding]) throws {
-        let next = Self.configuration(overrides)
+        let next = Self.configuration(overrides, onlyOperations: onlyOperations)
         guard next != current else { return }
         if suspended { current = next; return }
         let previous = current

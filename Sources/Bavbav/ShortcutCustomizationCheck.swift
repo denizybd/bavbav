@@ -64,11 +64,11 @@ enum ShortcutCustomizationCheck {
             }
         }
         do {
-            try check(bindings.label("*.companion.key") == "⌘5", "Companion default is Command 5")
-            try check(bindings.label("*.journal.key") == "⌘6", "journal moves to Command 6")
-            _ = router.handle(key(23, .command, window: project))
-            _ = router.handle(key(23, .command, window: project, type: .keyUp))
-            try check(companionRequests == 1, "Command 5 opens Companion, not journal")
+            try check(bindings.label("*.companion.key") == "⌘6", "Companion default is Command 6")
+            try check(bindings.label("*.journal.key") == "⌘5", "journal stays on Command 5")
+            _ = router.handle(key(22, .command, window: project))
+            _ = router.handle(key(22, .command, window: project, type: .keyUp))
+            try check(companionRequests == 1, "Command 6 opens Companion, not journal")
             let catalog = ShortcutCatalog.all
             try check(catalog.count > 150, "granular action catalog")
             try check(Set(catalog.map(\.id)).count == catalog.count, "stable unique IDs")

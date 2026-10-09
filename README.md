@@ -24,7 +24,7 @@ Bavbav brings Codex conversations into compact, independent macOS windows. Keep 
 
 Built in Swift with AppKit and SwiftUI, Bavbav connects to your installed Codex App Server over local stdio. It uses your existing Codex setup for models, authentication, and coding tools.
 
-Companion (`⌘5`) adds a native Turkish voice and selected-window sharing panel
+Companion (`⌘6`) adds a native Turkish voice and selected-window sharing panel
 using that account, without a separate API key. This first integration uses
 macOS speech services rather than built-in ChatGPT Voice. See
 [capabilities, privacy boundaries and live acceptance steps](docs/COMPANION.md).
@@ -156,8 +156,8 @@ For `Space` + `Enter`, press Enter while holding Space, before the long press en
 | `⌘1` / `⌘2` | Projects / recent Codex conversations |
 | `⌘3` | Standalone chat launcher |
 | `⌘4` | Active conversation's model settings |
-| `⌘5` | Companion: voice and selected-window sharing |
-| `⌘6` | Journal |
+| `⌘5` | Journal |
+| `⌘6` | Companion: voice and selected-window sharing |
 | `W` / `S` or `↑` / `↓` | Move through a list |
 | `Space` | Open the selected entry; steer a selected queue item |
 | `⌥Space` | Rename the selected project or conversation |

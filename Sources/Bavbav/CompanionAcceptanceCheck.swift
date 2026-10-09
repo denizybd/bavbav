@@ -1,10 +1,29 @@
 import AppKit
+import AVFoundation
 import BavbavCompanion
 import Speech
 
 /// Opt-in real-account acceptance. No private window is ever selected here: the
 /// image test owns a synthetic NSWindow and resolves that exact PID/window ID.
 @MainActor enum CompanionAcceptanceCheck {
+    static func printPreflight() {
+        let speech = CompanionSpeech()
+        let report: [String: Any] = [
+            "microphoneAuthorization": AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
+            "speechAuthorization": SFSpeechRecognizer.authorizationStatus().rawValue,
+            "speechPreflight": speech.permissionSummary,
+            "turkishOnDeviceAvailable": speech.supportsLocalTurkish,
+            "turkishVoiceAvailable": speech.hasTurkishVoice,
+            "screenPermission": CGPreflightScreenCaptureAccess(),
+            "permissionsRequested": false,
+            "microphoneOpened": false,
+            "captureAttempted": false
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+            print("COMPANION PREFLIGHT: \(String(decoding: data, as: UTF8.self))")
+        }
+    }
+
     static func run() async -> Bool {
         guard ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"] == nil else {
             print("COMPANION LIVE: refused executable override; fixture is not live evidence"); return false
@@ -19,13 +38,13 @@ import Speech
             "speechPreflight": speech.permissionSummary,
             "screenPermission": CGPreflightScreenCaptureAccess(),
             "nativeChatGPTVoice": "unverified: visible web session is a separate route"]
-        var passed = false
+        var verification = CompanionVerification()
         do {
             _ = try await conversation.connect()
             let reply = try await conversation.send(text: "Bu bir bağlantı testi. Hiçbir araç kullanmadan yalnızca MERHABA BAVBAV yaz.", image: nil)
             guard reply.uppercased().contains("MERHABA BAVBAV") else { throw CompanionFailure("Gerçek hesap beklenen test yanıtını vermedi: \(reply)") }
             report["accountMessage"] = "passed: MERHABA BAVBAV received from authenticated inference"
-            passed = true
+            verification.accountMessage = true
             if CGPreflightScreenCaptureAccess() {
                 let marker = String(Int.random(in: 100000...999999))
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 340),
@@ -48,7 +67,8 @@ import Speech
                 try png.write(to: image, options: .atomic)
                 // The random answer is present ONLY in the actual captured pixels.
                 let answer = try await conversation.send(text: "Bu görseldeki altı basamaklı sayıyı söyle. Araç kullanma; yalnızca görüntüye bak.", image: image)
-                report["selectedWindowToModel"] = answer.contains(marker)
+                verification.selectedWindowToModel = answer.contains(marker)
+                report["selectedWindowToModel"] = verification.selectedWindowToModel
                     ? "passed: random six-digit marker identified from the captured selected window"
                     : "failed: model did not identify the random image-only marker"
                 report["capturedPNG"] = image.path
@@ -57,12 +77,16 @@ import Speech
             }
         } catch { report["error"] = error.localizedDescription }
         await conversation.stop()
+        report["automatedGatesPassed"] = verification.automatedGatesPassed
+        report["productComplete"] = verification.productComplete
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
             let path = folder.appendingPathComponent("report.json")
             try? data.write(to: path, options: .atomic)
             print(String(decoding: data, as: UTF8.self)); print("COMPANION LIVE REPORT: \(path.path)")
         }
-        return passed
+        // This command tests account + image, not live microphone/listening.
+        // A blocked or failed image test must produce a nonzero exit status.
+        return verification.automatedGatesPassed
     }
 }
