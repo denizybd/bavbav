@@ -30,6 +30,9 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     private var terminationRequested = false
     private var companion: CompanionWindowController?
     private var diagnosticRun = false
+    private var instanceLease: SingleBavbavInstance?
+    private var companionOpenObserver: NSObjectProtocol?
+    private static let companionOpenNotification = Notification.Name("dev.deniz.bavbav.open-companion")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
@@ -43,39 +46,13 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         }
         if environment["BAVBAV_COMPANION_WINDOW_CHECK"] == "1" {
             Task {
-                guard ScopedHotKeyCheck.run() else { Foundation.exit(1) }
+                guard ScopedHotKeyCheck.run(), SingleBavbavInstanceCheck.run() else { Foundation.exit(1) }
                 Foundation.exit(await CompanionThemeCheck.run() ? 0 : 1)
             }
             return
         }
         if environment["BAVBAV_COMPANION_LIVE_CHECK"] == "1" {
             Task { Foundation.exit(await CompanionAcceptanceCheck.run() ? 0 : 1) }
-            return
-        }
-        if CommandLine.arguments.contains("--companion-only") {
-            // An explicit launch mode for opening the real component without
-            // restarting existing coding windows or registering their hotkeys.
-            showCompanion(nil)
-            if let companion {
-                ApplicationMenu.install(bindings: companion.preferences.keyBindings)
-                do {
-                    hotKeys = try HotKeyCenter(bindings: companion.preferences.keyBindings,
-                                              onlyOperations: ["companion"]) { [weak self] _ in
-                        self?.showCompanion(nil)
-                    }
-                    print("COMPANION SHORTCUT: \(companion.preferences.keyBindings.label("*.companion.key")) registered; other windows untouched")
-                } catch {
-                    companion.preferences.keyBindings.error = error.localizedDescription
-                    print("COMPANION SHORTCUT: registration failed: \(error.localizedDescription)")
-                }
-                fflush(stdout)
-            }
-            if CommandLine.arguments.contains("--companion-ui-report") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.companion?.exportPreview() }
-            }
-            if CommandLine.arguments.contains("--companion-web-probe") {
-                Task { await companion?.verifyVisibleWebRoute() }
-            }
             return
         }
         if environment["BAVBAV_CONNECTION_CHECK"] == "1" {
@@ -174,6 +151,9 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             || backgroundCheck
             || chatGPTBoundaryCheck
         let isCheckRun = environment.keys.contains { $0.hasPrefix("BAVBAV_") && $0.contains("CHECK") }
+        // Diagnostics are isolated by explicit flags. Every interactive launch,
+        // including the legacy --companion-only spelling, hosts all six panels.
+        if !isCheckRun, !claimSingleInstance() { Foundation.exit(0) }
         store = OverlayStore(journal: isCheckRun ? nil : JournalService(directory: JournalService.defaultDirectory))
         panels = PanelCoordinator(store: store)
         inputRouter = InputRouter(store: store, coordinator: panels)
@@ -249,6 +229,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                     default: break
                     }
                 }
+                print("BAVBAV SHORTCUTS: registered=\(hotKeys?.registeredNumbers.map(String.init).joined(separator: ",") ?? "") pid=\(ProcessInfo.processInfo.processIdentifier)")
+                fflush(stdout)
             } catch {
                 showShortcutError(error.localizedDescription)
             }
@@ -268,7 +250,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             ApplicationMenu.install(bindings: bindings)
             installStatusMenu()
             DispatchQueue.main.async { [weak self] in
-                guard NSApp.isActive else { return }
+                guard NSApp.isActive, self?.companion?.window.isVisible != true else { return }
                 self?.panels.showInitialPanel()
             }
         }
@@ -716,7 +698,15 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         guard !headlessCheck else { return }
-        if CommandLine.arguments.contains("--companion") { showCompanion(nil) }
+        if CommandLine.arguments.contains("--companion") || CommandLine.arguments.contains("--companion-only") {
+            showCompanion(nil)
+        }
+        if CommandLine.arguments.contains("--companion-ui-report") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.companion?.exportPreview() }
+        }
+        if CommandLine.arguments.contains("--companion-web-probe") {
+            Task { await companion?.verifyVisibleWebRoute() }
+        }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
@@ -742,7 +732,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard store != nil, !diagnosticRun else { return }
         // The system restores hidden windows. Only create an entry point when
         // every panel was explicitly closed with Q; never reorder existing chats.
-        if !NSApp.isHidden, !panels.hasVisibleWindows { panels.showInitialPanel() }
+        if !NSApp.isHidden, !panels.hasVisibleWindows, companion?.window.isVisible != true { panels.showInitialPanel() }
         Task { @MainActor in
             await store.refresh()
             store.syncVisibleConversation()
@@ -757,7 +747,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard !diagnosticRun else { return true }
         guard panels != nil else { return true }
         sender.unhide(nil)
-        if !panels.hasVisibleWindows { panels.showInitialPanel() }
+        if !panels.hasVisibleWindows, companion?.window.isVisible != true { panels.showInitialPanel() }
         return true
     }
 
@@ -766,6 +756,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         appIconController?.stop()
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
+        if let companionOpenObserver { DistributedNotificationCenter.default().removeObserver(companionOpenObserver) }
+        instanceLease?.release()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -783,19 +775,19 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    @objc private func showProjects() {
+    @objc func showProjects() {
         panels.showGroup(.projects)
     }
 
-    @objc private func showRecents() {
+    @objc func showRecents() {
         panels.showGroup(.recents)
     }
 
-    @objc private func showChatGPT() {
+    @objc func showChatGPT() {
         panels.showGroup(.chatgpt)
     }
 
-    @objc private func showSettings() {
+    @objc func showSettings() {
         panels.showGroup(.settings)
     }
 
@@ -804,11 +796,65 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showCompanion(_ sender: Any?) {
+        guard !terminationRequested else { return }
         if companion == nil {
             companion = CompanionWindowController(webSession: store?.chatGPTSession ?? ChatGPTWebSession(),
                                                    preferences: panels?.appPreferences)
         }
         companion?.show()
+    }
+
+    private func claimSingleInstance() -> Bool {
+        // Old builds predate the kernel lease. Do not start a competing host
+        // beside one of them or silently terminate its active coding workers.
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let launchedAt = NSRunningApplication.current.launchDate ?? Date()
+        if let bundleID = Bundle.main.bundleIdentifier,
+           let older = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .first(where: {
+                $0.processIdentifier != ownPID && !$0.isTerminated &&
+                ($0.launchDate ?? .distantFuture) < launchedAt
+            }) {
+            older.activate(options: [.activateIgnoringOtherApps])
+            if CommandLine.arguments.contains("--companion") || CommandLine.arguments.contains("--companion-only") {
+                DistributedNotificationCenter.default().postNotificationName(Self.companionOpenNotification,
+                    object: "dev.deniz.bavbav", userInfo: nil, deliverImmediately: true)
+            }
+            print("BAVBAV INSTANCE: reused running app pid=\(older.processIdentifier); no competing host created")
+            fflush(stdout)
+            return false
+        }
+        let lease = SingleBavbavInstance()
+        switch lease.claim() {
+        case .owner:
+            instanceLease = lease
+            companionOpenObserver = DistributedNotificationCenter.default().addObserver(
+                forName: Self.companionOpenNotification, object: "dev.deniz.bavbav", queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.showCompanion(nil) }
+                }
+            return true
+        case .alreadyRunning(let pid):
+            guard let pid, let running = NSRunningApplication(processIdentifier: pid),
+                  running.bundleIdentifier == Bundle.main.bundleIdentifier else {
+                fputs("BAVBAV INSTANCE: another owner holds the runtime lease; no competing worker or shortcut created.\n", stderr)
+                return false
+            }
+            if CommandLine.arguments.contains("--companion") || CommandLine.arguments.contains("--companion-only") {
+                DistributedNotificationCenter.default().postNotificationName(Self.companionOpenNotification,
+                    object: "dev.deniz.bavbav", userInfo: nil, deliverImmediately: true)
+            }
+            running.activate(options: [.activateIgnoringOtherApps])
+            print("BAVBAV INSTANCE: reused existing pid=\(pid); duplicate exited before account/hotkey startup")
+            fflush(stdout)
+            return false
+        case .failure(let reason):
+            fputs("BAVBAV INSTANCE: \(reason)\n", stderr)
+            let alert = NSAlert()
+            alert.messageText = "Bavbav açılamadı"
+            alert.informativeText = "Tek uygulama koruması hazırlanamadı: \(reason)"
+            alert.runModal()
+            return false
+        }
     }
 
     @objc private func refreshNow() {
@@ -832,7 +878,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Write Control", action: #selector(showSettings), keyEquivalent: "").representedObject = "*.models.key"
         menu.addItem(withTitle: "Journal", action: #selector(showJournal), keyEquivalent: "").representedObject = "*.journal.key"
         menu.addItem(withTitle: "Settings", action: #selector(showAppSettings(_:)), keyEquivalent: "")
-        menu.addItem(withTitle: "Companion · Ses ve pencere…", action: #selector(showCompanion(_:)), keyEquivalent: "").representedObject = "*.companion.key"
+        menu.addItem(withTitle: "Companion · Ses ve ekran…", action: #selector(showCompanion(_:)), keyEquivalent: "").representedObject = "*.companion.key"
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Refresh Codex", action: #selector(refreshNow), keyEquivalent: "").representedObject = "*.refresh.key"
         menu.addItem(NSMenuItem.separator())
@@ -850,5 +896,5 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    @objc private func showJournal() { panels.showJournal() }
+    @objc func showJournal() { panels.showJournal() }
 }

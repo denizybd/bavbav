@@ -14,6 +14,7 @@ enum ShortcutCustomizationCheck {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
         let baseline = Set(NSApp.windows.map(ObjectIdentifier.init))
         let originalMenu = NSApp.mainMenu
+        let originalWindowsMenu = NSApp.windowsMenu
         let store = OverlayStore(defaults: defaults, standaloneDirectory: directory)
         let panels = PanelCoordinator(store: store, windowSizeDefaults: defaults)
         store.onOpenDetail = nil; store.onWillOpenDetail = nil
@@ -33,6 +34,7 @@ enum ShortcutCustomizationCheck {
             router.cancelPendingPress()
             bindings.cancelEditing()
             NSApp.mainMenu = originalMenu
+            NSApp.windowsMenu = originalWindowsMenu
             for window in NSApp.windows where !baseline.contains(ObjectIdentifier(window)) { window.orderOut(nil) }
             defaults.removePersistentDomain(forName: suite)
             // No user files: this UUID directory belongs only to this fixture.
@@ -196,6 +198,55 @@ enum ShortcutCustomizationCheck {
             let editMenu = NSApp.mainMenu!.items[1].submenu!
             try check(editMenu.items.first { $0.action == #selector(NSText.selectAll(_:)) }?.keyEquivalentModifierMask == [.command,.control],
                       "native clipboard menu synchronized")
+            guard let windowsMenu = NSApp.mainMenu?.items.first(where: { $0.title == "Windows" })?.submenu else {
+                throw Failure(message: "native Windows menu missing")
+            }
+            try check(NSApp.windowsMenu === windowsMenu, "macOS Window menu uses the six-panel submenu")
+            let windowBindings: [(String, String, Selector)] = [
+                ("*.projects.key", "1", #selector(BavbavAppDelegate.showProjects)),
+                ("*.recents.key", "2", #selector(BavbavAppDelegate.showRecents)),
+                ("*.standalone.key", "3", #selector(BavbavAppDelegate.showChatGPT)),
+                ("*.models.key", "4", #selector(BavbavAppDelegate.showSettings)),
+                ("*.journal.key", "5", #selector(BavbavAppDelegate.showJournal)),
+                ("*.companion.key", "6", #selector(BavbavAppDelegate.showCompanion(_:)))
+            ]
+            let representedWindows = windowsMenu.items.filter { $0.representedObject is String }
+            try check(Set(representedWindows.compactMap { $0.representedObject as? String }) == Set(windowBindings.map { $0.0 }),
+                      "native Window menu contains exactly the six global panel binding IDs")
+            for (id, number, action) in windowBindings {
+                guard let item = representedWindows.first(where: { $0.representedObject as? String == id }) else {
+                    throw Failure(message: "native panel menu missing \(id)")
+                }
+                try check(item.keyEquivalent == number && item.keyEquivalentModifierMask == [.command] && item.isEnabled,
+                          "native panel shortcut default is Command \(number)")
+                try check(item.action == action && (item.target as AnyObject?) === (NSApp.delegate as AnyObject?),
+                          "native panel shortcut targets the normal app delegate for \(id)")
+            }
+            func menuItems(boundTo id: String, in menu: NSMenu) -> [NSMenuItem] {
+                menu.items.flatMap { item in
+                    let matches = item.representedObject as? String == id ? [item] : []
+                    return matches + (item.submenu.map { menuItems(boundTo: id, in: $0) } ?? [])
+                }
+            }
+            try set("*.companion.key", 22, [.command, .control])
+            ApplicationMenu.update(NSApp.mainMenu, bindings: bindings)
+            let companionMenuItems = menuItems(boundTo: "*.companion.key", in: NSApp.mainMenu!)
+            try check(companionMenuItems.count >= 2 && companionMenuItems.allSatisfy {
+                $0.keyEquivalent == "6" && $0.keyEquivalentModifierMask == [.command, .control]
+            }, "all Companion menu entries follow the customized binding")
+            guard let companionDefinition = ShortcutCatalog.all.first(where: { $0.id == "*.companion.key" }) else {
+                throw Failure(message: "Companion binding definition missing")
+            }
+            var disabledCompanion = bindings.binding(companionDefinition)
+            disabledCompanion.disabled = true
+            try check(bindings.set("*.companion.key", disabledCompanion), "disable native Companion menu shortcut")
+            ApplicationMenu.update(NSApp.mainMenu, bindings: bindings)
+            try check(companionMenuItems.allSatisfy { $0.keyEquivalent.isEmpty },
+                      "disabled Companion binding removes every native menu key equivalent")
+            try check(bindings.set("*.companion.key", nil), "restore native Companion default shortcut")
+            ApplicationMenu.update(NSApp.mainMenu, bindings: bindings)
+            try check(companionMenuItems.allSatisfy { $0.keyEquivalent == "6" && $0.keyEquivalentModifierMask == [.command] },
+                      "every native Companion menu entry restores Command 6")
             _ = bindings.resetAll()
 
             prefs.page = .shortcuts; prefs.selectedIndex = 0

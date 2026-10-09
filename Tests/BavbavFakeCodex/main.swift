@@ -360,6 +360,12 @@ while let line = readLine() {
                 id: "fixture-thread",
                 cwd: params["cwd"] as? String ?? "/tmp/fixture"
             )]])
+            if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1",
+               ProcessInfo.processInfo.environment["BAVBAV_COMPANION_IDLE_EXIT"] == "1" {
+                // No turn is ever submitted in this scenario. Exercise an idle
+                // owned-child exit, rather than synthesizing a send failure.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { Foundation.exit(73) }
+            }
         case "thread/resume":
             if ProcessInfo.processInfo.environment["BAVBAV_STANDALONE_CHECK"] == "1",
                let threadID = params["threadId"] as? String, let row = standaloneRows[threadID] {

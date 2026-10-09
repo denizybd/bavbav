@@ -5,6 +5,11 @@ import Foundation
     func connect() async throws -> String
     func send(text: String, image: URL?) async throws -> String
     func stop() async
+    func setDisconnectionHandler(_ handler: ((String) -> Void)?)
+}
+
+public extension CompanionConversation {
+    func setDisconnectionHandler(_ handler: ((String) -> Void)?) {}
 }
 
 public struct CompanionFailure: LocalizedError {
@@ -46,6 +51,8 @@ public struct CompanionFailure: LocalizedError {
     private var eventTask: Task<Void, Never>?
     private var eventContinuation: AsyncStream<CodexServerEvent>.Continuation?
     private var busy = false
+    private var disconnectedCleanup: Task<Void, Never>?
+    private var disconnectionHandler: ((String) -> Void)?
     private let directory: URL
     private let ephemeral: Bool
 
@@ -53,7 +60,17 @@ public struct CompanionFailure: LocalizedError {
         self.directory = directory; self.ephemeral = ephemeral
     }
 
+    public func setDisconnectionHandler(_ handler: ((String) -> Void)?) {
+        disconnectionHandler = handler
+    }
+
     public func connect() async throws -> String {
+        if let cleanup = disconnectedCleanup {
+            let token = generation
+            await cleanup.value
+            try Task.checkCancellation()
+            guard generation == token else { throw CancellationError() }
+        }
         if let threadID, client != nil { return threadID }
         guard !busy else { throw CompanionFailure("Bağlantı zaten hazırlanıyor.") }
         busy = true
@@ -125,7 +142,7 @@ public struct CompanionFailure: LocalizedError {
         var attachments: [ComposerAttachment] = []
         if let image {
             let size = try image.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            attachments = [ComposerAttachment(localURL: image, name: "Paylaşılan pencere.png", byteCount: Int64(size), isImage: true)]
+            attachments = [ComposerAttachment(localURL: image, name: "Paylaşılan görüntü.png", byteCount: Int64(size), isImage: true)]
         }
         request.submitted = true
         let turn = try await request.server.startTurn(threadID: request.threadID, text: text, effort: "low",
@@ -161,7 +178,16 @@ public struct CompanionFailure: LocalizedError {
     }
 
     private func receive(_ event: CodexServerEvent, token: UUID) {
-        guard token == generation, let request = pendingSend, request.generation == token else { return }
+        guard token == generation else { return }
+        if case .transportClosed(let error) = event {
+            if let request = pendingSend, request.generation == token {
+                request.transportFailure = error
+            } else {
+                disconnectIdleTransport(error)
+            }
+            return
+        }
+        guard let request = pendingSend, request.generation == token else { return }
         switch event {
         case .itemCompleted(let id, let turn, let message) where id == request.threadID:
             guard request.turnID == nil || request.turnID == turn, message.kind == .agent else { return }
@@ -173,9 +199,24 @@ public struct CompanionFailure: LocalizedError {
             var result = bufferedResult(turn: turn, request: request)
             if result.completed == nil { result.completed = (status, error) }
             request.results[turn] = result
-        case .transportClosed(let error): request.transportFailure = error
         default: break
         }
+    }
+
+    private func disconnectIdleTransport(_ error: String) {
+        guard let old = client else { return }
+        let token = UUID(); generation = token
+        client = nil; threadID = nil; busy = true; endEvents()
+        // Publish loss immediately, but keep a fence around the old child until
+        // cleanup completes. Reopening waits for this task; it cannot replace
+        // the old transport while shutdown is still in progress.
+        disconnectedCleanup = Task { @MainActor [weak self] in
+            await old.setEventHandler(nil)
+            await old.shutdown()
+            guard let self, self.generation == token else { return }
+            self.disconnectedCleanup = nil; self.busy = false
+        }
+        disconnectionHandler?(error)
     }
 
     private func bufferedResult(turn: String, request: PendingSend) -> TurnResult {
@@ -215,8 +256,10 @@ public struct CompanionFailure: LocalizedError {
     public func stop() async {
         let token = UUID(); generation = token
         let old = client; let request = pendingSend
+        let idleCleanup = disconnectedCleanup
         client = nil; threadID = nil; pendingSend = nil; busy = true; endEvents()
         // Only our dedicated child is stopped, never Bavbav's coding workers.
+        await idleCleanup?.value
         if let cleanup = request?.cleanup { await cleanup.value }
         else {
             await old?.setEventHandler(nil)
@@ -225,6 +268,6 @@ public struct CompanionFailure: LocalizedError {
             }
             await old?.shutdown()
         }
-        if generation == token { busy = false }
+        if generation == token { disconnectedCleanup = nil; busy = false }
     }
 }

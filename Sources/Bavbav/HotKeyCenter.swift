@@ -20,6 +20,7 @@ final class HotKeyCenter {
     private var suspended = false
     private let onlyOperations: Set<String>?
     private let callback: (Int) -> Void
+    var registeredNumbers: [Int] { suspended ? [] : current.keys.sorted() }
 
     init(bindings: ShortcutSettings? = nil, onlyOperations: Set<String>? = nil,
          callback: @escaping (Int) -> Void) throws {

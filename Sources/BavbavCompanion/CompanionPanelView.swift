@@ -34,9 +34,13 @@ public struct CompanionPanelView: View {
     @ObservedObject private var session: CompanionSession
     @ObservedObject private var speech: CompanionSpeech
     private let appearance: CompanionPanelAppearance
-    public init(session: CompanionSession, appearance: CompanionPanelAppearance = CompanionPanelAppearance()) {
+    private let onStop: (() -> Void)?
+    @State private var shareConsent = false
+    public init(session: CompanionSession, appearance: CompanionPanelAppearance = CompanionPanelAppearance(),
+                onStop: (() -> Void)? = nil) {
         self.session = session; self.speech = session.speech
         self.appearance = appearance
+        self.onStop = onStop
     }
     public var body: some View {
         ScrollView {
@@ -45,11 +49,14 @@ public struct CompanionPanelView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("COMPANION").font(.system(.title2, design: .monospaced).bold()).foregroundStyle(appearance.accent)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
-                        Text("SES + SEÇİLİ PENCERE").font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
+                        Text("SES + TÜM EKRAN").font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                     }
                     Spacer()
-                    Button("BİTİR / STOP", role: .destructive) { session.stop() }
+                    Button("BİTİR / STOP", role: .destructive) {
+                        shareConsent = false
+                        if let onStop { onStop() } else { session.stop() }
+                    }
                         .help("Mikrofonu, görüntü paylaşımını, yanıtı ve sesi durdurur. Diğer sohbetlere dokunmaz.")
                 }
                 Text("macOS Türkçe konuşma → mevcut Codex hesabı → Mac sesi. Bu, ChatGPT'nin yerleşik Voice özelliği değildir.")
@@ -63,13 +70,26 @@ public struct CompanionPanelView: View {
                     Text("Kendi Companion sohbeti · API anahtarı yok").font(.caption).foregroundStyle(appearance.muted)
                         .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                 }
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: session.screenSharing ? "eye.fill" : "eye.slash")
+                    Text(session.screenSharing
+                         ? "TAM EKRAN PAYLAŞILIYOR · Açık uygulamalar ve bildirimler de modele görünür. STOP anında yeni kareleri keser."
+                         : "Tam ekran kendiliğinden paylaşılmaz. Paylaşımı başlattığında açık uygulamalar ve bildirimler de modele görünür.")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(session.screenSharing ? appearance.accent : appearance.text)
+                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                .padding(11).frame(maxWidth: .infinity, alignment: .leading)
+                .background(appearance.surface.opacity(appearance.backgroundOpacity), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(session.screenSharing ? appearance.accent : appearance.border, lineWidth: 1))
                 section("TÜRKÇE SES") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Button(speech.finalizing ? "Metin tamamlanıyor…" : (speech.listening ? "Dinlemeyi bitir" : "Başlat · konuş")) {
                                 if speech.listening { session.finishDictation() }
                                 else { Task { await session.startListening() } }
-                            }.disabled(session.sending || session.connecting || session.stopping || speech.preparing || speech.finalizing)
+                            }.disabled(session.sending || session.capturing || session.connecting || session.stopping || speech.preparing || speech.finalizing)
                             Button("Sustur") { session.mute() }.disabled(!speech.dictationBusy)
                             Button("Yanıt sesini durdur") { speech.stopSpeaking() }.disabled(!speech.speaking)
                         }
@@ -90,21 +110,27 @@ public struct CompanionPanelView: View {
                         }
                     }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                section("PENCERE · TEK KARE, AÇIK ONAY") {
+                section("TÜM EKRAN · ARALIKLI PAYLAŞIM") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Button("Pencere seç / yenile") { Task { await session.listWindows() } }.disabled(session.capturing || session.sending)
-                            Button("Paylaşımı kapat") { session.revokeShare() }.disabled(session.selection == nil)
+                            Button("Ekranları seç / yenile") { Task { await session.listDisplays() } }
+                                .disabled(session.capturing || session.screenSharing || session.stopping)
+                            Spacer()
+                            Text(session.screenSharing ? "● PAYLAŞILIYOR" : "○ KAPALI")
+                                .font(.system(.caption, design: .monospaced).bold())
+                                .foregroundStyle(session.screenSharing ? appearance.accent : appearance.muted)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                                .accessibilityIdentifier("companion.screenSharing")
                         }
-                        if !session.windows.isEmpty {
+                        if !session.displays.isEmpty {
                             Menu {
-                                Button("Bir pencere seç…") { session.selectWindow(nil) }
-                                ForEach(session.windows) { window in
-                                    Button(window.label) { session.selectWindow(window) }
+                                Button("Bir ekran seç…") { shareConsent = false; session.selectDisplay(nil) }
+                                ForEach(session.displays) { display in
+                                    Button(display.label) { shareConsent = false; session.selectDisplay(display) }
                                 }
                             } label: {
                                 HStack {
-                                    Text(session.selection?.label ?? "Bir pencere seç…").lineLimit(1)
+                                    Text(session.displaySelection?.label ?? "Bir ekran seç…").lineLimit(1)
                                     Spacer()
                                     Image(systemName: "chevron.up.chevron.down")
                                 }
@@ -114,18 +140,42 @@ public struct CompanionPanelView: View {
                                 .background(appearance.raised.opacity(appearance.backgroundOpacity), in: RoundedRectangle(cornerRadius: 5))
                                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(appearance.border, lineWidth: 1))
                             }.menuStyle(.borderlessButton)
-                            .accessibilityLabel("Paylaşılacak pencere")
-                            .disabled(session.sending)
+                            .accessibilityLabel("Tamamı paylaşılacak ekran")
+                            .disabled(session.screenSharing || session.capturing || session.stopping)
                         }
-                        Button(session.capturing ? "Hazırlanıyor…" : "Yalnızca seçili pencereyi önizle") { Task { await session.capturePreview() } }
-                            .disabled(session.selection == nil || session.capturing || session.sending)
+                        Stepper(value: $session.screenShareInterval, in: 3...60, step: 1) {
+                            Text("Her \(Int(session.screenShareInterval)) saniyede bir kare")
+                                .font(.system(size: 12, design: .monospaced))
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        }.accessibilityLabel("Ekran paylaşımı aralığı, saniye")
+                        Text("Açtığında bu ekrandaki tüm görünür içerik, diğer uygulamalar ve bildirimler dahil, mevcut hesabın üzerinden modele gönderilir.")
+                            .font(.caption).foregroundStyle(appearance.muted)
+                            .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        if !session.screenSharing {
+                            Toggle("Bu ekranın tamamını aralıklarla paylaşmayı onaylıyorum", isOn: $shareConsent)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                                .disabled(session.displaySelection == nil || session.stopping)
+                        }
+                        HStack {
+                            Button(session.capturing ? "Kare hazırlanıyor…" : "Paylaşımı başlat · tüm ekran") {
+                                Task { await session.startScreenSharing() }
+                            }.disabled(!shareConsent || session.displaySelection == nil || !session.connected || session.connecting || session.stopping || session.screenSharing || session.capturing || session.sending || speech.dictationBusy)
+                            Button("Paylaşımı durdur", role: .destructive) {
+                                shareConsent = false
+                                session.stopScreenSharing()
+                            }.disabled(!session.screenSharing)
+                        }
+                        if let sharedAt = session.lastSharedAt {
+                            Text("Son ekran yanıtı: \(sharedAt.formatted(date: .omitted, time: .standard))")
+                                .font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        }
                         if let data = session.preview, let image = NSImage(data: data) {
                             Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 180)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                            Toggle("Bu kareyi sonraki mesajla paylaş", isOn: $session.includePreview).disabled(session.sending)
-                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                                .accessibilityLabel("En son hazırlanan ekran karesi")
                         }
-                        Text("Tüm ekran, arka plan kaydı ve sistem sesi alınmaz. Pencere seçmek paylaşmak değildir.")
+                        Text("Video veya sistem sesi kaydedilmez. Model meşgulse kareler birikmez; boş olduğunda güncel kare gönderilir. Paylaşımı durdur, STOP veya pencereyi kapatma yeni kareleri keser. Önceden gönderilen kareler geri alınmaz.")
                             .font(.caption).foregroundStyle(appearance.muted)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                     }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
@@ -160,10 +210,10 @@ public struct CompanionPanelView: View {
                         Spacer()
                         Button(session.sending ? "Yanıt bekleniyor…" : "Gönder") { Task { await session.send() } }
                             .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(!session.connected || session.sending || speech.dictationBusy || (session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.includePreview))
+                            .disabled(!session.connected || session.sending || session.capturing || session.stopping || speech.dictationBusy || (session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.includePreview))
                     }
                 }
-                Text("LOGIC PRO KONTROLÜ · HAZIR DEĞİL\nBu sürüm yalnızca konuşur ve onayladığın pencere karesini yorumlar. Fare, klavye veya Logic Pro işlemi yapmaz.")
+                Text("LOGIC PRO KONTROLÜ · HAZIR DEĞİL\nBu sürüm yalnızca konuşur ve açıkça paylaştığın ekran karelerini yorumlar. Fare, klavye veya Logic Pro işlemi yapmaz.")
                     .font(.caption).foregroundStyle(appearance.muted)
                     .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
             }.padding(22)
@@ -175,6 +225,8 @@ public struct CompanionPanelView: View {
         .tint(appearance.accent)
         .toggleStyle(.checkbox)
         .buttonStyle(CompanionButtonStyle(appearance: appearance))
+        .onChange(of: session.screenSharing) { if !$0 { shareConsent = false } }
+        .onChange(of: session.connected) { if !$0 { shareConsent = false } }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

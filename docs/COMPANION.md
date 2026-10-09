@@ -5,6 +5,10 @@ Both are individually editable in Settings → Shortcuts. Repeating Command 6
 focuses the one panel; it never toggles it closed. Closing the panel stops its
 microphone, local voice, capture consent and dedicated conversation connection.
 Other coding chats continue unchanged.
+Opening Command 6 automatically connects the existing ChatGPT account but never
+starts microphone/capture or sends a prompt. An idle child disconnect immediately
+clears the connection indicator; reopening or explicitly connecting retries account
+setup without retrying the previous message. Drafts are preserved.
 
 ## What is implemented
 
@@ -39,17 +43,30 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 
 ## Sharing and stop boundaries
 
-- Choose a window explicitly. Enumerating/selecting does not capture or send.
-- Preview captures one bounded PNG via ScreenCaptureKit's single-window filter
-  (macOS 14+), validating window ID, PID and bundle identity again. No full display,
-  system audio, continuous stream or Accessibility scraping is used.
-- Check “share this frame with the next message”, then Send. Consent is one-shot;
-  previews expire after 60 seconds. Selection change/STOP invalidates pending
-  capture callbacks; no fallback to another window is permitted.
-- Preview stays in memory; only explicitly sent images are saved under
-  `~/Library/Application Support/Bavbav/Companion/Attachments` (0600 files/0700
-  directory). These are retained for chat history. Already sent images cannot
-  be retracted by STOP.
+- Choose a **full physical display**, set the interval (3–60 seconds; default 10),
+  check the visible full-screen consent and click Start. Enumeration/selection
+  alone does not capture or send; startup/reconnection never restores consent.
+  All visible windows, desktop, Dock and menu bar on that display can contain
+  private information and will be shared. Extra displays are not silently added.
+- A ScreenCaptureKit full-display filter (macOS 14+) captures a bounded PNG:
+  at most 1280 pixels on the long edge and 6 MB. Display ID and dimensions are
+  revalidated each time; removal/reconfiguration stops rather than substitutes a
+  different screen. No system audio, continuous video, or Accessibility scraping.
+- Each captured frame is sent to the dedicated account-backed conversation and
+  its short observation appears silently in this panel. One frame/turn at a time;
+  the selected interval starts after the previous response, so slow inference
+  does not accumulate pending captures or upload backlogs. Busy user turns and
+  dictation are skipped. This uses the account's normal allowance, not free video.
+- Only the latest preview and at most 80 lines remain in UI memory. Periodic
+  `ScreenFrames` files use 0600 permissions in a 0700 directory and are removed
+  after their owned request completes/fails. A crash can leave an owned transient
+  file; server-side chat images already sent cannot be retracted by STOP.
+- Stop sharing immediately revokes future frames and rejects late capture/reply
+  callbacks. One already-uploaded response may drain silently to preserve the
+  account connection. Full STOP, Q/close and application quit stop the dedicated
+  worker as well. Reopen/reconnect requires fresh explicit sharing consent.
+- The injectable single-window adapter remains for legacy scope tests and the
+  safe diagnostic image-to-model check, not as the normal panel's sharing mode.
 - Original Companion `SafetyGate`/`Geometry` sources are snapshotted unchanged in
   `CompanionSafety`. Their revocation epoch/stop semantics are reused. There is
   **no control grant, native input adapter, Logic Pro automation or broadened
@@ -103,26 +120,32 @@ Manual acceptance:
 3. Start dictation, grant microphone/speech permissions yourself, opt into Apple
    speech if needed, say a fresh Turkish phrase and verify the displayed text.
    Mute/STOP must close capture; partial text is never sent by itself.
-4. Select a harmless window, preview, explicitly attach and ask about a visual
-   detail absent from your prompt. Verify the actual answer, not just attachment.
+4. Clear private screen content, select the full display, consent, start sharing
+   and verify a visual detail absent from your text reaches the model. Wait for
+   a second changed frame, then STOP and verify no further update arrives.
 5. Verify the web tab separately using the visible login/Voice UI, if available.
    Do not present sign-in or button presence as a successful Voice session.
 
-`--companion-only` opens the real panel and registers **only Companion's shortcut**,
-leaving the old coding windows' hotkeys/workers untouched. It uses the same app
-bundle and implementation, not a separate Companion app or API account. Launch
-it through LaunchServices while an old Bavbav version is still responsible for
-the coding terminal:
+There is **one normal Bavbav process**, with Command 1–6 registered together.
+A private kernel lease prevents duplicate interactive hosts. Repeated launch
+focuses the existing app, never starts a competing account worker or hotkey set.
+Diagnostics with explicit `BAVBAV_*CHECK` flags remain isolated and do not claim
+that normal-app lease. A running older build is preserved, not forcibly killed;
+close it safely before updating if its version predates the lease.
+
+The former `--companion-only` spelling is a compatibility alias for the full app
+with Companion visible, not a restricted second application. Launch through
+LaunchServices to keep privacy permission attribution attached to the current
+bundle:
 
 ```sh
-/usr/bin/open -n /Users/deniz2/Documents/ChatGPT/bavbav/dist/Bavbav.app --args --companion-only
+/usr/bin/open /Users/deniz2/Documents/ChatGPT/bavbav/dist/Bavbav.app --args --companion
 ```
 
 Executing its binary directly under an old responsible Bavbav can make TCC
 check that old bundle's missing microphone/speech usage descriptions and abort
 the new process. LaunchServices avoids inheriting that old responsible process;
-verify attribution before requesting microphone access. A safe normal-app
-restart later consolidates the panel and existing coding windows into one process.
+verify attribution before requesting microphone access.
 
 The panel shares Bavbav's real `AppPreferences` in normal mode. The appearance
 setting changes background fills only: text/icons/borders remain opaque. Zero

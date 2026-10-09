@@ -98,3 +98,62 @@ with no inherited old responsible9985 override. This confirms the launch-chain
 fix, not microphone use: microphone/speech remained0 and screen accessfalse.
 Actual spoken phrase, audible reply/stop, selected-window-to-model and embedded
 ChatGPT native Voice still require separate live acceptance.
+
+## Full-screen sharing and one application — 0.10.1 (56)
+
+The user's latest instruction supersedes the window-only sharing scope. The
+native panel now explicitly starts **full-display snapshots**, including visible
+apps, desktop, Dock and menu bar. Default interval is 10 seconds, adjustable
+3–60. It waits for each account-backed observation before the next interval,
+skips busy/dictation periods and never builds a capture or turn queue. Periodic
+observations are silent and preserve the user's message draft. Consent is not
+restored on startup/reconnect. Temporary frame files are private and deleted
+after each completed/failed request; only one latest preview and 80 lines remain
+in UI memory. STOP/close fence late frames and replies. A share-only STOP allows
+one already-uploaded reply to drain without disconnecting the account.
+
+Account connection now starts automatically when the visible native panel opens,
+but no prompt, microphone or frame is started by that connection. Idle child
+termination immediately clears the connected indicator; reconnection is explicit
+through reopening/connecting, with no message retry. Native screenshot cancellation
+before submission does not unnecessarily disconnect a healthy account.
+
+The isolated Companion launch mode has been removed: its legacy spelling opens
+the full application. A secure kernel lease and an older-running-app check prevent
+competing interactive hosts, workers and hotkey registrations. All six global
+shortcuts register together. The native macOS Windows menu also exposes all six,
+fixing local AppKit key-equivalent events from the Companion text editor without
+routing its ordinary text/Q/Space into another coding panel.
+
+Canonical build/signature and complete existing regressions passed. Added/updated
+checks passed: 346 Companion fixture assertions; 34 isolated single-instance
+checks; 1804 shortcut assertions; 19 scoped-hotkey, 6 web media and 54 native theme
+checks. These remain fixture/native-render evidence, not live microphone/image
+acceptance. Opaque/translucent foreground and full zero-transparency reset were
+inspected in the actual native cached render.
+
+Live follow-through on this Mac:
+
+- The old preview was quit through its normal application Quit action, not a
+  broad process kill. Its unsent draft was restored to the full application.
+- The final normal application launched through LaunchServices, PID21598/parent1.
+  It registered shortcuts1–6 and visibly connected the existing account. No screen
+  sharing or microphone was started. Existing projects/chats/keys were not removed.
+- Real keyboard commands1–6 opened their intended native panels in that same PID:
+  Projects, Recent Signals, standalone Chat, Write Control, Journal, Companion.
+  Q on panels1–5 returned to Companion; repeated Command1 kept Projects open.
+- A deliberately duplicated LaunchServices launch with legacy `--companion-only`
+  logged reuse of PID21598 and exited before account/hotkey initialization. Only
+  one interactive Bavbav process remained, with its normal owned app-server children.
+- The real-account ephemeral test again received `MERHABA BAVBAV` (08:01:24UTC).
+  Screen permission remained false; microphone/speech remained0. Its structured
+  report correctly kept `automatedGatesPassed=false`, `productComplete=false`
+  and recorded no capture attempt. Full-display periodic image-to-model, a fresh
+  spoken Turkish phrase and an audible reply are still unverified until the user
+  grants local permissions and explicitly starts those features.
+
+Account report: unique local temporary acceptance directory
+`bavbav-companion-acceptance-0F4D9EAC-25C8-4CD6-8AAC-21257A081A9D`.
+Final launch and duplicate logs: `bavbav-final-launch.uzhBTq` and
+`bavbav-final-duplicate.gppIti` in the macOS temporary directory. Paths may expire;
+no private account storage or screen contents were copied into this report.

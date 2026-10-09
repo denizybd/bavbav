@@ -10,6 +10,11 @@ import BavbavCompanion
     let preferences: AppPreferences
     private let webSession: ChatGPTWebSession
     private var appearanceSubscription: AnyCancellable?
+    private var connectionSubscription: AnyCancellable?
+    private var openingConnectionTask: Task<Void, Never>?
+    private var openingGeneration = UUID()
+    private var nativeRoute = true
+    private var checkingWebRoute = false
     init(webSession: ChatGPTWebSession, preferences: AppPreferences? = nil) {
         self.webSession = webSession
         self.preferences = preferences ?? AppPreferences()
@@ -30,7 +35,9 @@ import BavbavCompanion
         window.animationBehavior = .documentWindow
         let container = CornerResizeContainer(frame: NSRect(origin: .zero, size: window.frame.size))
         container.setContent(NSHostingView(rootView: PanelAppearanceRoot(preferences: self.preferences,
-            content: CompanionHostView(session: session, webSession: webSession, preferences: self.preferences))))
+            content: CompanionHostView(session: session, webSession: webSession, preferences: self.preferences,
+                onRouteChange: { [weak self] useWeb in self?.setWebRoute(useWeb) },
+                onStop: { [weak self] in self?.stop() }))))
         window.contentView = container
         // Observe the same preference without replacing the coordinator's single callback.
         // The emitted value is used because @Published fires before its backing value changes.
@@ -39,6 +46,16 @@ import BavbavCompanion
             let opacity = 1 - percent / 100
             PanelWindowAppearance.apply(to: self.window, opacity: opacity)
             self.webSession.setBackgroundOpacity(opacity)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--companion-ui-report") {
+            connectionSubscription = session.$connected.dropFirst().removeDuplicates().sink { [weak self] connected in
+                guard connected else { return }
+                // @Published emits before the backing value changes. Read the settled state next cycle.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.window.isVisible else { return }
+                    self.exportPreview()
+                }
+            }
         }
         let previousClose = webSession.onClose
         webSession.onClose = { [weak self, weak webSession] in
@@ -49,7 +66,46 @@ import BavbavCompanion
     }
     func show() {
         NSApp.unhide(nil); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        webSession.companionVoiceVisible = webSession.webView?.window === window
+        webSession.companionVoiceVisible = !nativeRoute && webSession.webView?.window === window
+        scheduleAccountConnection()
+    }
+    private func scheduleAccountConnection() {
+        guard nativeRoute, !checkingWebRoute, window.isVisible, !session.connected,
+              !session.connecting, openingConnectionTask == nil else { return }
+        let generation = UUID()
+        openingGeneration = generation
+        openingConnectionTask = Task { [weak self] in
+            guard let self else { return }
+            await self.session.waitForPendingStop()
+            guard !Task.isCancelled, self.openingGeneration == generation, self.nativeRoute,
+                  !self.checkingWebRoute, self.window.isVisible else {
+                self.finishOpeningConnection(generation)
+                return
+            }
+            // Account setup only: never start the microphone, capture, or a model turn here.
+            await self.session.connect()
+            self.finishOpeningConnection(generation)
+        }
+    }
+    private func finishOpeningConnection(_ generation: UUID) {
+        if openingGeneration == generation { openingConnectionTask = nil }
+    }
+    private func cancelOpeningConnection() {
+        openingGeneration = UUID()
+        openingConnectionTask?.cancel()
+        openingConnectionTask = nil
+    }
+    private func setWebRoute(_ useWeb: Bool) {
+        nativeRoute = !useWeb
+        if useWeb {
+            cancelOpeningConnection()
+            session.stop()
+            webSession.companionVoiceVisible = window.isVisible
+            webSession.open()
+        } else {
+            webSession.stopCompanionMedia()
+            scheduleAccountConnection()
+        }
     }
     func exportPreview() {
         guard let view = window.contentView else { return }
@@ -59,6 +115,7 @@ import BavbavCompanion
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-companion-panel-\(UUID()).png")
         if let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: path) }
         print("COMPANION PANEL: visible=\(window.isVisible) key=\(window.isKeyWindow) level=\(window.level.rawValue) pid=\(ProcessInfo.processInfo.processIdentifier)")
+        print("COMPANION CONNECTION: connected=\(session.connected) connecting=\(session.connecting) stopping=\(session.stopping) sharing=\(session.screenSharing)")
         print("COMPANION PANEL PREVIEW: \(path.path)")
         print("COMPANION PREFLIGHT: \(session.speech.permissionSummary) screen=\(CGPreflightScreenCaptureAccess())")
         fflush(stdout)
@@ -68,10 +125,13 @@ import BavbavCompanion
         // Never inspect auth storage, cookies, conversation bodies or tokens.
         let original = window.contentView
         let web = webSession.prepare()
+        cancelOpeningConnection()
+        checkingWebRoute = true
         session.stop(); window.contentView = web
         webSession.companionVoiceVisible = true; webSession.open()
         defer {
             webSession.stopCompanionMedia(); window.contentView = original
+            checkingWebRoute = false
             DispatchQueue.main.async { [weak self] in self?.exportPreview() }
         }
         for _ in 0..<100 {
@@ -100,6 +160,7 @@ import BavbavCompanion
     }
     func windowWillClose(_ notification: Notification) { stop() }
     func stop() {
+        cancelOpeningConnection()
         session.stop()
         webSession.stopCompanionMedia()
     }
@@ -126,6 +187,8 @@ private struct CompanionHostView: View {
     @ObservedObject var session: CompanionSession
     @ObservedObject var webSession: ChatGPTWebSession
     @ObservedObject var preferences: AppPreferences
+    let onRouteChange: (Bool) -> Void
+    let onStop: () -> Void
     @State private var web = false
     var body: some View {
         VStack(spacing: 0) {
@@ -147,17 +210,18 @@ private struct CompanionHostView: View {
                     border: BavbavTheme.border, text: BavbavTheme.text, muted: BavbavTheme.muted,
                     accent: BavbavTheme.accent, danger: BavbavTheme.danger,
                     backgroundOpacity: preferences.backgroundOpacity,
-                    foregroundStrength: ForegroundContrast.strength(backgroundOpacity: preferences.backgroundOpacity)))
+                    foregroundStrength: ForegroundContrast.strength(backgroundOpacity: preferences.backgroundOpacity)), onStop: onStop)
             }
         }
         .preferredColorScheme(.dark)
-        .onChange(of: web) { value in
-            if value { session.stop(); webSession.companionVoiceVisible = true; webSession.open() }
-            else { webSession.stopCompanionMedia() }
-        }
     }
     private func routeButton(_ title: String, useWeb: Bool) -> some View {
-        Button { web = useWeb } label: {
+        Button {
+            guard web != useWeb else { return }
+            web = useWeb
+            // Revoke before SwiftUI updates the hosted route, not on a later render pass.
+            onRouteChange(useWeb)
+        } label: {
             Text(title).font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(web == useWeb ? BavbavTheme.accent : BavbavTheme.muted)
                 .readableForeground()

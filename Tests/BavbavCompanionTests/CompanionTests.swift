@@ -3,6 +3,10 @@ import BavbavCompanion
 import CompanionSafety
 
 @MainActor private final class TestConversation: CompanionConversation {
+    var connections = 0
+    var delayConnect = false
+    var connectFailure = false
+    var pendingConnections: [Int: CheckedContinuation<String, Error>] = [:]
     var sent: [(String, URL?)] = []
     var stopped = 0
     var pending: CheckedContinuation<String, Error>?
@@ -10,7 +14,17 @@ import CompanionSafety
     var reconnectFailure = false
     var delayStop = false
     var pendingStop: CheckedContinuation<Void, Never>?
-    func connect() async throws -> String { "fixture-thread" }
+    var disconnectionHandler: ((String) -> Void)?
+    func setDisconnectionHandler(_ handler: ((String) -> Void)?) { disconnectionHandler = handler }
+    func connect() async throws -> String {
+        connections += 1
+        if delayConnect {
+            let attempt = connections
+            return try await withCheckedThrowingContinuation { pendingConnections[attempt] = $0 }
+        }
+        if connectFailure { throw CompanionFailure("Fixture account unavailable") }
+        return "fixture-thread"
+    }
     func send(text: String, image: URL?) async throws -> String {
         sent.append((text, image))
         if reconnectFailure { throw CompanionFailure("Fixture disconnected", requiresReconnect: true) }
@@ -23,15 +37,27 @@ import CompanionSafety
     }
 }
 @MainActor private final class TestScreen: CompanionScreenSource {
+    var lists = 0
     var captures: [CompanionWindow] = []
     var pending: CheckedContinuation<Data, Error>?
     var delay = false
+    var displayLists = 0
+    var capturedDisplays: [CompanionDisplay] = []
+    var pendingDisplayCapture: CheckedContinuation<Data, Error>?
+    var delayDisplay = false
     let window = CompanionWindow(id: 42, pid: 123, bundleID: "test.demo", label: "Fixture only")
-    func windows() async throws -> [CompanionWindow] { [window] }
+    let display = CompanionDisplay(id: 7, width: 1440, height: 900, label: "Fixture display")
+    func windows() async throws -> [CompanionWindow] { lists += 1; return [window] }
     func capture(_ window: CompanionWindow) async throws -> Data {
         captures.append(window)
         if delay { return try await withCheckedThrowingContinuation { pending = $0 } }
         return Data("fixture-not-a-real-screen".utf8)
+    }
+    func displays() async throws -> [CompanionDisplay] { displayLists += 1; return [display] }
+    func captureDisplay(_ display: CompanionDisplay) async throws -> Data {
+        capturedDisplays.append(display)
+        if delayDisplay { return try await withCheckedThrowingContinuation { pendingDisplayCapture = $0 } }
+        return Data("fixture-not-a-real-display".utf8)
     }
 }
 
@@ -95,6 +121,81 @@ import CompanionSafety
         let session = CompanionSession(conversation: conversation, screen: screen, directory: directory)
         session.speakReplies = false
         return session
+    }
+    private func waitUntil(_ condition: () -> Bool) async {
+        let deadline = Date().addingTimeInterval(3)
+        while !condition(), Date() < deadline { try? await Task.sleep(nanoseconds: 5_000_000) }
+        expectTrue(condition())
+    }
+    private func settleTasks() async { for _ in 0..<20 { await Task.yield() } }
+    func testRepeatedOpenConnectsOnceWithoutMediaOrSend() async {
+        let conversation = TestConversation(); conversation.delayConnect = true
+        let screen = TestScreen(); let session = makeSession(conversation, screen)
+        let first = Task { await session.connect() }
+        while conversation.pendingConnections[1] == nil { await Task.yield() }
+        let duplicateOpens = (0..<8).map { _ in Task { await session.connect() } }
+        for task in duplicateOpens { await task.value }
+        expectEqual(conversation.connections, 1); expectTrue(session.connecting)
+        expectFalse(session.connected); expectNil(session.threadID)
+        expectTrue(conversation.sent.isEmpty); expectEqual(screen.lists, 0); expectTrue(screen.captures.isEmpty)
+        expectFalse(session.speech.dictationBusy); expectFalse(session.speech.speaking)
+        conversation.pendingConnections.removeValue(forKey: 1)?.resume(returning: "first-open")
+        await first.value
+        expectTrue(session.connected); expectFalse(session.connecting); expectEqual(session.threadID, "first-open")
+        for _ in 0..<8 { await session.connect() }
+        expectEqual(conversation.connections, 1); expectTrue(conversation.sent.isEmpty)
+        expectEqual(screen.lists, 0); expectTrue(screen.captures.isEmpty)
+        expectFalse(session.speech.dictationBusy); expectFalse(session.speech.speaking)
+        await session.shutdown()
+    }
+
+    func testStopDuringConnectRejectsLateSuccessAndFailure() async {
+        for oldFails in [false, true] {
+            let conversation = TestConversation(); conversation.delayConnect = true; conversation.delayStop = true
+            let screen = TestScreen(); let session = makeSession(conversation, screen)
+            let old = Task { await session.connect() }
+            while conversation.pendingConnections[1] == nil { await Task.yield() }
+            session.stop()
+            expectFalse(session.connecting); expectFalse(session.connected); expectNil(session.threadID)
+            expectTrue(session.stopping)
+            await session.connect(); expectEqual(conversation.connections, 1)
+            while conversation.pendingStop == nil { await Task.yield() }
+            conversation.pendingStop?.resume()
+            while session.stopping { await Task.yield() }
+            let replacement = Task { await session.connect() }
+            while conversation.pendingConnections[2] == nil { await Task.yield() }
+            let status = session.status
+            let stale = conversation.pendingConnections.removeValue(forKey: 1)
+            if oldFails { stale?.resume(throwing: CompanionFailure("Stale connection failure")) }
+            else { stale?.resume(returning: "stale-thread") }
+            await old.value
+            expectTrue(session.connecting); expectFalse(session.connected); expectNil(session.threadID)
+            expectEqual(session.status, status)
+            conversation.pendingConnections.removeValue(forKey: 2)?.resume(returning: "replacement-thread")
+            await replacement.value
+            expectTrue(session.connected); expectFalse(session.connecting)
+            expectEqual(session.threadID, "replacement-thread"); expectEqual(conversation.connections, 2)
+            expectTrue(conversation.sent.isEmpty); expectEqual(screen.lists, 0); expectTrue(screen.captures.isEmpty)
+            expectFalse(session.speech.dictationBusy); expectFalse(session.speech.speaking)
+            conversation.delayStop = false
+            await session.shutdown(); expectEqual(conversation.stopped, 2)
+        }
+    }
+
+    func testFailedAccountConnectionAllowsSafeRetry() async {
+        let conversation = TestConversation(); conversation.connectFailure = true
+        let screen = TestScreen(); let session = makeSession(conversation, screen)
+        session.draft = "Bağlantı için kendiliğinden gönderme"
+        await session.connect()
+        expectFalse(session.connecting); expectFalse(session.connected); expectNil(session.threadID)
+        expectEqual(session.status, "Fixture account unavailable")
+        conversation.connectFailure = false
+        await session.connect()
+        expectTrue(session.connected); expectEqual(conversation.connections, 2)
+        expectEqual(session.draft, "Bağlantı için kendiliğinden gönderme")
+        expectTrue(conversation.sent.isEmpty); expectEqual(screen.lists, 0); expectTrue(screen.captures.isEmpty)
+        expectFalse(session.speech.dictationBusy); expectFalse(session.speech.speaking)
+        await session.shutdown()
     }
     @MainActor func testSelectionDoesNotCaptureOrSend() async {
         let conversation = TestConversation(); let screen = TestScreen(); let session = makeSession(conversation, screen)
@@ -193,6 +294,209 @@ import CompanionSafety
         await session.send(); expectEqual(session.lines.count, 2)
         await session.shutdown()
     }
+
+    func testIdleDisconnectionClearsSessionAndPreservesDraft() async {
+        let conversation = TestConversation(); let screen = TestScreen()
+        let session = makeSession(conversation, screen)
+        await session.connect()
+        session.draft = "Bağlantı koparsa bu metni koru"
+        conversation.disconnectionHandler?("Fixture idle transport closed")
+        expectFalse(session.connected); expectFalse(session.connecting)
+        expectNil(session.threadID); expectFalse(session.sending)
+        expectEqual(session.draft, "Bağlantı koparsa bu metni koru")
+        expectFalse(session.speech.dictationBusy); expectFalse(session.speech.speaking)
+        expectTrue(conversation.sent.isEmpty); expectTrue(screen.captures.isEmpty)
+        await session.connect()
+        expectTrue(session.connected); expectEqual(conversation.connections, 2)
+        expectTrue(conversation.sent.isEmpty)
+        await session.shutdown()
+    }
+
+    func testDisplaySelectionIsNotCaptureOrShareConsent() async {
+        let conversation = TestConversation(); let screen = TestScreen()
+        let session = makeSession(conversation, screen)
+        await session.listDisplays(); session.selectDisplay(screen.display)
+        expectEqual(session.displays, [screen.display]); expectEqual(screen.displayLists, 1)
+        expectEqual(session.displaySelection, screen.display); expectFalse(session.screenSharing)
+        expectTrue(screen.capturedDisplays.isEmpty); expectTrue(conversation.sent.isEmpty)
+        expectEqual(conversation.connections, 0)
+        await session.shareScreenNow()
+        expectTrue(screen.capturedDisplays.isEmpty); expectTrue(conversation.sent.isEmpty)
+        await session.shutdown()
+    }
+
+    func testPeriodicFramePreservesDraftAndRemovesTransientFile() async {
+        let conversation = TestConversation(); let screen = TestScreen()
+        let session = makeSession(conversation, screen)
+        session.draft = "Yazarken taslağımı silme"
+        session.selectDisplay(screen.display)
+        await session.startScreenSharing()
+        await waitUntil { session.lastSharedAt != nil }
+        expectTrue(session.screenSharing); expectTrue(session.connected)
+        expectEqual(conversation.connections, 1); expectEqual(conversation.sent.count, 1)
+        expectEqual(screen.capturedDisplays, [screen.display]); expectTrue(screen.captures.isEmpty)
+        expectEqual(session.draft, "Yazarken taslağımı silme")
+        expectEqual(session.lines.count, 1); expectNotNil(session.preview)
+        expectFalse(session.sending); expectFalse(session.capturing)
+        expectFalse(session.speech.speaking); expectFalse(session.includePreview)
+        let image = conversation.sent[0].1
+        expectNotNil(image)
+        expectEqual(image?.deletingLastPathComponent().lastPathComponent, "ScreenFrames")
+        expectFalse(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        session.stopScreenSharing()
+        await session.shareScreenNow()
+        expectEqual(conversation.sent.count, 1); expectNil(session.preview)
+        await session.shutdown()
+    }
+
+    func testShareTicksHaveOneCaptureAndStopRejectsLateFrame() async {
+        let conversation = TestConversation(); let screen = TestScreen(); screen.delayDisplay = true
+        let session = makeSession(conversation, screen)
+        await session.connect(); session.selectDisplay(screen.display)
+        await session.startScreenSharing()
+        await waitUntil { screen.pendingDisplayCapture != nil }
+        let duplicateTicks = (0..<8).map { _ in Task { await session.shareScreenNow() } }
+        for task in duplicateTicks { await task.value }
+        expectEqual(screen.capturedDisplays.count, 1); expectTrue(session.capturing)
+        expectTrue(conversation.sent.isEmpty)
+        session.draft = "Capture devam ederken ikinci yazar açma"
+        await session.send()
+        expectTrue(conversation.sent.isEmpty)
+        session.stopScreenSharing()
+        expectFalse(session.screenSharing); expectFalse(session.capturing)
+        screen.pendingDisplayCapture?.resume(returning: Data("Late frame".utf8))
+        screen.pendingDisplayCapture = nil
+        await settleTasks()
+        expectTrue(conversation.sent.isEmpty); expectNil(session.preview)
+        expectNil(session.lastSharedAt); expectTrue(session.connected)
+        await session.shutdown()
+    }
+
+    func testIdleLossRevokesPendingScreenFrameAndNeverRestartsSharing() async {
+        let conversation = TestConversation(); let screen = TestScreen(); screen.delayDisplay = true
+        let session = makeSession(conversation, screen)
+        await session.connect(); session.selectDisplay(screen.display)
+        await session.startScreenSharing()
+        await waitUntil { screen.pendingDisplayCapture != nil }
+        session.draft = "Bağlantı koparken bu metni koru"
+        conversation.disconnectionHandler?("Fixture idle exit during capture")
+        expectFalse(session.connected); expectFalse(session.screenSharing)
+        expectFalse(session.capturing); expectFalse(session.sending)
+        screen.pendingDisplayCapture?.resume(returning: Data("Stale frame".utf8))
+        screen.pendingDisplayCapture = nil
+        await settleTasks()
+        expectTrue(conversation.sent.isEmpty); expectNil(session.preview)
+        expectFalse(session.speech.dictationBusy); expectFalse(session.speech.speaking)
+        await session.connect(); await session.shareScreenNow()
+        expectTrue(session.connected); expectFalse(session.screenSharing)
+        expectTrue(conversation.sent.isEmpty); expectEqual(screen.capturedDisplays.count, 1)
+        expectEqual(session.draft, "Bağlantı koparken bu metni koru")
+        await session.shutdown()
+    }
+
+    func testCancelledNativeCaptureDoesNotDisconnectAccount() async {
+        let conversation = TestConversation(); let screen = TestScreen(); screen.delayDisplay = true
+        let session = makeSession(conversation, screen)
+        await session.connect(); session.selectDisplay(screen.display)
+        session.draft = "Ekran yakalamayı iptal ederken taslağımı koru"
+        await session.startScreenSharing()
+        await waitUntil { screen.pendingDisplayCapture != nil }
+        session.stopScreenSharing()
+        screen.pendingDisplayCapture?.resume(throwing: CancellationError())
+        screen.pendingDisplayCapture = nil
+        await settleTasks()
+        expectTrue(session.connected); expectEqual(session.threadID, "fixture-thread")
+        expectFalse(session.screenSharing); expectFalse(session.sending); expectFalse(session.capturing)
+        expectEqual(session.draft, "Ekran yakalamayı iptal ederken taslağımı koru")
+        expectTrue(conversation.sent.isEmpty); expectEqual(conversation.stopped, 0)
+        expectNil(session.preview); expectNil(session.lastSharedAt)
+        await session.shareScreenNow()
+        expectTrue(conversation.sent.isEmpty); expectEqual(screen.capturedDisplays.count, 1)
+        await session.shutdown()
+    }
+
+    func testShareStopDrainsOneOwnedReplyWithoutNewSendOrSpeech() async {
+        let conversation = TestConversation(); conversation.delay = true
+        let screen = TestScreen(); let session = makeSession(conversation, screen)
+        session.draft = "Paylaşırken bu taslak kalsın"
+        await session.connect(); session.selectDisplay(screen.display)
+        await session.startScreenSharing()
+        await waitUntil { conversation.pending != nil }
+        let image = conversation.sent[0].1
+        expectNotNil(image); expectTrue(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        await session.shareScreenNow(); await session.send()
+        expectEqual(conversation.sent.count, 1); expectEqual(screen.capturedDisplays.count, 1)
+        session.stopScreenSharing()
+        expectFalse(session.screenSharing); expectTrue(session.sending); expectNil(session.preview)
+        expectEqual(conversation.stopped, 0)
+        conversation.pending?.resume(returning: "Geç ekran gözlemi")
+        conversation.pending = nil
+        await waitUntil { !session.sending }
+        await session.shareScreenNow()
+        expectEqual(conversation.sent.count, 1); expectTrue(session.lines.isEmpty)
+        expectNil(session.lastSharedAt); expectEqual(session.draft, "Paylaşırken bu taslak kalsın")
+        expectFalse(session.speech.speaking); expectTrue(session.connected)
+        expectFalse(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        await session.shutdown()
+    }
+
+    func testFullStopAndReconnectNeverRestoreSharingOrOldReply() async {
+        let conversation = TestConversation(); conversation.delay = true
+        let screen = TestScreen(); let session = makeSession(conversation, screen)
+        await session.connect(); session.selectDisplay(screen.display)
+        await session.startScreenSharing()
+        await waitUntil { conversation.pending != nil }
+        let image = conversation.sent[0].1
+        let oldReply = conversation.pending; conversation.pending = nil
+        session.draft = "Kapatırken bu metni koru"
+        session.stop()
+        expectFalse(session.screenSharing); expectFalse(session.sending); expectFalse(session.connected)
+        expectNil(session.displaySelection); expectNil(session.preview)
+        await session.waitForPendingStop()
+        await session.connect()
+        expectTrue(session.connected); expectFalse(session.screenSharing)
+        expectEqual(conversation.connections, 2); expectEqual(conversation.sent.count, 1)
+        oldReply?.resume(returning: "Eski paylaşım yanıtı")
+        await settleTasks()
+        await session.shareScreenNow()
+        expectEqual(conversation.sent.count, 1); expectTrue(session.lines.isEmpty)
+        expectNil(session.lastSharedAt); expectEqual(session.draft, "Kapatırken bu metni koru")
+        expectFalse(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        conversation.delay = false
+        await session.shutdown()
+    }
+
+    func testPeriodicTransportFailureStopsWithoutRetryAndRemovesFrame() async {
+        let conversation = TestConversation(); conversation.reconnectFailure = true
+        let screen = TestScreen(); let session = makeSession(conversation, screen)
+        session.draft = "Hata olursa bu metni koru"
+        session.selectDisplay(screen.display)
+        await session.startScreenSharing()
+        await waitUntil { !session.screenSharing }
+        expectFalse(session.connected); expectFalse(session.sending)
+        expectEqual(conversation.sent.count, 1); expectEqual(screen.capturedDisplays.count, 1)
+        expectTrue(session.lines.isEmpty); expectEqual(session.draft, "Hata olursa bu metni koru")
+        expectFalse(FileManager.default.fileExists(atPath: conversation.sent[0].1?.path ?? ""))
+        conversation.reconnectFailure = false
+        await session.connect(); await session.shareScreenNow()
+        expectFalse(session.screenSharing); expectEqual(conversation.sent.count, 1)
+        await session.shutdown()
+    }
+
+    func testScreenIntervalBoundsAndNoStartWithoutDisplay() async {
+        let conversation = TestConversation(); let screen = TestScreen()
+        let session = makeSession(conversation, screen)
+        expectEqual(session.screenShareInterval, 10)
+        session.screenShareInterval = -100; expectEqual(session.screenShareInterval, 3)
+        session.screenShareInterval = 120; expectEqual(session.screenShareInterval, 60)
+        session.screenShareInterval = .nan; expectEqual(session.screenShareInterval, 10)
+        session.screenShareInterval = .infinity; expectEqual(session.screenShareInterval, 10)
+        session.screenShareInterval = 3.5; expectEqual(session.screenShareInterval, 3.5)
+        await session.startScreenSharing()
+        expectFalse(session.screenSharing); expectEqual(conversation.connections, 0)
+        expectTrue(conversation.sent.isEmpty); expectTrue(screen.capturedDisplays.isEmpty)
+        await session.shutdown()
+    }
 }
 
 @MainActor private var checks = 0
@@ -212,6 +516,9 @@ import CompanionSafety
         tests.testOriginalStopGateRevokesEpochAndNeverGrantsControl()
         tests.testIndependentAcceptanceGates()
         tests.testDictationFinalizationAndDraftProtection()
+        await tests.testRepeatedOpenConnectsOnceWithoutMediaOrSend()
+        await tests.testStopDuringConnectRejectsLateSuccessAndFailure()
+        await tests.testFailedAccountConnectionAllowsSafeRetry()
         await tests.testSelectionDoesNotCaptureOrSend()
         await tests.testImageRequiresExplicitOneShotConsent()
         await tests.testChangingTargetRejectsLateCapture()
@@ -220,6 +527,16 @@ import CompanionSafety
         await tests.testStopRejectsLateCaptureAndInvalidConsent()
         await tests.testShutdownWaitsForOneStop()
         await tests.testDisconnectedFailureOffersReconnectAndKeepsDraft()
+        await tests.testIdleDisconnectionClearsSessionAndPreservesDraft()
+        await tests.testDisplaySelectionIsNotCaptureOrShareConsent()
+        await tests.testPeriodicFramePreservesDraftAndRemovesTransientFile()
+        await tests.testShareTicksHaveOneCaptureAndStopRejectsLateFrame()
+        await tests.testIdleLossRevokesPendingScreenFrameAndNeverRestartsSharing()
+        await tests.testCancelledNativeCaptureDoesNotDisconnectAccount()
+        await tests.testShareStopDrainsOneOwnedReplyWithoutNewSendOrSpeech()
+        await tests.testFullStopAndReconnectNeverRestoreSharingOrOldReply()
+        await tests.testPeriodicTransportFailureStopsWithoutRetryAndRemovesFrame()
+        await tests.testScreenIntervalBoundsAndNoStartWithoutDisplay()
         if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1" {
             expectTrue(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true)
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-companion-protocol-\(UUID())")
@@ -238,6 +555,7 @@ import CompanionSafety
                 expectEqual(delayed, "COMPANION_DELAYED_FINAL_OK")
                 await bridge.stop()
                 await checkCancellationAndRecovery(folder: folder)
+                await checkIdleDisconnectionAndRecovery(folder: folder)
                 try? FileManager.default.removeItem(at: folder)
             } catch { await bridge.stop(); fputs("COMPANION PROTOCOL FAILED: \(error)\n", stderr); Foundation.exit(1) }
         }
@@ -329,5 +647,53 @@ import CompanionSafety
             await stoppedBridge.stop(); fputs("COMPANION STOP/RECONNECT FAILED: \(error)\n", stderr); Foundation.exit(1)
         }
         unsetenv("BAVBAV_COMPANION_REQUEST_LOG")
+    }
+
+    @MainActor private static func checkIdleDisconnectionAndRecovery(folder: URL) async {
+        let directory = folder.appendingPathComponent("idle-close", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let log = directory.appendingPathComponent("requests.jsonl")
+        setenv("BAVBAV_COMPANION_REQUEST_LOG", log.path, 1)
+        setenv("BAVBAV_COMPANION_IDLE_EXIT", "1", 1)
+        defer {
+            unsetenv("BAVBAV_COMPANION_IDLE_EXIT")
+            unsetenv("BAVBAV_COMPANION_REQUEST_LOG")
+        }
+        let bridge = CodexCompanionConversation(directory: directory, ephemeral: true)
+        var disconnections: [String] = []
+        bridge.setDisconnectionHandler { disconnections.append($0) }
+        do {
+            _ = try await bridge.connect()
+            expectNotNil(bridge.threadID)
+            let deadline = Date().addingTimeInterval(3)
+            while disconnections.isEmpty, Date() < deadline { try await Task.sleep(nanoseconds: 5_000_000) }
+            expectEqual(disconnections.count, 1); expectNil(bridge.threadID)
+            expectFalse(requests(log).contains { $0["method"] as? String == "turn/start" })
+            do { _ = try await bridge.send(text: "Do not send on dead child", image: nil); expectTrue(false) }
+            catch { expectTrue((error as? CompanionFailure)?.requiresReconnect == true) }
+            expectFalse(requests(log).contains { $0["method"] as? String == "turn/start" })
+            unsetenv("BAVBAV_COMPANION_IDLE_EXIT")
+            _ = try await bridge.connect()
+            let recovered = try await bridge.send(text: "Explicit recovery", image: nil)
+            expectEqual(recovered, "COMPANION_TEXT_OK")
+            await bridge.stop()
+            try await Task.sleep(nanoseconds: 350_000_000)
+            expectEqual(disconnections.count, 1)
+
+            // STOP cancels the old stream before its scheduled idle exit. Its
+            // delayed termination must not disconnect the replacement child.
+            setenv("BAVBAV_COMPANION_IDLE_EXIT", "1", 1)
+            _ = try await bridge.connect()
+            await bridge.stop()
+            unsetenv("BAVBAV_COMPANION_IDLE_EXIT")
+            let replacement = try await bridge.connect()
+            try await Task.sleep(nanoseconds: 350_000_000)
+            expectEqual(disconnections.count, 1); expectEqual(bridge.threadID, replacement)
+            let next = try await bridge.send(text: "Still connected after old exit", image: nil)
+            expectEqual(next, "COMPANION_TEXT_OK")
+            await bridge.stop()
+        } catch {
+            await bridge.stop(); fputs("COMPANION IDLE RECOVERY FAILED: \(error)\n", stderr); Foundation.exit(1)
+        }
     }
 }
