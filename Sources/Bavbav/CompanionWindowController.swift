@@ -14,15 +14,23 @@ import BavbavCompanion
     private var connectionSubscription: AnyCancellable?
     private var openingConnectionTask: Task<Void, Never>?
     private var openingGeneration = UUID()
+    private var permissionResumeTask: Task<Void, Never>?
+    private var permissionResumeGeneration = UUID()
+    private let permissionResumePresentation: (() -> Bool)?
     private var nativeRoute = true
     private var checkingWebRoute = false
-    init(webSession: ChatGPTWebSession, preferences: AppPreferences? = nil) {
+    // Internal injection lets hidden native fixtures exercise the actual retry
+    // action without presenting a window or requesting native media/input.
+    init(webSession: ChatGPTWebSession, preferences: AppPreferences? = nil,
+         session suppliedSession: CompanionSession? = nil,
+         permissionResumePresentation: (() -> Bool)? = nil) {
         self.webSession = webSession
         self.preferences = preferences ?? AppPreferences()
+        self.permissionResumePresentation = permissionResumePresentation
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Bavbav/Companion", isDirectory: true)
-        session = CompanionSession(conversation: CodexCompanionConversation(directory: directory),
-                                   screen: SelectedWindowSource(), directory: directory)
+        session = suppliedSession ?? CompanionSession(conversation: CodexCompanionConversation(directory: directory),
+                                                       screen: SelectedWindowSource(), directory: directory)
         window = CompanionWindow(contentRect: NSRect(x: 0, y: 0, width: 670, height: 810),
                                  styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
@@ -39,6 +47,7 @@ import BavbavCompanion
             content: CompanionHostView(session: session, webSession: webSession, preferences: self.preferences,
                 appIdentity: appIdentity,
                 onRouteChange: { [weak self] useWeb in self?.setWebRoute(useWeb) },
+                onPermissionRefresh: { [weak self] in self?.refreshPermissionsAndResumePendingStart() },
                 onStop: { [weak self] in self?.stop() }))))
         window.contentView = container
         // Observe the same preference without replacing the coordinator's single callback.
@@ -67,10 +76,39 @@ import BavbavCompanion
         window.center()
     }
     func show() {
-        appIdentity.refresh()
         NSApp.unhide(nil); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         webSession.companionVoiceVisible = !nativeRoute && webSession.webView?.window === window
         scheduleAccountConnection()
+        // Repeating Command 6 while already key produces no didBecomeKey event.
+        refreshPermissionsAndResumePendingStart()
+    }
+    func refreshPermissionsAndResumePendingStart() {
+        appIdentity.refresh()
+        guard nativeRoute, !checkingWebRoute,
+              permissionResumePresentation?() ?? window.isVisible,
+              session.integratedStarting, permissionResumeTask == nil else { return }
+        let generation = UUID()
+        permissionResumeGeneration = generation
+        permissionResumeTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.permissionResumeGeneration == generation { self.permissionResumeTask = nil }
+            }
+            guard !Task.isCancelled, self.permissionResumeGeneration == generation,
+                  self.nativeRoute, !self.checkingWebRoute,
+                  self.permissionResumePresentation?() ?? self.window.isVisible else { return }
+            // Existing explicit Start only; core readiness checks are read-only
+            // and never repeat a previously shown native permission request.
+            await self.session.resumeIntegratedStartAfterPermissions()
+        }
+    }
+    func waitForPendingPermissionRefresh() async {
+        await permissionResumeTask?.value
+    }
+    private func cancelPermissionResume() {
+        permissionResumeGeneration = UUID()
+        permissionResumeTask?.cancel()
+        permissionResumeTask = nil
     }
     private func scheduleAccountConnection() {
         guard nativeRoute, !checkingWebRoute, window.isVisible, !session.connected,
@@ -99,6 +137,7 @@ import BavbavCompanion
         openingConnectionTask = nil
     }
     private func setWebRoute(_ useWeb: Bool) {
+        cancelPermissionResume()
         nativeRoute = !useWeb
         if useWeb {
             cancelOpeningConnection()
@@ -129,6 +168,7 @@ import BavbavCompanion
         let original = window.contentView
         let web = webSession.prepare()
         cancelOpeningConnection()
+        cancelPermissionResume()
         checkingWebRoute = true
         session.stop(); window.contentView = web
         webSession.companionVoiceVisible = true; webSession.open()
@@ -163,17 +203,11 @@ import BavbavCompanion
     }
     func windowWillClose(_ notification: Notification) { stop() }
     func windowDidBecomeKey(_ notification: Notification) {
-        appIdentity.refresh()
-        guard nativeRoute, !checkingWebRoute, window.isVisible, session.integratedStarting else { return }
-        // The core accepts this only for a pending explicit Start and performs
-        // read-only permission checks. Opening/focusing Companion grants no scope.
-        Task { [weak self] in
-            guard let self, self.nativeRoute, !self.checkingWebRoute, self.window.isVisible else { return }
-            await self.session.resumeIntegratedStartAfterPermissions()
-        }
+        refreshPermissionsAndResumePendingStart()
     }
     func stop() {
         cancelOpeningConnection()
+        cancelPermissionResume()
         session.stop()
         webSession.stopCompanionMedia()
     }
@@ -202,6 +236,7 @@ private struct CompanionHostView: View {
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var appIdentity: CompanionAppIdentity
     let onRouteChange: (Bool) -> Void
+    let onPermissionRefresh: () -> Void
     let onStop: () -> Void
     @State private var web = false
     @State private var showingIdentityDetails = false
@@ -226,6 +261,21 @@ private struct CompanionHostView: View {
                 HStack(spacing: 8) {
                     routeButton("Bavbav · ses + ekran + imleç", useWeb: false)
                     routeButton("ChatGPT web", useWeb: true)
+                }
+                if !web && session.integratedStarting {
+                    Button(action: onPermissionRefresh) {
+                        Text("İzinleri kontrol et · devam et")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(BavbavTheme.accent).readableForeground()
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
+                            .background {
+                                RoundedRectangle(cornerRadius: 5).fill(BavbavTheme.raised).panelBackdrop()
+                            }
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(BavbavTheme.border))
+                            .contentShape(RoundedRectangle(cornerRadius: 5))
+                    }.buttonStyle(.plain)
+                        .accessibilityIdentifier("companion.permissionRetry")
+                        .help("Açık Başlat isteğinin izinlerini tekrar sormadan kontrol eder. STOP ile iptal edilen bir isteği yeniden başlatmaz.")
                 }
             }.padding(12).background(BavbavTheme.surface.panelBackdrop())
             if web {
@@ -268,7 +318,7 @@ private struct CompanionHostView: View {
             HStack(spacing: 12) {
                 Button("Bavbav’ı Finder’da göster") { appIdentity.revealApplication() }
                     .disabled(!appIdentity.snapshot.isApplicationBundle)
-                Button("İzin durumunu yenile") { appIdentity.refresh() }
+                Button("İzin durumunu yenile", action: onPermissionRefresh)
             }.font(.system(size: 11, weight: .medium)).buttonStyle(.plain)
                 .foregroundStyle(BavbavTheme.accent).readableForeground()
         }.padding(9)

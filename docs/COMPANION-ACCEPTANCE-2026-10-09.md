@@ -368,3 +368,66 @@ Real Turkish microphone loop, full-display image arrival at the model, audible
 response from this version and native click acceptance remain pending. The new
 combined-start implementation is regression-tested, not a fully accepted live
 product. Original projects, chats and keys remain intact.
+
+## Permission retry and actual button diagnosis — 0.10.4 / build63
+
+Fresh native inspection of the user's open ⌘6 panel found the old build59 UI,
+not the newly staged combined-start interface. PID29396 still maps its executable
+and resources to `dist/.bavbav-build.m7LkE8/Previous-Bavbav.app`; argv points at
+the canonical path, which by itself is misleading. The canonical disk bundle is
+build60. Read-only TCC/code requirement checks again established that ScreenCapture
+and Accessibility allowances target other ad-hoc hashes, while microphone and
+speech grants match loaded59. Zero valid code-signing identities remain available.
+
+Actual UI checks, separate from fixtures:
+
+- The visible **Ekranları göster / yenile** action was invoked and the panel
+  continued to report real Screen Recording denial. No OS Allow action was taken.
+  Sharing/consent/control controls were disabled because no display was eligible,
+  not because all mouse input was broken.
+- The native interval increment changed10→11; decrement restored10. The final
+  native accessibility value was10, so the user's saved interval was preserved.
+- With empty draft and microphone/screen/control all OFF, normal **Q** closed
+  only Companion; real **⌘6** reopened it in the same running application.
+  Account reconnection occurred normally, but no model turn, screen frame,
+  microphone recording or Companion cursor click was initiated for this check.
+  Other working coding chats were not stopped. This proves this shortcut and
+  these native buttons on old59, not every shortcut or new63 live acceptance.
+
+The source audit also found a genuine current-code retry gap: pending permission
+kept Start disabled, while the info Refresh button only reread identity; only a
+new key-window event could continue the pending start. Controller Refresh, focus
+and repeated ⌘6/show now share a serialized, generation-fenced continuation action.
+A visible enabled **İzinleri kontrol et · devam et** button is available while
+pending, outside hidden info and the disabled primary Start. Only existing valid
+explicit intent can resume; STOP, close, route changes and hidden/late completions
+cannot reauthorize it. Production visibility is still the actual native window.
+
+A separate signing bug was corrected: inline `codesign --test-requirement` text
+needs its leading `=`; without it macOS interpreted the certificate requirement
+as a filename. A read-only native regression checks a real matching CDHash,
+semantic rejection of nonmatching hash/certificate requirements and the original
+bare-text parse failure. It does not sign an app or create/use a private key;
+successful certificate signing remains unverified without an authorized identity.
+
+Verification for final staged63 passed:
+
+- 1,500 Companion assertions;575 integrated startup assertions remain included.
+- 14 new controller-retry checks: changed readiness without focus, duplicate
+  suppression, no new consent, STOP and hidden/late cancellation. These inject
+  presentation/account/media adapters; they do not grant native permissions.
+- 139 hidden native theme/layout checks;19 scoped-hotkey and34 instance checks.
+- 6 real native signing-requirement checks, now part of canonical packaging.
+- All existing packaged regressions; zsh syntax, diff checks and deep/strict
+  signature verification. The opaque hidden native render was inspected.
+
+Candidate: `dist/.bavbav-build.4LDADT/Bavbav.app`.
+Binary SHA-256: `0f9c70e1298b618febb591705f26df79ab58fe3bd29a3ae82672e670a6163228`.
+CDHash: `2db78f71f49b64957804df2ecd07284599a4b54b`.
+The completed receipt binds these hashes, version/build and exact candidate path.
+The development ad-hoc candidate was not installed or launched interactively;
+running59 and canonical60 remain untouched. The user's request to avoid restarting
+the computer was honored. No TCC reset/write, OS grant, certificate/private-key
+creation, trust change or API-key use occurred. Persistent signing approval,
+canonical installation/relaunch and real screen/microphone/audio/input acceptance
+are still pending; passing this package is not a completed live product.

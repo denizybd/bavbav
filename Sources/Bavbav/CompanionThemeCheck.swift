@@ -205,6 +205,8 @@ import BavbavCompanion
             try check(currentUserTransparency == originalUserTransparency, "user's saved transparency remains untouched")
             await controller.shutdown()
             try check(!controller.session.stopping, "hidden cold shutdown finishes without starting a worker")
+            let permissionRetryPassed = await CompanionPermissionRetryCheck.run(preferences: preferences)
+            try check(permissionRetryPassed, "hidden native controller permission retry wiring regressions")
             print("COMPANION THEME CHECK PASSED: \(count) checks; hidden real host, combined Start/disclosure/STOP hit targets, collapsed advanced controls, background-only alpha, opaque foreground, shared preference updates, native corners/focus; no audio/network/capture")
             print("COMPANION THEME SNAPSHOTS: \(directory.path)")
             return true

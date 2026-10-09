@@ -33,9 +33,14 @@ proof that a model has received an image.
 Opening ⌘6, account connection, application launch and reconnect do not start this
 flow. macOS Screen Recording, Accessibility, microphone and speech decisions
 remain with the user. A still-pending explicit start can resume after permissions
-are granted and the native panel regains focus, without requesting the same
-permission again. STOP, closing/switching routes or losing the account revoke
-that pending start; focus cannot restore an old session. Detailed voice-only,
+are granted and the native panel regains focus, through the visible
+**İzinleri kontrol et · devam et** button (or **İzin durumunu yenile** in app info),
+or by reopening ⌘6, without requesting the same permission again. The pending
+permission retry remains enabled even while the primary Start is waiting; a
+window-focus transition is not required. These actions continue only the existing
+explicit start and never create new media consent. STOP, closing/switching routes
+or losing the account revoke that pending start; refresh/focus cannot restore an
+old session. Detailed voice-only,
 interval and screen-selection settings remain under **Gelişmiş**.
 
 ## What is implemented

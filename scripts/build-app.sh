@@ -45,6 +45,7 @@ cp "$project_dir/.build/checkouts/swift-markdown/LICENSE.txt" "$staged_app_dir/C
 cp "$project_dir/.build/checkouts/swift-cmark/COPYING" "$staged_app_dir/Contents/Resources/Licenses/swift-cmark.txt"
 chmod +x "$staged_app_dir/Contents/MacOS/Bavbav"
 zsh "$project_dir/scripts/sign-app.sh" "$staged_app_dir"
+zsh "$project_dir/scripts/check-signing-requirements.sh" "$staged_app_dir"
 BAVBAV_COMPANION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavCompanionChecks"
 BAVBAV_COMPANION_WEB_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_COMPANION_WINDOW_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"

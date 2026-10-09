@@ -63,7 +63,9 @@ verify_signature() {
         return
     fi
 
-    /usr/bin/codesign --verify --strict --test-requirement="certificate leaf = H\"$identity\"" "$candidate" || fail "App was not signed by the selected certificate."
+    # codesign treats a bare requirement as a filename. The leading '=' makes
+    # this an inline requirement rather than a path to a requirement file.
+    /usr/bin/codesign --verify --strict --test-requirement="=certificate leaf = H\"$identity\"" "$candidate" || fail "App was not signed by the selected certificate."
     # Do not weaken the designated requirement to identifier-only to make old
     # permission records match. Keep codesign's normal certificate/anchor DR.
     [[ "$requirements" == *"designated => "* && "$requirements" == *"identifier \"$bundle_identifier\""* ]] || fail "Missing normal designated requirement."
