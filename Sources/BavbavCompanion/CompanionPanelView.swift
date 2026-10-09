@@ -33,12 +33,15 @@ public struct CompanionPanelAppearance {
 public struct CompanionPanelView: View {
     @ObservedObject private var session: CompanionSession
     @ObservedObject private var speech: CompanionSpeech
+    @ObservedObject private var control: CompanionDesktopControl
     private let appearance: CompanionPanelAppearance
     private let onStop: (() -> Void)?
     @State private var shareConsent = false
+    @State private var controlConsent = false
     public init(session: CompanionSession, appearance: CompanionPanelAppearance = CompanionPanelAppearance(),
                 onStop: (() -> Void)? = nil) {
         self.session = session; self.speech = session.speech
+        self.control = session.desktopControl
         self.appearance = appearance
         self.onStop = onStop
     }
@@ -49,15 +52,16 @@ public struct CompanionPanelView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("COMPANION").font(.system(.title2, design: .monospaced).bold()).foregroundStyle(appearance.accent)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
-                        Text("SES + TÜM EKRAN").font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
+                        Text("SES + EKRAN + SANAL İMLEÇ").font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                     }
                     Spacer()
                     Button("BİTİR / STOP", role: .destructive) {
                         shareConsent = false
+                        controlConsent = false
                         if let onStop { onStop() } else { session.stop() }
                     }
-                        .help("Mikrofonu, görüntü paylaşımını, yanıtı ve sesi durdurur. Diğer sohbetlere dokunmaz.")
+                        .help("Mikrofonu, ekran paylaşımını, sanal imleci, tıklamaları ve sesi durdurur. Diğer sohbetlere dokunmaz.")
                 }
                 Text("macOS Türkçe konuşma → mevcut Codex hesabı → Mac sesi. Bu, ChatGPT'nin yerleşik Voice özelliği değildir.")
                     .font(.callout).foregroundStyle(appearance.muted)
@@ -67,14 +71,14 @@ public struct CompanionPanelView: View {
                 HStack {
                     Button(session.connected ? "Hesap bağlı" : "Hesaba bağlan") { Task { await session.connect() } }
                         .disabled(session.connected || session.connecting || session.stopping)
-                    Text("Kendi Companion sohbeti · API anahtarı yok").font(.caption).foregroundStyle(appearance.muted)
+                    Text("Mevcut hesabın kullanılıyor · API anahtarı gerekmiyor").font(.caption).foregroundStyle(appearance.muted)
                         .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                 }
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: session.screenSharing ? "eye.fill" : "eye.slash")
                     Text(session.screenSharing
-                         ? "TAM EKRAN PAYLAŞILIYOR · Açık uygulamalar ve bildirimler de modele görünür. STOP anında yeni kareleri keser."
-                         : "Tam ekran kendiliğinden paylaşılmaz. Paylaşımı başlattığında açık uygulamalar ve bildirimler de modele görünür.")
+                         ? "EKRAN AÇIK · Güncel kare konuşmana eklenir. Açık uygulamalar ve bildirimler de görünür. STOP paylaşımı ve kontrolü keser."
+                         : "EKRAN KAPALI · Model şu anda ekranını görmüyor. Ekran Kaydı izni, onay ve Paylaşımı başlat gerekiyor.")
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -158,6 +162,19 @@ public struct CompanionPanelView: View {
                         Button("Türkçe sesi dene") { speech.speak("Merhaba Deniz. Bavbav ses denemesi. Beni duyabiliyor musun?") }
                             .disabled(session.voiceConversationActive || session.sending || session.stopping || speech.dictationBusy)
                             .help("Yalnızca Mac ses çıkışı denemesidir; gerçek sohbet yanıtı değildir.")
+                        Text("Mac sesi: \(speech.selectedVoiceName) · \(speech.selectedVoiceQuality). Kurulu geliştirilmiş Türkçe ses varsa otomatik seçilir.")
+                            .font(.caption).foregroundStyle(appearance.muted)
+                            .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        if let seconds = session.firstReplySeconds {
+                            Text(String(format: "İlk yanıt: %.1f sn", seconds) + (session.replySeconds.map { String(format: " · tamamlanma: %.1f sn", $0) } ?? ""))
+                                .font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
+                                .accessibilityIdentifier("companion.replyLatency")
+                        }
+                        if let seconds = session.firstAudioSeconds {
+                            Text("Gerçek ses başlangıcı: \(seconds, specifier: "%.1f") sn")
+                                .font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
+                                .accessibilityIdentifier("companion.firstAudioLatency")
+                        }
                         Toggle("Yanıtları Türkçe seslendir", isOn: $session.speakReplies)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                             .onChange(of: session.speakReplies) {
@@ -248,19 +265,58 @@ public struct CompanionPanelView: View {
                             }.disabled(!session.screenSharing)
                         }
                         if let sharedAt = session.lastSharedAt {
-                            Text("Son ekran yanıtı: \(sharedAt.formatted(date: .omitted, time: .standard))")
+                            Text("Görüntülü son yanıt: \(sharedAt.formatted(date: .omitted, time: .standard))")
                                 .font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
                                 .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                         }
+                        if let captured = session.lastCapturedAt {
+                            Text("Son kare: \(captured.formatted(date: .omitted, time: .standard)) · yalnızca en güncel kare tutulur")
+                                .font(.system(.caption, design: .monospaced)).foregroundStyle(appearance.muted)
+                                .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        }
+                        Toggle("Ekran değişikliklerini ayrıca kendiliğinden yorumla", isOn: $session.observeScreenChanges)
+                            .disabled(control.enabled)
+                            .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
+                        Text("Kapalı olması daha hızlıdır: ekran aralıklarla hazırlanır, konuşman veya mesajınla birlikte modele gider. Açarsan ayrıca ekran yorumları üretilir; hesap kullanımı ve yanıt beklemesi artabilir.")
+                            .font(.caption).foregroundStyle(appearance.muted)
                         if let data = session.preview, let image = NSImage(data: data) {
                             Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 180)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                                 .accessibilityLabel("En son hazırlanan ekran karesi")
                         }
-                        Text("Video veya sistem sesi kaydedilmez. Model meşgulse kareler birikmez; boş olduğunda güncel kare gönderilir. Paylaşımı durdur, STOP veya pencereyi kapatma yeni kareleri keser. Önceden gönderilen kareler geri alınmaz.")
+                        Text("Video veya sistem sesi kaydedilmez. Kareler kuyrukta birikmez; yalnızca son kare tutulur ve isteğinle gönderilir. Paylaşımı durdur, STOP veya pencereyi kapatma yeni kareleri ve tıklamaları keser. Önceden gönderilen kareler geri alınmaz.")
                             .font(.caption).foregroundStyle(appearance.muted)
                             .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                     }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                section("SANAL İMLEÇ · BİLGİSAYAR KONTROLÜ") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(control.enabled ? "● KONTROL AÇIK" : "○ KONTROL KAPALI")
+                                .font(.system(.caption, design: .monospaced).bold())
+                                .foregroundStyle(control.enabled ? appearance.accent : appearance.muted)
+                            Spacer()
+                            if control.enabled {
+                                Button("Kontrolü bitir", role: .destructive) {
+                                    controlConsent = false; control.stop()
+                                }
+                            }
+                        }
+                        Text("Görünür uygulamalar arasında yeşil sanal imleçle, isteğin üzerine sıradan tıklamalar yapabilir. macOS gerçek giriş sistemi ortaktır; bağımsız ikinci donanım imleci değildir. Klavye/yazma, satın alma, silme ve güvenlik izinleri bu ilk sürümde uygulanmaz.")
+                            .font(.caption).foregroundStyle(appearance.muted)
+                        if !control.enabled {
+                            Toggle("Görünür uygulamalarda istediğim tıklamaların uygulanmasına izin veriyorum", isOn: $controlConsent)
+                                .disabled(!session.screenSharing || session.stopping)
+                            Button("Sanal imleç kontrolünü başlat") {
+                                session.observeScreenChanges = false
+                                session.enableDesktopControl()
+                            }.disabled(!controlConsent || !session.screenSharing || !session.connected || session.stopping)
+                        }
+                        Text(control.status).font(.callout).textSelection(.enabled)
+                            .accessibilityIdentifier("companion.desktopControlStatus")
+                        Text("Erişilebilirlik izni macOS tarafından ayrıca istenir. Ekran paylaşımı tek başına tıklama izni değildir. STOP tüm kontrolü anında durdurur. Logic Pro için özel araç/miks otomasyonu hazır değildir.")
+                            .font(.caption).foregroundStyle(appearance.muted)
+                    }.modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
                 }
                 if !session.lines.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
@@ -295,7 +351,7 @@ public struct CompanionPanelView: View {
                             .disabled(session.voiceConversationActive || !session.connected || session.sending || session.capturing || session.stopping || speech.dictationBusy || (session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !session.includePreview))
                     }
                 }
-                Text("LOGIC PRO KONTROLÜ · HAZIR DEĞİL\nBu sürüm yalnızca konuşur ve açıkça paylaştığın ekran karelerini yorumlar. Fare, klavye veya Logic Pro işlemi yapmaz.")
+                Text("LOGIC PRO ÖZEL OTOMASYONU · HAZIR DEĞİL\nSanal imleçte yalnızca doğrulanmış sıradan tıklamalar vardır. Plugin, miks, kayıt, klavye ve dosya işlemleri hazır sayılmaz.")
                     .font(.caption).foregroundStyle(appearance.muted)
                     .modifier(CompanionReadableForeground(strength: appearance.foregroundStrength))
             }.padding(22)
@@ -307,8 +363,9 @@ public struct CompanionPanelView: View {
         .tint(appearance.accent)
         .toggleStyle(.checkbox)
         .buttonStyle(CompanionButtonStyle(appearance: appearance))
-        .onChange(of: session.screenSharing) { if !$0 { shareConsent = false } }
-        .onChange(of: session.connected) { if !$0 { shareConsent = false } }
+        .onChange(of: session.screenSharing) { if !$0 { shareConsent = false; controlConsent = false } }
+        .onChange(of: session.connected) { if !$0 { shareConsent = false; controlConsent = false } }
+        .onChange(of: control.enabled) { if !$0 { controlConsent = false } }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

@@ -8,6 +8,7 @@ import BavbavCompanion
     let session: CompanionSession
     let window: NSWindow
     let preferences: AppPreferences
+    let appIdentity = CompanionAppIdentity()
     private let webSession: ChatGPTWebSession
     private var appearanceSubscription: AnyCancellable?
     private var connectionSubscription: AnyCancellable?
@@ -25,7 +26,7 @@ import BavbavCompanion
         window = CompanionWindow(contentRect: NSRect(x: 0, y: 0, width: 670, height: 810),
                                  styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
-        window.title = "Bavbav · Companion"
+        window.title = "Bavbav · ⌘6 · Ses + Ekran"
         window.identifier = NSUserInterfaceItemIdentifier("bavbav.companion")
         window.level = .normal; window.minSize = NSSize(width: 560, height: 520)
         window.isReleasedWhenClosed = false; window.delegate = self
@@ -36,6 +37,7 @@ import BavbavCompanion
         let container = CornerResizeContainer(frame: NSRect(origin: .zero, size: window.frame.size))
         container.setContent(NSHostingView(rootView: PanelAppearanceRoot(preferences: self.preferences,
             content: CompanionHostView(session: session, webSession: webSession, preferences: self.preferences,
+                appIdentity: appIdentity,
                 onRouteChange: { [weak self] useWeb in self?.setWebRoute(useWeb) },
                 onStop: { [weak self] in self?.stop() }))))
         window.contentView = container
@@ -65,6 +67,7 @@ import BavbavCompanion
         window.center()
     }
     func show() {
+        appIdentity.refresh()
         NSApp.unhide(nil); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         webSession.companionVoiceVisible = !nativeRoute && webSession.webView?.window === window
         scheduleAccountConnection()
@@ -159,6 +162,7 @@ import BavbavCompanion
         }
     }
     func windowWillClose(_ notification: Notification) { stop() }
+    func windowDidBecomeKey(_ notification: Notification) { appIdentity.refresh() }
     func stop() {
         cancelOpeningConnection()
         session.stop()
@@ -187,14 +191,33 @@ private struct CompanionHostView: View {
     @ObservedObject var session: CompanionSession
     @ObservedObject var webSession: ChatGPTWebSession
     @ObservedObject var preferences: AppPreferences
+    @ObservedObject var appIdentity: CompanionAppIdentity
     let onRouteChange: (Bool) -> Void
     let onStop: () -> Void
     @State private var web = false
+    @State private var showingIdentityDetails = false
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                routeButton("Bavbav · Mac sesi", useWeb: false)
-                routeButton("ChatGPT web · doğrulama", useWeb: true)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Text("BAVBAV / ⌘6").font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(BavbavTheme.accent).readableForeground()
+                    Spacer()
+                    Text(appIdentity.snapshot.screenAccess ? "EKRAN İZNİ AÇIK" : "EKRAN İZNİ KAPALI")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(appIdentity.snapshot.screenAccess ? BavbavTheme.accent : BavbavTheme.muted)
+                        .readableForeground()
+                    Button { showingIdentityDetails.toggle() } label: {
+                        Image(systemName: showingIdentityDetails ? "info.circle.fill" : "info.circle")
+                            .foregroundStyle(BavbavTheme.muted).readableForeground()
+                    }.buttonStyle(.plain).help("Bu Bavbav uygulamasının dosyası, sürümü ve izin bilgisi")
+                        .accessibilityLabel("Bavbav uygulama ve izin bilgisi")
+                }
+                if showingIdentityDetails { appIdentityDetails }
+                HStack(spacing: 8) {
+                    routeButton("Bavbav · Mac sesi", useWeb: false)
+                    routeButton("ChatGPT web · doğrulama", useWeb: true)
+                }
             }.padding(12).background(BavbavTheme.surface.panelBackdrop())
             if web {
                 HStack {
@@ -214,6 +237,35 @@ private struct CompanionHostView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+    private var appIdentityDetails: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(appIdentity.snapshot.versionLabel)
+                Text(appIdentity.snapshot.signatureLabel)
+            }.font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(BavbavTheme.text).readableForeground()
+            Text(appIdentity.snapshot.bundleURL.path)
+                .font(.system(size: 10, design: .monospaced)).lineLimit(2)
+                .truncationMode(.middle).textSelection(.enabled)
+                .foregroundStyle(BavbavTheme.text).readableForeground()
+                .help(appIdentity.snapshot.bundleURL.path)
+            Text(appIdentity.snapshot.bundleIdentifier)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(BavbavTheme.muted).readableForeground()
+            Text(appIdentity.snapshot.permissionGuidance)
+                .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(BavbavTheme.muted).readableForeground()
+            HStack(spacing: 12) {
+                Button("Bavbav’ı Finder’da göster") { appIdentity.revealApplication() }
+                    .disabled(!appIdentity.snapshot.isApplicationBundle)
+                Button("İzin durumunu yenile") { appIdentity.refresh() }
+            }.font(.system(size: 11, weight: .medium)).buttonStyle(.plain)
+                .foregroundStyle(BavbavTheme.accent).readableForeground()
+        }.padding(9)
+            .background(BavbavTheme.raised.panelBackdrop())
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(BavbavTheme.border))
     }
     private func routeButton(_ title: String, useWeb: Bool) -> some View {
         Button {

@@ -12,6 +12,7 @@ import CompanionSafety
     var pending: CheckedContinuation<String, Error>?
     var delay = false
     var reconnectFailure = false
+    var reply = "Türkçe deneme yanıtı"
     var cancelledSends = 0
     var delayStop = false
     var pendingStop: CheckedContinuation<Void, Never>?
@@ -19,6 +20,8 @@ import CompanionSafety
     func setDisconnectionHandler(_ handler: ((String) -> Void)?) { disconnectionHandler = handler }
     var replyHandler: ((String) -> Void)?
     func setReplyHandler(_ handler: ((String) -> Void)?) { replyHandler = handler }
+    var spokenReplyHandler: ((String) -> Void)?
+    func setSpokenReplyHandler(_ handler: ((String) -> Void)?) { spokenReplyHandler = handler }
     func connect() async throws -> String {
         connections += 1
         if delayConnect {
@@ -38,7 +41,7 @@ import CompanionSafety
                 Task { @MainActor [weak self] in self?.cancelledSends += 1 }
             }
         }
-        return "Türkçe deneme yanıtı"
+        return reply
     }
     func stop() async {
         stopped += 1
@@ -57,6 +60,11 @@ import CompanionSafety
     var utterances: [String] = []
     var listeningStops = 0
     var speakingStops = 0
+    var supportsStreamingSpeech = false
+    var speakingStreamStarts = 0
+    var speakingStreamDeltas: [String] = []
+    var speakingStreamFinishes = 0
+    var finishStreamSynchronously = false
     var pendingStart: CheckedContinuation<Void, Never>?
     var delayStart = false
     private var generation = UUID()
@@ -70,6 +78,12 @@ import CompanionSafety
     func finishListening() { dictationBusy = false }
     func stopListening() { generation = UUID(); listeningStops += 1; dictationBusy = false }
     func speak(_ text: String) { utterances.append(text); speaking = true; status = "Fixture speaking" }
+    func beginSpeakingStream() { speakingStreamStarts += 1; speaking = true }
+    func appendSpeakingText(_ delta: String) { if !delta.isEmpty { speakingStreamDeltas.append(delta) } }
+    func finishSpeakingStream() {
+        speakingStreamFinishes += 1
+        if finishStreamSynchronously { completeSpeaking() }
+    }
     func stopSpeaking() { speakingStops += 1; speaking = false }
     func stop() { stopListening(); stopSpeaking() }
     func completeDictation(_ text: String) {
@@ -92,6 +106,7 @@ import CompanionSafety
     var delayDisplayPreparation = false
     var pendingDisplayPreparation: CheckedContinuation<Void, Error>?
     var listedDisplays: [CompanionDisplay]?
+    var onDisplayCapture: (() -> Void)?
     let window = CompanionWindow(id: 42, pid: 123, bundleID: "test.demo", label: "Fixture only")
     let display = CompanionDisplay(id: 7, width: 1440, height: 900, label: "Fixture display")
     func windows() async throws -> [CompanionWindow] { lists += 1; return [window] }
@@ -108,9 +123,34 @@ import CompanionSafety
     func displays() async throws -> [CompanionDisplay] { displayLists += 1; return listedDisplays ?? [display] }
     func captureDisplay(_ display: CompanionDisplay) async throws -> Data {
         capturedDisplays.append(display)
+        onDisplayCapture?()
         if delayDisplay { return try await withCheckedThrowingContinuation { pendingDisplayCapture = $0 } }
         return Data("fixture-not-a-real-display".utf8)
     }
+}
+
+@MainActor private final class SessionDesktopExecutor: CompanionDesktopExecuting {
+    var window = TargetSnapshot(windowID: 42, pid: 1_234, bundleID: "test.ordinary.editor", displayID: 7,
+        bounds: Rect(x: 100, y: 100, width: 800, height: 600), displayBounds: Rect(x: 0, y: 0, width: 1440, height: 900),
+        scale: 1, isVisible: true, isFrontmost: true)
+    var events: [String] = []
+    var posts = 0
+    func visibleWindows(in screenshotBounds: CGRect) async throws -> [CompanionDesktopWindowSnapshot] {
+        events.append("geometry")
+        return [CompanionDesktopWindowSnapshot(target: window)]
+    }
+    func resolveTarget(at point: CGPoint, screenshotBounds: CGRect) async throws -> TargetSnapshot { window }
+    func prepareTarget(_ target: TargetSnapshot, at point: CGPoint, gate: SafetyGate, epoch: UInt64) async throws -> TargetSnapshot { window }
+    func dispatchClick(at point: CGPoint, target: TargetSnapshot, request: ActionRequest,
+                       gate: SafetyGate, ownerID: String) async throws -> ActionOutcome {
+        posts += 1
+        return ActionOutcome(state: "completed", actionID: request.actionID, dispatchedEvents: 2, verified: false)
+    }
+}
+
+@MainActor private final class SessionDesktopCursor: CompanionDesktopCursorDisplaying {
+    func show(at point: CGPoint) {}
+    func hide() {}
 }
 
 @MainActor final class CompanionTests {
@@ -172,6 +212,7 @@ import CompanionSafety
         directories.append(directory)
         let session = CompanionSession(conversation: conversation, screen: screen, directory: directory)
         session.speakReplies = false
+        session.observeScreenChanges = true
         return session
     }
     private func waitUntil(_ condition: () -> Bool) async {
@@ -183,7 +224,9 @@ import CompanionSafety
     private func makeVoiceSession(_ conversation: TestConversation, _ screen: TestScreen, _ speech: TestSpeech) -> CompanionSession {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-companion-voice-test-\(UUID())")
         directories.append(directory)
-        return CompanionSession(conversation: conversation, screen: screen, directory: directory, speechDriver: speech)
+        let session = CompanionSession(conversation: conversation, screen: screen, directory: directory, speechDriver: speech)
+        session.observeScreenChanges = true
+        return session
     }
     func testRepeatedOpenConnectsOnceWithoutMediaOrSend() async {
         let conversation = TestConversation(); conversation.delayConnect = true
@@ -583,7 +626,7 @@ import CompanionSafety
         finished?("Aynı döngünün ikinci bitişi")
         await waitUntil { conversation.pending != nil }
         expectEqual(conversation.sent.count, 1)
-        expectEqual(conversation.sent[0].0, "Merhaba, gerçek bir Türkçe konuşma")
+        expectTrue(conversation.sent[0].0.contains("Merhaba, gerçek bir Türkçe konuşma"))
         expectNil(conversation.sent[0].1); expectTrue(speech.utterances.isEmpty)
         expectEqual(session.draft, "Sesli konuşma elle yazdığımı bozmasın")
         conversation.replyHandler?("Gerçek kısmi yanıt")
@@ -736,8 +779,8 @@ import CompanionSafety
         await session.shareScreenNow(); expectEqual(screen.capturedDisplays.count, 1)
         screenReply?.resume(returning: "Gerçek ekran yanıtı")
         await waitUntil { conversation.pending != nil && conversation.sent.count == 2 }
-        expectEqual(conversation.sent[1].0, "Ekrandan sonra öncelikli konuşmam")
-        expectNil(conversation.sent[1].1); expectTrue(speech.utterances.isEmpty)
+        expectTrue(conversation.sent[1].0.contains("Ekrandan sonra öncelikli konuşmam"))
+        expectNotNil(conversation.sent[1].1); expectTrue(speech.utterances.isEmpty)
         expectTrue(session.screenSharing)
         session.pauseVoiceConversation()
         expectTrue(session.screenSharing)
@@ -835,6 +878,187 @@ import CompanionSafety
         expectTrue(screen.capturedDisplays.isEmpty); expectTrue(conversation.sent.isEmpty)
         await session.shutdown()
     }
+
+    func testFastPeriodicCaptureCachesOneFrameWithoutModelCallsOrDiskFiles() async {
+        let conversation = TestConversation(); let screen = TestScreen()
+        let session = makeSession(conversation, screen); session.observeScreenChanges = false
+        session.draft = "Ekran açıkken taslağımı koru"
+        await session.connect(); session.selectDisplay(screen.display)
+        await session.startScreenSharing()
+        await waitUntil { session.lastCapturedAt != nil }
+        expectTrue(session.screenSharing); expectNotNil(session.preview)
+        expectNil(session.lastSharedAt); expectTrue(conversation.sent.isEmpty)
+        expectFalse(session.sending); expectFalse(session.capturing); expectTrue(session.lines.isEmpty)
+        expectEqual(session.draft, "Ekran açıkken taslağımı koru")
+        await session.shareScreenNow()
+        expectEqual(screen.capturedDisplays.count, 2); expectTrue(conversation.sent.isEmpty)
+        expectNotNil(session.lastCapturedAt); expectNotNil(session.preview)
+        let frames = directories.last!.appendingPathComponent("ScreenFrames")
+        expectFalse(FileManager.default.fileExists(atPath: frames.path))
+        session.stopScreenSharing()
+        expectNil(session.preview); expectNil(session.lastCapturedAt)
+        await session.shareScreenNow()
+        expectEqual(screen.capturedDisplays.count, 2); expectTrue(conversation.sent.isEmpty)
+        await session.shutdown()
+    }
+
+    func testManualRequestAttachesFreshAuthorizedCacheAndRemovesTransientImage() async {
+        let conversation = TestConversation(); let screen = TestScreen()
+        let session = makeSession(conversation, screen); session.observeScreenChanges = false
+        await session.connect(); session.selectDisplay(screen.display)
+        await session.startScreenSharing(); await waitUntil { session.lastCapturedAt != nil }
+        conversation.delay = true; session.draft = "Şu anda ekranımda ne görüyorsun?"
+        let send = Task { await session.send() }
+        await waitUntil { conversation.pending != nil }
+        expectEqual(conversation.sent.count, 1); expectTrue(conversation.sent[0].0.contains("Şu anda ekranımda ne görüyorsun?"))
+        let image = conversation.sent[0].1
+        expectNotNil(image); expectTrue(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        expectEqual(screen.capturedDisplays.count, 1)
+        session.stopScreenSharing()
+        conversation.pending?.resume(returning: "Gerçek görsel yanıtı"); conversation.pending = nil
+        await send.value
+        expectFalse(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        conversation.delay = false; session.draft = "Paylaşım artık kapalı"
+        await session.send()
+        expectEqual(conversation.sent.count, 2); expectNil(conversation.sent[1].1)
+        expectEqual(screen.capturedDisplays.count, 1)
+        await session.shutdown()
+    }
+
+    func testVoiceRequestIncludesCurrentAuthorizedScreenRatherThanTextOnly() async {
+        let conversation = TestConversation(); let screen = TestScreen(); let speech = TestSpeech()
+        let session = makeVoiceSession(conversation, screen, speech); session.observeScreenChanges = false
+        session.draft = "Elle yazdığım taslak korunsun"
+        await session.connect(); session.selectDisplay(screen.display)
+        await session.startScreenSharing(); await waitUntil { session.lastCapturedAt != nil }
+        expectTrue(conversation.sent.isEmpty)
+        conversation.delay = true
+        await session.startVoiceConversation(); speech.completeDictation("Ekranda hangi uygulama açık?")
+        await waitUntil { conversation.pending != nil }
+        expectEqual(conversation.sent.count, 1); expectTrue(conversation.sent[0].0.contains("Ekranda hangi uygulama açık?"))
+        let image = conversation.sent[0].1
+        expectNotNil(image); expectTrue(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        expectEqual(screen.capturedDisplays.count, 1)
+        expectEqual(session.draft, "Elle yazdığım taslak korunsun")
+        session.pauseVoiceConversation(); session.stopScreenSharing()
+        conversation.pending?.resume(returning: "Mevcut ekranın gerçek yanıtı"); conversation.pending = nil
+        await waitUntil { !session.sending }
+        expectFalse(FileManager.default.fileExists(atPath: image?.path ?? ""))
+        expectTrue(speech.utterances.isEmpty); expectEqual(session.draft, "Elle yazdığım taslak korunsun")
+        await session.shutdown()
+    }
+
+    func testControlCapturesBetweenMatchingGeometrySnapshotsAndRejectsMovedWindow() async {
+        for movesDuringCapture in [false, true] {
+            let conversation = TestConversation(); let screen = TestScreen(); let executor = SessionDesktopExecutor()
+            conversation.reply = #"{"reply":"Güncel ekran görüldü.","action":null}"#
+            let control = CompanionDesktopControl(executor: executor, cursor: SessionDesktopCursor(), previewDelayNanoseconds: 0)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-control-capture-test-\(UUID())")
+            directories.append(directory)
+            let session = CompanionSession(conversation: conversation, screen: screen, directory: directory, desktopControl: control)
+            session.speakReplies = false
+            await session.connect(); session.selectDisplay(screen.display)
+            await session.startScreenSharing(); await waitUntil { session.lastCapturedAt != nil }
+            session.enableDesktopControl(); expectTrue(control.enabled)
+            screen.onDisplayCapture = {
+                executor.events.append("capture")
+                if movesDuringCapture { executor.window.bounds.x += 1 }
+            }
+            session.draft = "Ekranımı incele."
+            await session.send()
+            expectEqual(executor.events, ["geometry", "capture", "geometry"])
+            expectEqual(screen.capturedDisplays.count, 2); expectEqual(executor.posts, 0)
+            expectFalse(session.sending); expectFalse(session.capturing)
+            let frames = directory.appendingPathComponent("ScreenFrames")
+            let remaining = (try? FileManager.default.contentsOfDirectory(atPath: frames.path)) ?? []
+            expectTrue(remaining.isEmpty)
+            if movesDuringCapture {
+                expectTrue(conversation.sent.isEmpty); expectEqual(session.draft, "Ekranımı incele.")
+            } else {
+                expectEqual(conversation.sent.count, 1); expectNotNil(conversation.sent.first?.1)
+                expectTrue(session.lines.contains { $0.speaker == "CODEX" && $0.text == "Güncel ekran görüldü." })
+            }
+            await session.shutdown()
+        }
+    }
+
+    func testQueuedVoiceTakesCapturePriorityWithoutBackgroundInference() async {
+        let conversation = TestConversation(); conversation.delay = true
+        let screen = TestScreen(); screen.delayDisplay = true; let speech = TestSpeech()
+        let session = makeVoiceSession(conversation, screen, speech); session.observeScreenChanges = false
+        await session.startVoiceConversation(); session.selectDisplay(screen.display)
+        await session.startScreenSharing(); await waitUntil { screen.pendingDisplayCapture != nil }
+        speech.completeDictation("Kare hazırlanırken konuşmam kaybolmasın")
+        await settleTasks(); expectTrue(conversation.sent.isEmpty)
+        screen.delayDisplay = false
+        screen.pendingDisplayCapture?.resume(returning: Data("Late cached frame".utf8)); screen.pendingDisplayCapture = nil
+        await waitUntil { conversation.pending != nil }
+        expectEqual(conversation.sent.count, 1)
+        expectTrue(conversation.sent[0].0.contains("Kare hazırlanırken konuşmam kaybolmasın"))
+        expectNotNil(conversation.sent[0].1); expectTrue(session.voiceConversationActive)
+        session.pauseVoiceConversation(); session.stopScreenSharing()
+        conversation.pending?.resume(returning: "Öncelikli gerçek yanıt"); conversation.pending = nil
+        await waitUntil { !session.sending }
+        expectEqual(conversation.sent.count, 1); expectTrue(speech.utterances.isEmpty)
+        await session.shutdown()
+    }
+
+    func testOnlyVerifiedFinalSnapshotsStreamSpeechWithoutRepeatedPrefix() async {
+        let conversation = TestConversation(); conversation.delay = true
+        let screen = TestScreen(); let speech = TestSpeech(); speech.supportsStreamingSpeech = true
+        let session = makeVoiceSession(conversation, screen, speech); session.observeScreenChanges = false
+        await session.startVoiceConversation(); speech.completeDictation("Kısa bir yanıt ver")
+        await waitUntil { conversation.pending != nil }
+        conversation.replyHandler?("Belirsiz görsel önizleme")
+        expectEqual(speech.speakingStreamStarts, 0)
+        conversation.spokenReplyHandler?("Gerçek ilk cümle. ")
+        conversation.spokenReplyHandler?("Gerçek ilk cümle. ")
+        conversation.spokenReplyHandler?("Gerçek ilk cümle. İkinci cümle.")
+        expectEqual(speech.speakingStreamStarts, 1)
+        expectEqual(speech.speakingStreamDeltas, ["Gerçek ilk cümle. ", "İkinci cümle."])
+        expectTrue(speech.utterances.isEmpty); expectTrue(session.sending)
+        conversation.pending?.resume(returning: "Gerçek ilk cümle. İkinci cümle. Son."); conversation.pending = nil
+        await waitUntil { speech.speakingStreamFinishes == 1 }
+        expectEqual(speech.speakingStreamDeltas, ["Gerçek ilk cümle. ", "İkinci cümle.", " Son."])
+        expectTrue(speech.utterances.isEmpty); expectFalse(session.sending)
+        session.pauseVoiceConversation(); await session.shutdown()
+    }
+
+    func testSynchronousStreamFinishResumesVoiceWithoutFalsePause() async {
+        let conversation = TestConversation(); conversation.delay = true
+        let screen = TestScreen(); let speech = TestSpeech()
+        speech.supportsStreamingSpeech = true; speech.finishStreamSynchronously = true
+        let session = makeVoiceSession(conversation, screen, speech); session.observeScreenChanges = false
+        await session.startVoiceConversation(); speech.completeDictation("Tamamlanan sesi tekrar dinleme")
+        await waitUntil { conversation.pending != nil }
+        conversation.spokenReplyHandler?("Tam gerçek yanıt.")
+        conversation.pending?.resume(returning: "Tam gerçek yanıt."); conversation.pending = nil
+        await waitUntil { speech.starts.count == 2 }
+        expectTrue(session.voiceConversationActive); expectTrue(speech.dictationBusy)
+        expectFalse(session.sending); expectEqual(speech.speakingStreamFinishes, 1)
+        expectTrue(speech.utterances.isEmpty); expectEqual(conversation.sent.count, 1)
+        session.pauseVoiceConversation(); await session.shutdown()
+    }
+
+    func testRewrittenFinalStreamStopsAudioAndShowsCorrectionWithoutReread() async {
+        let conversation = TestConversation(); conversation.delay = true
+        let screen = TestScreen(); let speech = TestSpeech(); speech.supportsStreamingSpeech = true
+        let session = makeVoiceSession(conversation, screen, speech); session.observeScreenChanges = false
+        await session.startVoiceConversation(); speech.completeDictation("Cevap düzeltilirse baştan tekrar okuma")
+        await waitUntil { conversation.pending != nil }
+        conversation.spokenReplyHandler?("İlk söylenen cümle.")
+        expectEqual(speech.speakingStreamStarts, 1); expectTrue(speech.speaking)
+        conversation.spokenReplyHandler?("Düzeltilen farklı cümle.")
+        expectFalse(speech.speaking)
+        conversation.pending?.resume(returning: "Düzeltilen tam gerçek cevap."); conversation.pending = nil
+        await waitUntil { !session.sending }
+        expectFalse(session.voiceConversationActive); expectFalse(speech.speaking)
+        expectTrue(speech.utterances.isEmpty); expectEqual(speech.starts.count, 1)
+        expectEqual(speech.speakingStreamDeltas, ["İlk söylenen cümle."])
+        expectTrue(session.lines.contains { $0.speaker == "CODEX" && $0.text == "Düzeltilen tam gerçek cevap." })
+        expectTrue(session.connected)
+        await session.shutdown()
+    }
 }
 
 @MainActor var checks = 0
@@ -855,6 +1079,8 @@ import CompanionSafety
         tests.testIndependentAcceptanceGates()
         tests.testDictationFinalizationAndDraftProtection()
         CompanionSpeechEndpointTests.run()
+        CompanionSpeechPlaybackTests.run()
+        checks += await CompanionDesktopControlChecks.run()
         await tests.testRepeatedOpenConnectsOnceWithoutMediaOrSend()
         await tests.testStopDuringConnectRejectsLateSuccessAndFailure()
         await tests.testFailedAccountConnectionAllowsSafeRetry()
@@ -888,33 +1114,50 @@ import CompanionSafety
         await tests.testPauseOrStopWhileResumeWaitsRejectsLateMicrophoneRestart()
         await tests.testDisplayPermissionRetryAutoSelectsOnlySoleDisplayWithoutCapture()
         await tests.testStopRejectsLateDisplayPermissionPreparation()
+        await tests.testFastPeriodicCaptureCachesOneFrameWithoutModelCallsOrDiskFiles()
+        await tests.testManualRequestAttachesFreshAuthorizedCacheAndRemovesTransientImage()
+        await tests.testVoiceRequestIncludesCurrentAuthorizedScreenRatherThanTextOnly()
+        await tests.testControlCapturesBetweenMatchingGeometrySnapshotsAndRejectsMovedWindow()
+        await tests.testQueuedVoiceTakesCapturePriorityWithoutBackgroundInference()
+        await tests.testOnlyVerifiedFinalSnapshotsStreamSpeechWithoutRepeatedPrefix()
+        await tests.testSynchronousStreamFinishResumesVoiceWithoutFalsePause()
+        await tests.testRewrittenFinalStreamStopsAudioAndShowsCorrectionWithoutReread()
         if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1" {
             expectTrue(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true)
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bavbav-companion-protocol-\(UUID())")
             let bridge = CodexCompanionConversation(directory: folder, ephemeral: true)
             var replySnapshots: [String] = []
+            var spokenSnapshots: [String] = []
             bridge.setReplyHandler { replySnapshots.append($0) }
+            bridge.setSpokenReplyHandler { spokenSnapshots.append($0) }
             do {
                 _ = try await bridge.connect()
                 let text = try await bridge.send(text: "fixture", image: nil)
                 expectEqual(text, "COMPANION_TEXT_OK")
                 expectEqual(replySnapshots, ["COMPANION_TEXT_OK"])
+                expectEqual(spokenSnapshots, ["COMPANION_TEXT_OK"])
                 replySnapshots = []
+                spokenSnapshots = []
                 let png = folder.appendingPathComponent("fixture.png")
                 try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9WQAAAAASUVORK5CYII=")!.write(to: png)
                 let imageReply = try await bridge.send(text: "fixture image", image: png)
                 expectEqual(imageReply, "COMPANION_IMAGE_OK")
                 expectEqual(replySnapshots, ["COMPANION_IMAGE_OK"])
+                expectEqual(spokenSnapshots, ["COMPANION_IMAGE_OK"])
                 replySnapshots = []
+                spokenSnapshots = []
                 let staleReply = try await bridge.send(text: "COMPANION_STALE_SAME_THREAD", image: nil)
                 expectEqual(staleReply, "COMPANION_TEXT_OK")
                 expectEqual(replySnapshots, ["COMPANION_TEXT_OK"])
+                expectEqual(spokenSnapshots, ["COMPANION_TEXT_OK"])
                 let delayed = try await bridge.send(text: "COMPANION_TERMINAL_ACK_FIRST", image: nil)
                 expectEqual(delayed, "COMPANION_DELAYED_FINAL_OK")
                 await bridge.stop()
                 await checkCancellationAndRecovery(folder: folder)
                 await checkIdleDisconnectionAndRecovery(folder: folder)
                 await checkLiveReplyStreaming(folder: folder)
+                await checkTerminalEventWakeups(folder: folder)
+                await checkSpokenPhaseMetadata(folder: folder)
                 try? FileManager.default.removeItem(at: folder)
             } catch { await bridge.stop(); fputs("COMPANION PROTOCOL FAILED: \(error)\n", stderr); Foundation.exit(1) }
         }
@@ -1075,14 +1318,16 @@ import CompanionSafety
         }
         let bridge = CodexCompanionConversation(directory: directory, ephemeral: true)
         var snapshots: [String] = []
+        var spokenSnapshots: [String] = []
         bridge.setReplyHandler { snapshots.append($0) }
+        bridge.setSpokenReplyHandler { spokenSnapshots.append($0) }
         do {
             _ = try await bridge.connect()
             var finished = false
             let pending = Task { let reply = try await bridge.send(text: "COMPANION_STREAM_BEFORE_ACK", image: nil); finished = true; return reply }
             _ = try await waitForRequest("fixture/stream-before-ack", log: log)
             try await Task.sleep(nanoseconds: 30_000_000)
-            expectTrue(snapshots.isEmpty); expectFalse(finished)
+            expectTrue(snapshots.isEmpty); expectTrue(spokenSnapshots.isEmpty); expectFalse(finished)
             expectFalse(requests(log).contains { $0["method"] as? String == "fixture/turn-ack" })
             try Data("release fixture ACK".utf8).write(to: gate, options: .atomic)
             try await waitForCondition { snapshots.first == "PREACK" }
@@ -1090,10 +1335,12 @@ import CompanionSafety
             let final = try await pending.value
             expectEqual(final, "PREACK_LIVE"); expectTrue(finished)
             expectEqual(snapshots, ["PREACK", "PREACK_LIVE"])
+            expectEqual(spokenSnapshots, ["PREACK", "PREACK_LIVE"])
             await bridge.stop()
 
             for scenario in ["COMPANION_STREAM_CANCEL", "COMPANION_STREAM_HOLD_BEFORE_ACK"] {
                 snapshots = []
+                spokenSnapshots = []
                 let scenarioLog = directory.appendingPathComponent(scenario + ".jsonl")
                 setenv("BAVBAV_COMPANION_REQUEST_LOG", scenarioLog.path, 1)
                 _ = try await bridge.connect()
@@ -1109,17 +1356,76 @@ import CompanionSafety
                 do { _ = try await cancelled.value; expectTrue(false) }
                 catch { expectTrue(error is CancellationError) }
                 expectNil(bridge.threadID)
+                expectTrue(spokenSnapshots.isEmpty)
                 let beforeRecovery = snapshots
                 bridge.setReplyHandler(nil)
+                bridge.setSpokenReplyHandler(nil)
                 _ = try await bridge.connect()
                 let recovered = try await bridge.send(text: "stream recovery", image: nil)
                 expectEqual(recovered, "COMPANION_TEXT_OK")
                 expectEqual(snapshots, beforeRecovery)
                 await bridge.stop()
                 bridge.setReplyHandler { snapshots.append($0) }
+                bridge.setSpokenReplyHandler { spokenSnapshots.append($0) }
             }
         } catch {
             await bridge.stop(); fputs("COMPANION LIVE STREAM FAILED: \(error)\n", stderr); Foundation.exit(1)
+        }
+    }
+
+    @MainActor private static func checkTerminalEventWakeups(folder: URL) async {
+        let directory = folder.appendingPathComponent("terminal-events", isDirectory: true)
+        let bridge = CodexCompanionConversation(directory: directory, ephemeral: true)
+        var snapshots: [String] = []
+        bridge.setReplyHandler { snapshots.append($0) }
+        do {
+            _ = try await bridge.connect()
+            let started = Date()
+            do { _ = try await bridge.send(text: "COMPANION_ACTIVE_EXIT_AFTER_ACK", image: nil); expectTrue(false) }
+            catch { expectTrue((error as? CompanionFailure)?.requiresReconnect == true) }
+            expectTrue(Date().timeIntervalSince(started) < 3)
+            expectEqual(snapshots, ["EXITING_PARTIAL"]); expectNil(bridge.threadID)
+            snapshots = []
+            _ = try await bridge.connect()
+            do { _ = try await bridge.send(text: "COMPANION_EMPTY_DELAYED_TERMINAL", image: nil); expectTrue(false) }
+            catch { expectTrue((error as? CompanionFailure)?.requiresReconnect == false) }
+            expectTrue(snapshots.isEmpty); expectNotNil(bridge.threadID)
+            let recovered = try await bridge.send(text: "Terminal waiter released", image: nil)
+            expectEqual(recovered, "COMPANION_TEXT_OK")
+            expectEqual(snapshots, ["COMPANION_TEXT_OK"])
+            await bridge.stop()
+        } catch {
+            await bridge.stop(); fputs("COMPANION TERMINAL EVENT FAILED: \(error)\n", stderr); Foundation.exit(1)
+        }
+    }
+
+    @MainActor private static func checkSpokenPhaseMetadata(folder: URL) async {
+        let directory = folder.appendingPathComponent("spoken-phase", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let gate = directory.appendingPathComponent("allow-final-phase")
+        setenv("BAVBAV_COMPANION_PHASE_GATE", gate.path, 1)
+        defer { unsetenv("BAVBAV_COMPANION_PHASE_GATE") }
+        let bridge = CodexCompanionConversation(directory: directory, ephemeral: true)
+        var visual: [String] = []; var spoken: [String] = []
+        bridge.setReplyHandler { visual.append($0) }
+        bridge.setSpokenReplyHandler { spoken.append($0) }
+        do {
+            _ = try await bridge.connect()
+            let pending = Task { try await bridge.send(text: "COMPANION_PHASE_IDENTIFIED_LATE", image: nil) }
+            try await waitForCondition { visual == ["PHASE_IDENTIFIED_REPLY"] }
+            expectTrue(spoken.isEmpty)
+            try Data("allow final phase".utf8).write(to: gate, options: .atomic)
+            let final = try await pending.value
+            expectEqual(final, "PHASE_IDENTIFIED_REPLY")
+            expectEqual(visual, ["PHASE_IDENTIFIED_REPLY"])
+            expectEqual(spoken, ["PHASE_IDENTIFIED_REPLY"])
+            visual = []; spoken = []
+            let commentary = try await bridge.send(text: "COMPANION_COMMENTARY_ONLY", image: nil)
+            expectEqual(commentary, "COMMENTARY_VISUAL_ONLY")
+            expectEqual(visual, ["COMMENTARY_VISUAL_ONLY"]); expectTrue(spoken.isEmpty)
+            await bridge.stop()
+        } catch {
+            await bridge.stop(); fputs("COMPANION SPOKEN PHASE FAILED: \(error)\n", stderr); Foundation.exit(1)
         }
     }
 }

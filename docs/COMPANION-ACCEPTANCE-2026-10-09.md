@@ -226,3 +226,89 @@ stepper; no draft was pending at restart. Native microphone/speech preflight
 remained0 and screenfalse; automatic voice and sharing remained OFF. Final
 deep/strict signature verification passed. Earlier account conversations remain
 stored; no projects, chats, attachments or keys were deleted.
+
+## Lower-latency screen-aware voice and bounded cursor — 0.10.3
+
+Canonical build60 passed925 Companion fixture assertions, including81 desktop
+control assertions, the complete existing packaged-app regression suite, and
+deep/strict signature verification. A read-only final audit found and fixed a
+capture-binding bug: window identity/geometry had been sampled only after the
+pixels. The paired before-capture/after-capture snapshots now reject movement,
+covering/reordered windows, replacement identity, changed display bounds, stale
+timestamps and STOP. Session integration verifies geometry → capture → geometry;
+a changed target prevents both the model send and transient image creation.
+
+Fast screen mode keeps one authorized in-memory frame without issuing background
+model requests. Explicit typed/recognized turns attach the fresh authorized image;
+control turns always capture anew. Optional proactive observations remain separate
+and disabled during control. Ordered terminal events replace transport polling.
+Verified final-answer sentences can start bounded native synthesis before a voice
+turn finishes; commentary, unknown phases, duplicate prefixes and stale generations
+cannot drive streamed speech. Rewrites stop audio rather than reread a prefix.
+
+Explicit local screen and control consent are separate. Native control is one
+ordinary click per user turn with a visible click-through green cursor, fresh
+frame/target/Accessibility checks and the reused STOP/epoch gate. It is not an
+independent second macOS input device or unrestricted computer/Logic automation.
+Successful native event dispatch deliberately does not claim application success.
+No live native click has been accepted yet.
+
+Live observations, separated from fixtures:
+
+- The old PID23728 exited through normal Cmd-Q; LaunchServices opened updated
+  Bavbav. Later user-driven restarts produced PID28530, then29396. No current
+  build59 GUI crash report was found; process changes alone are not crash proof.
+- PID28530 connected the existing account. Through its own empty visible editor,
+  one bounded text-only test actually received **“Merhaba Deniz. Türkçe ses
+  denemesi tamamlandı.”** Native measured first text2.9s, completion4.6s and actual
+  AV speech start4.7s. This was not the demo button. New-engine audible acceptance
+  was asked separately and remains pending. It is not microphone-loop evidence.
+- The user independently reported that conversation had noticeably sped up.
+  This is qualitative feedback, not a general latency benchmark.
+- A subsequent no-UI permission preflight reported microphone3, speech0 and
+  screentrue, without asking permission/opening audio/capturing. That diagnostic
+  process is not proof of the interactive GUI's capture entitlement.
+- The user later reported Screen Recording still failed despite adding Bavbav in
+  Settings. The actual stored ScreenCapture allowance pins old ad-hoc CDHash
+  `851b79224f35cf2c3da679bd54977c16dbc499a3`; live build59 pins
+  `23b20351820289ab964566deaaec7a161c649842`, and canonical build60 pins
+  `e0f637bbf5ad8337b62b53c318fe58ed91e7c6b8`. Requirement checks fail against the
+  ScreenCapture allowance. Microphone/speech grants match live59; Accessibility
+  also references an older identity. There are zero valid code-signing identities.
+  Thus an enabled Settings entry does not establish access for the rebuilt GUI.
+- Companion's voice/capture/control code is compiled into the one Bavbav GUI,
+  bundle ID `dev.deniz.bavbav`. There is no external Desktop Companion dependency
+  or helper permission bridge. Original Companion references are provenance only.
+
+The exposed API key supplied in chat was not copied, used, stored in source or
+added to Keychain. The account route needs no separate API key; revocation and
+replacement of that disclosed key were recommended. Installed output remains
+standard Yelda. The optional Chatterbox weights/dependencies were not downloaded;
+no voice-quality increase is claimed without installation and listening evidence.
+
+Following the signing diagnosis, build61's host identity guidance and
+stable-certificate packaging are implemented. The complete staged development
+build passed925 Companion assertions,62 hidden native theme/host-identity checks
+and all existing packaged regressions; deep/strict signature validation passed.
+The actual opaque native render was inspected. The staging candidate is
+`dist/.bavbav-build.LW4wh2/Bavbav.app`; its completed fixture receipt binds version,
+binary SHA-256,CDHash, candidate path and the explicit development signer.
+
+Stable certificate signing is now the default; missing/malformed/nonexistent
+identity preflights fail before compilation or bundle mutation. The deliberate
+ad-hoc fallback was used only for this stage-only development QA. A new
+read-only installer preflight validated the receipt/signature/build and correctly
+refused because PID29396 was still running. It made no rename/re-sign/launch and
+did not replace the canonical build60. Running/renamed/recovery app executables
+are conservatively rejected; old bundles remain recoverable. Final code after
+the preflight-only addition also passed zsh syntax and diff checks.
+
+Creating/importing a local certificate and private key still needs the user's
+separate approval, which has been requested but not received. Therefore stable
+signing, installation of61 and its final graceful restart have not been reported
+as completed. The earlier58→59 restart is distinct from that pending step.
+No TCC reset/write, identifier-only requirement, trust bypass or OS Allow action
+was performed. Original projects/chats/keys and recoverable previous app bundles
+remain intact. Full-display image-to-model, actual microphone loop, new audible
+acceptance and native click acceptance still remain distinct pending gates;
+the original integration goal is not product complete.

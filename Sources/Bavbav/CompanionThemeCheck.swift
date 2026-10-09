@@ -64,6 +64,24 @@ import BavbavCompanion
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try check(controller.preferences === preferences, "Companion must share the supplied preference instance")
+            let identity = controller.appIdentity.snapshot
+            try check(identity.bundleURL == Bundle.main.bundleURL.standardizedFileURL,
+                      "Companion identity must describe the main Bavbav app, not a helper or another install")
+            try check(identity.bundleIdentifier == (Bundle.main.bundleIdentifier ?? "bilinmiyor"),
+                      "Companion identity must use the main Bavbav bundle identifier")
+            try check(identity.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+                      "Companion runs within the Bavbav GUI process")
+            try check(identity.build == (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"),
+                      "permission guidance names the actually running build")
+            try check(controller.window.title.contains("Bavbav") && controller.window.title.contains("⌘6"),
+                      "native window identity makes the shared Bavbav host and shortcut explicit")
+            try check(identity.permissionGuidance.contains("ayrı bir uygulama değil"),
+                      "permission guidance does not direct users to a separate Companion app")
+            try check(!controller.session.screenSharing && !controller.session.desktopControl.enabled,
+                      "reading identity never starts sharing or desktop control")
+            controller.appIdentity.refresh()
+            try check(controller.appIdentity.snapshot.bundleURL == identity.bundleURL,
+                      "read-only permission refresh retains the actual main app identity")
             try check(controller.window.level == .normal, "Companion must use the ordinary application window stack")
             try check(!controller.window.styleMask.contains(.titled), "Companion uses the same borderless Bavbav frame")
             try check(controller.window.canBecomeKey && controller.window.canBecomeMain, "borderless Companion remains keyboard focusable")

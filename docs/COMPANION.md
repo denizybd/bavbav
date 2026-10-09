@@ -9,6 +9,14 @@ Opening Command 6 automatically connects the existing ChatGPT account but never
 starts microphone/capture or sends a prompt. An idle child disconnect immediately
 clears the connection indicator; reopening or explicitly connecting retries account
 setup without retrying the previous message. Drafts are preserved.
+The native host header identifies **Bavbav / ⌘6**, with a read-only screen
+permission indicator. Its information button shows the actual GUI bundle path,
+build and signing kind; user-clicked Finder selection helps identify the exact
+app to add in Settings. It does not grant access. Ad-hoc rebuilds can stop
+matching old macOS permission records; see [local signing](LOCAL-SIGNING.md).
+The normal packaging path now requires a stable configured certificate, stages
+and checks an update separately, and refuses to replace a running GUI. A native
+OS permission still needs the user's approval after the signer transition.
 
 ## What is implemented
 
@@ -26,9 +34,12 @@ unavailable, sending audio to Apple's speech service requires the separate
 unchecked opt-in. **Sesli sohbeti başlat** explicitly starts automatic turn-taking:
 recognized speech ends after about 1.35 seconds of quiet (audio energy prevents
 cutting a continuing phrase), its final text is sent once to the existing account,
-the real completed reply is synthesized, and only natural playback completion
+verified final-answer sentences begin native synthesis before the full reply
+finishes, and only sealed-stream natural playback completion
 reopens the microphone. Actual correlated response deltas appear while the model
-works; a partial response is not treated as completed or spoken as a fake answer.
+works; an unknown-phase/commentary item is never sent to speech. Partial final
+speech is not a completed-turn claim. A rewritten final answer stops playback
+instead of repeating the already spoken prefix; the corrected full text remains.
 The microphone is closed while waiting for/speaking the reply. A typed/manual
 draft is kept separate and never silently submitted by voice mode. Fifteen seconds
 without recognized speech pauses the session; each recognition is bounded to55s.
@@ -64,15 +75,22 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 - A ScreenCaptureKit full-display filter (macOS 14+) captures a bounded PNG:
   at most 1280 pixels on the long edge and 6 MB. Display ID and dimensions are
   revalidated each time; removal/reconfiguration stops rather than substitutes a
-  different screen. No system audio, continuous video, or Accessibility scraping.
-- Each captured frame is sent to the dedicated account-backed conversation and
-  its short observation appears silently in this panel. One frame/turn at a time;
-  the selected interval starts after the previous response, so slow inference
-  does not accumulate pending captures or upload backlogs. Manual dictation and
-  busy user turns are skipped. During explicitly started voice, screen observations
-  can proceed while listening; a recognized voice turn holds one bounded priority
-  slot until any already-submitted observation drains. The next screen tick cannot
-  overtake it. This uses the account's normal allowance, not free video.
+  different screen. Global display bounds are also revalidated for cursor mapping.
+  No system audio or continuous video is recorded.
+- Fast mode (default) replaces one bounded in-memory screen frame periodically,
+  without running a model request for every screenshot. Explicit spoken/typed
+  user turns attach that authorized frame (at most five seconds old) or capture
+  anew. No screen context is attached after share STOP. Consequently background
+  screenshots do not monopolize the conversation writer or create model queues.
+  Control turns always capture anew, with window identities/geometry sampled
+  before and after the capture. Any changed ordering, identity or geometry rejects
+  that frame before inference. The model sees actual attached still images, not a continuous video.
+- The separate unchecked **Ekran değişikliklerini ayrıca kendiliğinden yorumla**
+  option preserves proactive account-backed observations. It costs additional
+  inference and can delay a user turn while an already submitted observation
+  drains. It is disabled during desktop control. One observation at a time,
+  interval measured after its reply; no upload backlog. Only explicit user replies
+  use voice. Screen observations remain silent.
 - Only the latest preview and at most 80 lines remain in UI memory. Periodic
   `ScreenFrames` files use 0600 permissions in a 0700 directory and are removed
   after their owned request completes/fails. A crash can leave an owned transient
@@ -84,9 +102,9 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 - The injectable single-window adapter remains for legacy scope tests and the
   safe diagnostic image-to-model check, not as the normal panel's sharing mode.
 - Original Companion `SafetyGate`/`Geometry` sources are snapshotted unchanged in
-  `CompanionSafety`. Their revocation epoch/stop semantics are reused. There is
-  **no control grant, native input adapter, Logic Pro automation or broadened
-  demo allowlist**. The UI says Logic Pro control is not ready.
+  `CompanionSafety`. Revocation, one-action consumption and input-cleanup semantics
+  are reused by a new Bavbav-owned native click adapter; the original project and
+  its demo allowlist are not modified.
 - A lazy, dedicated read-only Codex conversation avoids taking ownership of an
   active coding chat. It disables shell/apps/hooks/agent tools in its child
   configuration. Unexpected permission/tool RPC requests close only that child.
@@ -95,6 +113,55 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 - One request at a time; duplicate submits are rejected. Late/out-of-thread
   responses, duplicate items and completed-before-ack notifications are covered
   by checks. Failed sends preserve the draft and do not automatically retry.
+
+## Visible virtual cursor and desktop clicks
+
+Screen sharing alone never grants computer input. A separate local unchecked
+consent and **Sanal imleç kontrolünü başlat** starts all-visible-app scope. The
+native adapter requires macOS Accessibility permission; it is never bypassed.
+Each actual user turn may propose one strictly parsed normalized click, paired
+with a natural Turkish reply. JSON is hidden from speech and never executed as
+code. The green click-through cursor shows the verified proposed point without
+stealing focus. macOS has a shared actual input system, not a second independent
+hardware cursor.
+
+The proposal binds to the real full-display image's original time/bounds and a
+front-to-back window snapshot checked before and after capture, then registered
+before inference. A moved or newly covering window during capture cannot be
+authorized using pixels from the previous window. The original frame
+must still be at most ten seconds old. Fresh PID, bundle, window ID, geometry,
+foreground state and Accessibility hit-test are checked again before dispatch.
+Target activation is part of the explicitly enabled ordinary click, never the
+cursor overlay. Changed/expired targets are rejected, not remapped. STOP, screen
+STOP, lost connection, route close or application quit revoke the control epoch;
+old proposals cannot act on a newer session. One click is consumed once, even if
+replayed. Synthetic mouse-up cleanup is handled by the native adapter.
+
+This first version has no typing/keyboard, password entry, shell, purchase, delete,
+security-permission or installation actions. Conservative target/intent checks
+are a safety boundary, **not proof that arbitrary desktop clicks are safe**.
+There is no autonomous unlimited multi-action loop. Dedicated Logic Pro/plugin,
+mixing and recording automation remains **not ready**. Native successful dispatch
+must be distinguished from proof that an application performed the desired change.
+
+## Voice quality and latency
+
+Only installed, non-personal/non-novelty Turkish voices are selected, in premium,
+enhanced, standard order. Availability is refreshed at playback start. This Mac
+currently has only compact standard Yelda; no quality increase is claimed without
+an actual new voice and listening test. Final speech is bounded to 6000 characters,
+64 text chunks, one active native utterance, with cancellation identity fences.
+The panel shows observed first-text, completion and actual native audio-start
+latencies rather than promising a fixed network response time. Turn completion is
+event-driven; the old 80 ms transport polling loop is removed.
+
+An optional genuinely open-source candidate is MIT-licensed
+[Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) with Turkish
+and MPS support. Its selected V3 weights total about 3.21 GB, plus Python/PyTorch
+dependencies and working memory. No model is installed automatically; local speed,
+memory and audible quality require a separate benchmark. It produces a complete
+WAV per generation, not automatic realtime streaming. No API key, paid service,
+voice clone, private endpoint or credential copy is added by this release.
 
 ## Verification, not product-complete claims
 
@@ -139,10 +206,19 @@ Manual acceptance:
    arrives and is audibly spoken, and listening resumes only after playback.
    Stop reply audio or mute: no automatic restart must follow. Separately verify
    **Yalnızca metne yaz** still requires manual Send and preserves a typed draft.
-4. Clear private screen content, select the full display, consent, start sharing
-   and verify a visual detail absent from your text reaches the model. Wait for
-   a second changed frame, then STOP and verify no further update arrives.
-5. Verify the web tab separately using the visible login/Voice UI, if available.
+4. Clear private screen content, select the full display, consent, start sharing.
+   Verify a new preview and capture time, but do not mistake that for model receipt.
+   Ask about a visual detail absent from your prompt; verify the attached frame
+   reaches the model. Change that detail and repeat after a second frame. STOP
+   sharing, send another message and confirm no new pixels are attached. Verify
+   optional proactive observations separately; keep them off for latency testing.
+5. Explicitly enable the virtual cursor with its local consent and grant macOS
+   Accessibility yourself. Use a harmless ordinary target (e.g. selecting a blank
+   document toolbar), ask for one click, and verify the green preview, native
+   dispatch and actual target-app result separately. Move/close the target or STOP
+   while a response is pending: no old click may be replayed or redirected. Never
+   use a purchase/delete/security UI as the test target.
+6. Verify the web tab separately using the visible login/Voice UI, if available.
    Do not present sign-in or button presence as a successful Voice session.
 
 There is **one normal Bavbav process**, with Command 1–6 registered together.

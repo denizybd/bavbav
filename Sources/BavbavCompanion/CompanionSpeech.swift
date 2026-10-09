@@ -7,15 +7,28 @@ import Combine
     var onDictationFinished: ((String) -> Void)? { get set }
     var onDictationFailed: ((String) -> Void)? { get set }
     var onSpeakingFinished: (() -> Void)? { get set }
+    var onSpeakingStarted: (() -> Void)? { get set }
     var dictationBusy: Bool { get }
     var speaking: Bool { get }
     var status: String { get }
+    var supportsStreamingSpeech: Bool { get }
     func start(allowAppleService: Bool, endOnSilence: Bool) async
     func finishListening()
     func stopListening()
     func speak(_ text: String)
+    func beginSpeakingStream()
+    func appendSpeakingText(_ delta: String)
+    func finishSpeakingStream()
     func stopSpeaking()
     func stop()
+}
+
+public extension CompanionSpeechDriving {
+    var onSpeakingStarted: (() -> Void)? { get { nil } set {} }
+    var supportsStreamingSpeech: Bool { false }
+    func beginSpeakingStream() {}
+    func appendSpeakingText(_ delta: String) {}
+    func finishSpeakingStream() {}
 }
 
 /// The input callback only accumulates a scalar energy/time pair. Main-actor
@@ -57,10 +70,14 @@ private final class CompanionAudioEnergy: @unchecked Sendable {
     @Published public private(set) var finalizing = false
     @Published public private(set) var speaking = false
     @Published public private(set) var status = "Mikrofon kapalı"
+    @Published public private(set) var selectedVoiceName = "Türkçe ses yok"
+    @Published public private(set) var selectedVoiceQuality = "yok"
+    @Published public private(set) var lastSpeechStartUptime: TimeInterval?
     public var onTranscript: ((String) -> Void)?
     public var onDictationFinished: ((String) -> Void)?
     public var onDictationFailed: ((String) -> Void)?
     public var onSpeakingFinished: (() -> Void)?
+    public var onSpeakingStarted: (() -> Void)?
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "tr-TR"))
     private let synthesizer = AVSpeechSynthesizer()
     private var engine: AVAudioEngine?
@@ -70,6 +87,11 @@ private final class CompanionAudioEnergy: @unchecked Sendable {
     private var completion = CompanionSpeechRecognitionCompletion()
     private var endpoint: CompanionSpeechEndpoint?
     private var currentUtterance: AVSpeechUtterance?
+    private var currentPlaybackChunk: UUID?
+    private var playback = CompanionSpeechPlaybackQueue()
+    private var playbackVoice: AVSpeechSynthesisVoice?
+    private var playbackOpen = false
+    private var playbackStarted = false
     private var timeout: Task<Void, Never>?
     private var finalizationTimeout: Task<Void, Never>?
     private var silenceTimeout: Task<Void, Never>?
@@ -77,9 +99,33 @@ private final class CompanionAudioEnergy: @unchecked Sendable {
     private var tapInstalled = false
     public var dictationBusy: Bool { lifecycle.busy }
     public var supportsLocalTurkish: Bool { recognizer?.supportsOnDeviceRecognition == true }
-    public var hasTurkishVoice: Bool { AVSpeechSynthesisVoice(language: "tr-TR") != nil }
+    public var hasTurkishVoice: Bool { preferredTurkishVoice() != nil }
+    public var supportsStreamingSpeech: Bool { true }
 
-    public override init() { super.init(); synthesizer.delegate = self }
+    public override init() { super.init(); synthesizer.delegate = self; _ = refreshTurkishVoice() }
+
+    private func preferredTurkishVoice() -> AVSpeechSynthesisVoice? {
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        let candidates = voices.map { voice -> CompanionNativeVoiceDescriptor in
+            let quality: CompanionNativeVoiceDescriptor.Quality
+            switch voice.quality { case .premium: quality = .premium; case .enhanced: quality = .enhanced; default: quality = .standard }
+            var personal = false, novelty = false
+            if #available(macOS 14.0, *) {
+                personal = voice.voiceTraits.contains(.isPersonalVoice)
+                novelty = voice.voiceTraits.contains(.isNoveltyVoice)
+            }
+            return CompanionNativeVoiceDescriptor(id: voice.identifier, name: voice.name, language: voice.language,
+                                                  quality: quality, personal: personal, novelty: novelty)
+        }
+        guard let selected = CompanionNativeVoiceSelection.preferred(candidates, defaultID: AVSpeechSynthesisVoice(language: "tr-TR")?.identifier) else { return nil }
+        return voices.first { $0.identifier == selected.id }
+    }
+    private func refreshTurkishVoice() -> AVSpeechSynthesisVoice? {
+        let voice = preferredTurkishVoice()
+        selectedVoiceName = voice?.name ?? "Türkçe ses yok"
+        switch voice?.quality { case .premium: selectedVoiceQuality = "premium"; case .enhanced: selectedVoiceQuality = "geliştirilmiş"; case .default: selectedVoiceQuality = "standart"; default: selectedVoiceQuality = "yok" }
+        return voice
+    }
 
     public func start(allowAppleService: Bool, endOnSilence: Bool = false) async {
         guard !lifecycle.busy else { return }
@@ -240,32 +286,70 @@ private final class CompanionAudioEnergy: @unchecked Sendable {
     }
 
     public func speak(_ text: String) {
-        stopListening(); stopSpeaking()
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard let voice = AVSpeechSynthesisVoice(language: "tr-TR") else {
-            status = "Türkçe ses yüklü değil. macOS Erişilebilirlik → Seslendirilen İçerik'ten Türkçe ses ekle."; return
-        }
-        // Long answers remain readable; avoid minutes of uninterruptible speech.
-        let utterance = AVSpeechUtterance(string: String(text.prefix(6000)))
-        utterance.voice = voice; utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        currentUtterance = utterance
-        speaking = true; status = "Türkçe yanıt seslendiriliyor"
-        synthesizer.speak(utterance)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { stopListening(); stopSpeaking(); return }
+        beginSpeakingStream(); appendSpeakingText(text); finishSpeakingStream()
     }
-    public func stopSpeaking() { currentUtterance = nil; synthesizer.stopSpeaking(at: .immediate); speaking = false }
+    public func beginSpeakingStream() {
+        stopListening(); stopSpeaking()
+        guard let voice = refreshTurkishVoice() else {
+            status = "Türkçe ses yüklü değil. macOS Erişilebilirlik → Seslendirilen İçerik'ten Türkçe ses ekle."
+            onDictationFailed?(status); return
+        }
+        playbackVoice = voice; playback.begin(); playbackOpen = true; playbackStarted = false; lastSpeechStartUptime = nil
+        speaking = true; status = "Yanıt sesi hazırlanıyor · \(selectedVoiceName) · \(selectedVoiceQuality)"
+    }
+    public func appendSpeakingText(_ delta: String) {
+        guard playbackOpen else { return }
+        playback.append(delta); playNextChunk()
+    }
+    public func finishSpeakingStream() {
+        guard playbackOpen else { return }
+        playback.finish(); playNextChunk()
+    }
+    private func playNextChunk() {
+        guard playbackOpen, currentUtterance == nil else { return }
+        if let chunk = playback.next(), let voice = playbackVoice {
+            let utterance = AVSpeechUtterance(string: chunk.text)
+            utterance.voice = voice; utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+            // Brief sentence boundaries preserve natural phrasing; no arbitrary
+            // model-sized pause between chunks and no extra audio engine.
+            utterance.postUtteranceDelay = 0.06
+            currentPlaybackChunk = chunk.id; currentUtterance = utterance
+            status = "Türkçe yanıt seslendiriliyor · \(selectedVoiceName) · \(selectedVoiceQuality)"
+            synthesizer.speak(utterance)
+        } else if playback.takeFinished() {
+            playbackOpen = false; playbackVoice = nil; speaking = false
+            status = playback.truncated ? "Yanıtın ses sınırı tamamlandı; tam metin sohbette." : "Yanıt seslendirildi."
+            onSpeakingFinished?()
+        } else if !playback.inputOpen, !playback.hasSpeech {
+            stopSpeaking(); status = "Yanıtta seslendirilebilir metin yok; görüşme duraklatıldı."
+            onDictationFailed?(status)
+        }
+    }
+    public func stopSpeaking() {
+        currentUtterance = nil; currentPlaybackChunk = nil; playbackOpen = false; playbackVoice = nil; playbackStarted = false; playback.cancel()
+        synthesizer.stopSpeaking(at: .immediate); speaking = false
+    }
     public func stop() { stopListening(); stopSpeaking() }
+    nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in
+            guard let self, self.currentUtterance === utterance, !self.playbackStarted else { return }
+            self.playbackStarted = true; self.lastSpeechStartUptime = ProcessInfo.processInfo.systemUptime
+            self.onSpeakingStarted?()
+        }
+    }
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
-            guard let self, self.currentUtterance === utterance else { return }
-            self.speaking = false; self.currentUtterance = nil
-            self.status = "Yanıt seslendirildi."
-            self.onSpeakingFinished?()
+            guard let self, self.currentUtterance === utterance, let chunk = self.currentPlaybackChunk,
+                  self.playback.finishChunk(chunk) else { return }
+            self.currentUtterance = nil; self.currentPlaybackChunk = nil
+            self.playNextChunk()
         }
     }
     nonisolated public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
             guard let self, self.currentUtterance === utterance else { return }
-            self.speaking = false; self.currentUtterance = nil
+            self.stopSpeaking()
             self.status = "Sesli yanıt beklenmeden kesildi; görüşme duraklatıldı."
             // Expected stopSpeaking() clears identity before invoking AV's
             // cancellation. Only an unexpected current native cancellation
@@ -274,6 +358,6 @@ private final class CompanionAudioEnergy: @unchecked Sendable {
         }
     }
     public var permissionSummary: String {
-        "microphone=\(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) speech=\(SFSpeechRecognizer.authorizationStatus().rawValue) trAvailable=\(recognizer?.isAvailable == true) trOnDevice=\(supportsLocalTurkish) trVoice=\(hasTurkishVoice)"
+        "microphone=\(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) speech=\(SFSpeechRecognizer.authorizationStatus().rawValue) trAvailable=\(recognizer?.isAvailable == true) trOnDevice=\(supportsLocalTurkish) trVoice=\(hasTurkishVoice) voiceName=\(selectedVoiceName) voiceQuality=\(selectedVoiceQuality)"
     }
 }

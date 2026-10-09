@@ -93,19 +93,35 @@ codex --version
 codex login status
 ```
 
-If needed, run `codex login` and complete the sign-in flow. Then build Bavbav:
+If needed, run `codex login` and complete the sign-in flow. The packaged build
+also requires an existing stable local code-signing identity; see
+[local signing and permission-stable builds](docs/LOCAL-SIGNING.md). The
+scripts do not create keys/certificates or change macOS permission records.
+Then build Bavbav:
 
 ```sh
 git clone https://github.com/denizybd/bavbav.git
 cd bavbav
-zsh scripts/build-app.sh
+BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh
 ```
 
-The build produces `dist/Bavbav.app`, packages its resources, and runs the native and fixture checks. Launch it from the same terminal so it uses the Codex executable on your shell's path:
+The build packages and checks a separate candidate, prints its absolute path,
+and leaves any running/installed Bavbav untouched. Quit Bavbav normally with
+`⌘Q`, install the exact printed candidate, and launch the canonical bundle
+through macOS LaunchServices:
 
 ```sh
-BAVBAV_CODEX_BIN="$(command -v codex)" ./dist/Bavbav.app/Contents/MacOS/Bavbav
+zsh scripts/install-app.sh "/absolute/path/to/bavbav/dist/.bavbav-build.XXXXXX/Bavbav.app"
+open "$PWD/dist/Bavbav.app"
 ```
+
+The installer checks the selected signer, bundle/build target, and completed
+fixture receipt, refuses if normal Bavbav is running, and keeps the previous
+bundle recoverable. `zsh scripts/build-app.sh` without stage-only invokes that
+same installer after checks; it still cannot replace a running app. Missing
+stable signing fails safely unless you explicitly choose the warned
+`BAVBAV_ALLOW_ADHOC_SIGNING=1` development-only path. Build/fixture success is
+not proof of live microphone, screen-capture, or input permission.
 
 <details>
 <summary>Launching from Finder or using another Codex installation</summary>
@@ -122,13 +138,19 @@ If your installation is in one of those locations, you can launch normally:
 open dist/Bavbav.app
 ```
 
-For another location, supply an absolute path when launching the executable:
+For another location, set an absolute override for a normal LaunchServices
+launch (on macOS versions supporting `open --env`):
 
 ```sh
-BAVBAV_CODEX_BIN="/absolute/path/to/codex" ./dist/Bavbav.app/Contents/MacOS/Bavbav
+open --env BAVBAV_CODEX_BIN="/absolute/path/to/codex" "$PWD/dist/Bavbav.app"
 ```
 
 `BAVBAV_CODEX_BIN` takes priority over the automatic locations. An invalid explicit override reports an error instead of silently launching a different installation. Finder launches do not inherit terminal-only environment variables; the known bundle locations work without them. Authenticate using the same Codex installation you select here.
+
+Launching `Contents/MacOS/Bavbav` directly is reserved for developer checks;
+do not use a terminal-child launch to validate macOS privacy-permission
+ownership. If Bavbav is already running, quit it first before changing a launch
+environment override.
 
 Bavbav resolves the executable again whenever it starts a new Codex process. After an initial connection failure, the existing 15-second refresh retries the complete handshake, message subscription, and settings load while a window is open. Reconnection does not automatically resend prompts.
 
@@ -218,9 +240,9 @@ The transport follows the [Codex App Server protocol](https://learn.chatgpt.com/
 For the complete packaged-app validation:
 
 ```sh
-zsh scripts/build-app.sh
+BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh
 .build/release/BavbavChecks
-codesign --verify --deep --strict dist/Bavbav.app
+zsh scripts/sign-app.sh --verify "/absolute/path/printed/by/the/build/Bavbav.app"
 ```
 
 The build script exercises executable discovery, connection failure/recovery and streamed replies, protocol round-trips, native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, and standalone chats. Its fixture checks do not send prompts to your real Codex account.
@@ -241,8 +263,8 @@ Live account checks are separate and opt-in: `swift run BavbavChecks --integrati
 
 Bavbav is an independently developed macOS client in active development.
 
-- **Source build:** The packaging script uses ad-hoc signing for local builds. It does not produce a Developer ID signed, notarized distribution.
-- **Language:** The app interface and this README are English, including settings, shortcut descriptions, menus, and app-generated messages. Conversation content remains in its original language.
+- **Source build:** Production packaging requires a configured stable local code-signing identity. An explicit, warned ad-hoc development fallback exists; neither path is automatically an Apple Developer ID signed, notarized distribution. See [local signing](docs/LOCAL-SIGNING.md).
+- **Language:** The main keyboard-first Codex interface and this README are English; Companion currently has Turkish voice and sharing controls. Conversation content remains in its original language.
 - **Codex compatibility:** Available models and capabilities depend on your account and installed App Server version. Goal support is checked against the server.
 - **Standalone CHAT:** The current UI labels this channel `ChatGPT`, but its conversations use Codex App Server. It does not synchronize your chatgpt.com history.
 - **Concurrent writers:** If another client owns a conversation and it cannot be resumed for writing, Bavbav can fork it and continue in the new branch, leaving the original conversation intact.

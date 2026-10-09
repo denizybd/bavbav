@@ -7,11 +7,13 @@ import Foundation
     func stop() async
     func setDisconnectionHandler(_ handler: ((String) -> Void)?)
     func setReplyHandler(_ handler: ((String) -> Void)?)
+    func setSpokenReplyHandler(_ handler: ((String) -> Void)?)
 }
 
 public extension CompanionConversation {
     func setDisconnectionHandler(_ handler: ((String) -> Void)?) {}
     func setReplyHandler(_ handler: ((String) -> Void)?) {}
+    func setSpokenReplyHandler(_ handler: ((String) -> Void)?) {}
 }
 
 public struct CompanionFailure: LocalizedError {
@@ -47,8 +49,16 @@ public struct CompanionFailure: LocalizedError {
         var submitted = false
         var cleanup: Task<Void, Never>?
         var lastPublishedReply = ""
+        var lastPublishedSpokenReply = ""
+        var terminalWaiter: CheckedContinuation<Void, Never>?
+        var terminalTimeout: Task<Void, Never>?
         init(generation: UUID, server: CodexAppServer, threadID: String) {
             self.generation = generation; self.server = server; self.threadID = threadID
+        }
+        func wakeTerminalWaiter() {
+            terminalTimeout?.cancel(); terminalTimeout = nil
+            let waiter = terminalWaiter; terminalWaiter = nil
+            waiter?.resume()
         }
     }
     private var pendingSend: PendingSend?
@@ -58,6 +68,7 @@ public struct CompanionFailure: LocalizedError {
     private var disconnectedCleanup: Task<Void, Never>?
     private var disconnectionHandler: ((String) -> Void)?
     private var replyHandler: ((String) -> Void)?
+    private var spokenReplyHandler: ((String) -> Void)?
     private let directory: URL
     private let ephemeral: Bool
 
@@ -70,6 +81,7 @@ public struct CompanionFailure: LocalizedError {
     }
 
     public func setReplyHandler(_ handler: ((String) -> Void)?) { replyHandler = handler }
+    public func setSpokenReplyHandler(_ handler: ((String) -> Void)?) { spokenReplyHandler = handler }
 
     public func connect() async throws -> String {
         if let cleanup = disconnectedCleanup {
@@ -122,7 +134,10 @@ public struct CompanionFailure: LocalizedError {
         try Task.checkCancellation()
         let request = PendingSend(generation: generation, server: client, threadID: threadID)
         busy = true; pendingSend = request
-        defer { if pendingSend === request { pendingSend = nil; busy = false } }
+        defer {
+            request.wakeTerminalWaiter()
+            if pendingSend === request { pendingSend = nil; busy = false }
+        }
         return try await withTaskCancellationHandler {
             do { return try await send(text: text, image: image, request: request) }
             catch {
@@ -164,11 +179,19 @@ public struct CompanionFailure: LocalizedError {
         publishReply(request)
         // A terminal RPC status does not mean the notification stream has
         // drained. Its ordered turn/completed event follows the final items.
-        let deadline = Date().addingTimeInterval(120)
-        while request.results[turn.id]?.completed == nil, request.transportFailure == nil, Date() < deadline {
+        if request.results[turn.id]?.completed == nil, request.transportFailure == nil {
             try Task.checkCancellation()
             guard pendingSend === request, generation == request.generation else { throw CancellationError() }
-            try await Task.sleep(nanoseconds: 80_000_000)
+            // Ordered terminal notifications wake this exact request directly.
+            // No polling wakeups or extra 80ms delay before TTS can begin.
+            await withCheckedContinuation { continuation in
+                request.terminalWaiter = continuation
+                request.terminalTimeout = Task { @MainActor in
+                    do { try await Task.sleep(nanoseconds: 120_000_000_000) }
+                    catch { return }
+                    request.wakeTerminalWaiter()
+                }
+            }
         }
         try Task.checkCancellation()
         guard pendingSend === request, generation == request.generation else { throw CancellationError() }
@@ -188,6 +211,7 @@ public struct CompanionFailure: LocalizedError {
         if case .transportClosed(let error) = event {
             if let request = pendingSend, request.generation == token {
                 request.transportFailure = error
+                request.wakeTerminalWaiter()
             } else {
                 disconnectIdleTransport(error)
             }
@@ -233,14 +257,19 @@ public struct CompanionFailure: LocalizedError {
             var result = bufferedResult(turn: turn, request: request)
             if result.completed == nil { result.completed = (status, error) }
             request.results[turn] = result
+            if request.turnID == turn { request.wakeTerminalWaiter() }
         default: break
         }
     }
 
     private func selectedReply(_ result: TurnResult) -> String {
         let ordered = result.messageOrder.compactMap { result.messages[$0] }
-        let finals = ordered.filter { $0.status == "final_answer" || $0.title == "FINAL ANSWER" }
+        let finals = ordered.filter(isFinalReply)
         return (finals.isEmpty ? Array(ordered.suffix(1)) : finals).map(\.text).joined(separator: "\n\n")
+    }
+
+    private func isFinalReply(_ message: CodexMessage) -> Bool {
+        message.status == "final_answer" || message.status == "finalAnswer" || message.title == "FINAL ANSWER"
     }
 
     private func publishReply(_ request: PendingSend) {
@@ -249,9 +278,18 @@ public struct CompanionFailure: LocalizedError {
         guard pendingSend === request, generation == request.generation,
               let turn = request.turnID, let result = request.results[turn] else { return }
         let text = selectedReply(result)
-        guard !text.isEmpty, text != request.lastPublishedReply else { return }
-        request.lastPublishedReply = text
-        replyHandler?(text)
+        if !text.isEmpty, text != request.lastPublishedReply {
+            request.lastPublishedReply = text
+            replyHandler?(text)
+        }
+        // A delta has no phase metadata. Only positively identified final
+        // agent items may drive speech; unknown/commentary stays visual-only.
+        let spoken = result.messageOrder.compactMap { result.messages[$0] }
+            .filter(isFinalReply).map(\.text).joined(separator: "\n\n")
+        if !spoken.isEmpty, spoken != request.lastPublishedSpokenReply {
+            request.lastPublishedSpokenReply = spoken
+            spokenReplyHandler?(spoken)
+        }
     }
 
     private func disconnectIdleTransport(_ error: String) {
@@ -290,6 +328,7 @@ public struct CompanionFailure: LocalizedError {
         if let cleanup = request.cleanup { await cleanup.value; return }
         guard pendingSend === request, generation == request.generation else { return }
         generation = UUID(); endEvents(); client = nil; threadID = nil
+        request.wakeTerminalWaiter()
         // Keep the writer slot reserved until its owned process has stopped.
         let knownTurn = request.turnID
         let cleanup = Task {
@@ -309,6 +348,7 @@ public struct CompanionFailure: LocalizedError {
         let old = client; let request = pendingSend
         let idleCleanup = disconnectedCleanup
         client = nil; threadID = nil; pendingSend = nil; busy = true; endEvents()
+        request?.wakeTerminalWaiter()
         // Only our dedicated child is stopped, never Bavbav's coding workers.
         await idleCleanup?.value
         if let cleanup = request?.cleanup { await cleanup.value }

@@ -492,11 +492,49 @@ while let line = readLine() {
                     send(["id": id, "error": ["code": -32000, "message": "fixture: lost acknowledgement after accepting turn"]])
                     continue
                 }
+                if scenario == "COMPANION_ACTIVE_EXIT_AFTER_ACK" {
+                    send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                    send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
+                        "itemId": turnID + "-agent", "delta": "EXITING_PARTIAL"]])
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { Foundation.exit(75) }
+                    continue
+                }
+                if scenario == "COMPANION_EMPTY_DELAYED_TERMINAL" {
+                    send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.03) {
+                        send(["method": "turn/completed", "params": ["threadId": threadID, "turn": ["id": turnID, "status": "completed"]]])
+                    }
+                    continue
+                }
+                if scenario == "COMPANION_PHASE_IDENTIFIED_LATE" {
+                    send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                    send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
+                        "itemId": turnID + "-agent", "delta": "PHASE_IDENTIFIED_REPLY"]])
+                    let gate = ProcessInfo.processInfo.environment["BAVBAV_COMPANION_PHASE_GATE"]
+                    DispatchQueue.global().async {
+                        if let gate {
+                            let deadline = Date().addingTimeInterval(3)
+                            while !FileManager.default.fileExists(atPath: gate), Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
+                            guard FileManager.default.fileExists(atPath: gate) else { Foundation.exit(76) }
+                        }
+                        send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+                            "item": ["id": turnID + "-agent", "type": "agentMessage", "text": "PHASE_IDENTIFIED_REPLY", "phase": "finalAnswer"]]])
+                        send(["method": "turn/completed", "params": ["threadId": threadID, "turn": ["id": turnID, "status": "completed"]]])
+                    }
+                    continue
+                }
+                if scenario == "COMPANION_COMMENTARY_ONLY" {
+                    send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                    send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+                        "item": ["id": turnID + "-commentary", "type": "agentMessage", "text": "COMMENTARY_VISUAL_ONLY", "phase": "commentary"]]])
+                    send(["method": "turn/completed", "params": ["threadId": threadID, "turn": ["id": turnID, "status": "completed"]]])
+                    continue
+                }
                 if scenario == "COMPANION_STREAM_BEFORE_ACK" {
                     send(["method": "item/started", "params": ["threadId": threadID, "turnId": turnID,
-                        "item": ["id": turnID + "-agent", "type": "agentMessage", "text": "PRE", "phase": "final_answer"]]])
+                        "item": ["id": turnID + "-agent", "type": "agentMessage", "text": "", "phase": "final_answer"]]])
                     send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
-                        "itemId": turnID + "-agent", "delta": "ACK"]])
+                        "itemId": turnID + "-agent", "delta": "PREACK"]])
                     recordCompanionRequest(["method": "fixture/stream-before-ack"])
                     let gate = ProcessInfo.processInfo.environment["BAVBAV_COMPANION_STREAM_ACK_GATE"]
                     DispatchQueue.global().async {

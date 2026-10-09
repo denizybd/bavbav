@@ -31,8 +31,10 @@ public struct CompanionDisplay: Identifiable, Equatable, Sendable {
     public let width: Int
     public let height: Int
     public let label: String
-    public init(id: UInt32, width: Int, height: Int, label: String) {
+    public let bounds: CGRect
+    public init(id: UInt32, width: Int, height: Int, label: String, bounds: CGRect? = nil) {
         self.id = id; self.width = width; self.height = height; self.label = label
+        self.bounds = bounds ?? CGRect(x: 0, y: 0, width: width, height: height)
     }
 }
 
@@ -84,7 +86,8 @@ public extension CompanionScreenSource {
             }
             let name = screen?.localizedName ?? "Ekran \(display.displayID)"
             return CompanionDisplay(id: display.displayID, width: display.width, height: display.height,
-                                    label: "\(name) · \(display.width) × \(display.height)")
+                                    label: "\(name) · \(display.width) × \(display.height)",
+                                    bounds: CGDisplayBounds(display.displayID))
         }.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
     }
 
@@ -96,6 +99,7 @@ public extension CompanionScreenSource {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         try Task.checkCancellation()
         guard selection.width > 0, selection.height > 0,
+              CGDisplayBounds(selection.id) == selection.bounds,
               let display = content.displays.first(where: {
                   $0.displayID == selection.id && $0.width == selection.width && $0.height == selection.height
               }) else {
