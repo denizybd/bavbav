@@ -34,6 +34,8 @@ public struct CompanionLine: Identifiable {
     /// of the user's spoken turn. Explicit proactive observation is optional.
     @Published public var observeScreenChanges = false
     @Published public private(set) var voiceConversationActive = false
+    @Published public private(set) var integratedStarting = false
+    @Published public private(set) var integratedStatus = "Ses + ekran + imleç kapalı"
     @Published public private(set) var voiceStatus = "Sesli sohbet kapalı"
     @Published public private(set) var voiceTranscript = ""
     @Published public private(set) var liveReply = ""
@@ -77,6 +79,17 @@ public struct CompanionLine: Identifiable {
     private var requestStartedAt: TimeInterval?
     private var spokenReplyRewritten = false
     private var structuredRequestInFlight = false
+    private enum IntegratedPermission: Equatable { case screen, control }
+    private struct IntegratedStart {
+        let id: UUID
+        let sessionToken: UInt64
+        let previousDisplay: CompanionDisplay?
+        let preferredDisplayID: UInt32?
+        var chosenDisplay: CompanionDisplay?
+        var pendingPermission: IntegratedPermission?
+    }
+    private var integratedStart: IntegratedStart?
+    private var integratedStartInFlight = false
 
     public init(conversation: any CompanionConversation, screen: any CompanionScreenSource,
                 directory: URL, speech: CompanionSpeech? = nil,
@@ -98,6 +111,7 @@ public struct CompanionLine: Identifiable {
         }
         conversation.setDisconnectionHandler { [weak self] reason in
             guard let self, !self.stopped, !self.stopping else { return }
+            self.cancelIntegratedStart()
             self.pauseVoiceConversation()
             self.stopScreenSharing()
             self.desktopControl.stop()
@@ -107,6 +121,7 @@ public struct CompanionLine: Identifiable {
             self.capturing = false; self.sending = false; self.screenShareSending = false
             self.voiceSendInFlight = false; self.voiceSendID = nil
             self.requestingScreenPermission = false; self.displayListingID = nil
+            self.integratedStatus = "Ses + ekran + imleç kapalı · hesap bağlantısı koptu"
             self.status = "Hesap bağlantısı koptu: \(reason) Metin korundu; ⌘6 veya Hesaba bağlan ile yeniden bağlan."
         }
         conversation.setReplyHandler { [weak self] text in
@@ -158,7 +173,198 @@ public struct CompanionLine: Identifiable {
         }
     }
 
+    /// Only the visible combined Start button authorizes this session's screen,
+    /// ordinary bounded clicks and voice together. Connecting or reopening the
+    /// panel does not restore that authorization or submit a model turn.
+    public func startIntegratedSession(preferredDisplayID: UInt32? = nil) async {
+        guard !integratedStarting, !Task.isCancelled else { return }
+        guard !sending, !capturing, !connecting, !stopping, !voiceSendInFlight,
+              !desktopControl.executing else {
+            integratedStatus = "Başlamak için devam eden işlemin bitmesini bekle."; return
+        }
+        if connected, screenSharing, desktopControl.enabled, voiceConversationActive {
+            integratedStatus = "Ses + ekran + imleç açık"
+            return
+        }
+        let previousDisplay = displaySelection
+        pauseVoiceConversationState()
+        stopScreenSharing()
+        selection = nil; includePreview = false; dictationDraft = nil
+        observeScreenChanges = false
+        let id = UUID()
+        integratedStart = IntegratedStart(id: id, sessionToken: sessionFence.token,
+            previousDisplay: previousDisplay, preferredDisplayID: preferredDisplayID)
+        integratedStarting = true; integratedStartInFlight = true
+        integratedStatus = "Ses + ekran + imleç hazırlanıyor · hesaba bağlanıyor…"
+        defer { finishIntegratedInvocation(id) }
+        if !connected { await connect() }
+        guard ownsIntegratedStart(id), !Task.isCancelled else { return }
+        guard connected, !stopped else {
+            integratedStatus = "Birleşik başlangıç tamamlanamadı: \(status)"; return
+        }
+        await continueIntegratedStart(id, requestScreenPermission: true, requestControlPermission: true)
+    }
+
+    /// A key-window event may only continue an existing explicit Start waiting
+    /// for macOS permissions. Preflight is read-only and concurrent focus events
+    /// cannot repeat prompts, captures, control grants or microphone starts.
+    public func resumeIntegratedStartAfterPermissions() async {
+        guard integratedStarting, !integratedStartInFlight, let attempt = integratedStart,
+              let pending = attempt.pendingPermission, acceptsIntegratedStart(attempt.id),
+              !Task.isCancelled else { return }
+        switch pending {
+        case .screen:
+            guard screen.displaySelectionAccessReady else { return }
+        case .control:
+            guard screen.displaySelectionAccessReady, desktopControl.controlAccessReady else { return }
+        }
+        integratedStartInFlight = true
+        integratedStart?.pendingPermission = nil
+        defer { finishIntegratedInvocation(attempt.id) }
+        await continueIntegratedStart(attempt.id, requestScreenPermission: false, requestControlPermission: pending == .screen)
+    }
+
+    private func ownsIntegratedStart(_ id: UUID) -> Bool {
+        guard let attempt = integratedStart else { return false }
+        return attempt.id == id && sessionFence.accepts(attempt.sessionToken) && !stopping
+    }
+    private func acceptsIntegratedStart(_ id: UUID) -> Bool {
+        ownsIntegratedStart(id) && connected && !stopped
+    }
+    private func cancelIntegratedStart(pausePendingVoice: Bool = true) {
+        let wasPending = integratedStart != nil
+        integratedStart = nil; integratedStartInFlight = false; integratedStarting = false
+        if wasPending {
+            requestingScreenPermission = false; capturing = false
+            if pausePendingVoice {
+                pauseVoiceConversationState()
+                // A cancelled initial frame must not leave an orphaned share
+                // session without a frame or its own periodic capture task.
+                if screenSharing, lastCapturedAt == nil { endScreenSharing(cancelIntegratedStart: false) }
+            }
+        }
+    }
+    private func finishIntegratedInvocation(_ id: UUID) {
+        guard ownsIntegratedStart(id) else { return }
+        integratedStartInFlight = false
+        if Task.isCancelled {
+            cancelIntegratedStart(); stopScreenSharing(); pauseVoiceConversationState()
+            integratedStatus = "Birleşik başlangıç iptal edildi · ses, ekran ve imleç kapalı"
+        } else if integratedStart?.pendingPermission == nil {
+            cancelIntegratedStart(pausePendingVoice: false)
+        }
+    }
+
+    private func continueIntegratedStart(_ id: UUID, requestScreenPermission: Bool,
+                                         requestControlPermission: Bool) async {
+        guard acceptsIntegratedStart(id), !Task.isCancelled else { return }
+        let captureToken = captureFence.token
+        do {
+            capturing = true
+            if requestScreenPermission {
+                requestingScreenPermission = true
+                integratedStatus = "macOS Ekran Kaydı izni kontrol ediliyor…"
+                do { try await screen.prepareDisplaySelection() }
+                catch {
+                    guard acceptsIntegratedStart(id), captureFence.accepts(captureToken), !Task.isCancelled else { return }
+                    requestingScreenPermission = false; capturing = false
+                    if !screen.displaySelectionAccessReady {
+                        integratedStart?.pendingPermission = .screen
+                        integratedStatus = "Ekran Kaydı izni bekleniyor · Sistem Ayarları'nda izin verip panele dön. macOS yeniden başlatma isterse sonra Başlat'a tekrar bas."
+                        status = error.localizedDescription
+                        return
+                    }
+                    throw error
+                }
+                guard acceptsIntegratedStart(id), captureFence.accepts(captureToken), !Task.isCancelled else { return }
+                requestingScreenPermission = false
+            }
+            integratedStatus = "Paylaşılacak tam ekran seçiliyor…"
+            let found = try await screen.displays()
+            guard acceptsIntegratedStart(id), captureFence.accepts(captureToken), !Task.isCancelled,
+                  let attempt = integratedStart else { return }
+            let eligible = found.filter(Self.isEligibleDisplay)
+            displays = eligible
+            let display = try integratedDisplay(from: eligible, attempt: attempt)
+            integratedStart?.chosenDisplay = display
+            displaySelection = display
+            // The first frame is owned by this invocation. The periodic task
+            // starts only afterward, so it cannot race initial capture or voice.
+            screenSharing = true; selection = nil; includePreview = false; capturedAt = nil
+            lastSharedAt = nil; lastCapturedAt = nil; latestDisplay = nil; preview = nil
+            integratedStatus = "İlk gerçek ekran karesi alınıyor · \(display.label)"
+            status = "TAM EKRAN PAYLAŞIMI AÇIK · görünen özel içerikler kullanıcı isteğinle birlikte gönderilir."
+            let png = try await screen.captureDisplay(display)
+            guard acceptsIntegratedStart(id), captureFence.accepts(captureToken), !Task.isCancelled,
+                  screenSharing, displaySelection == display else { return }
+            guard !png.isEmpty, png.count <= 6 * 1024 * 1024 else {
+                throw CompanionFailure("İlk ekran karesi boş veya çok büyük; ses ve imleç başlatılmadı.")
+            }
+            preview = png; latestDisplay = display; lastCapturedAt = Date(); capturing = false
+            integratedStatus = "Ekran karesi hazır · imleç izni kontrol ediliyor…"
+            desktopControl.enable(scope: .allVisibleApps, automaticClicks: true,
+                                  requestPermissions: requestControlPermission)
+            guard acceptsIntegratedStart(id), captureFence.accepts(captureToken), !Task.isCancelled else { return }
+            guard desktopControl.enabled else {
+                if !desktopControl.controlAccessReady {
+                    integratedStart?.pendingPermission = .control
+                    integratedStatus = "Ekran karesi hazır · Erişilebilirlik izni bekleniyor. Sistem Ayarları'nda izin verip panele dön; ses henüz açılmadı."
+                    status = desktopControl.status
+                } else {
+                    integratedStatus = "Ekran açık; imleç ve ses açılamadı: \(desktopControl.status)"
+                    scheduleScreenSharing(captureImmediately: false)
+                }
+                return
+            }
+            integratedStatus = "Ekran + imleç açık · mikrofon hazırlanıyor…"
+            await beginVoiceConversation()
+            guard acceptsIntegratedStart(id), captureFence.accepts(captureToken), !Task.isCancelled else { return }
+            scheduleScreenSharing(captureImmediately: false)
+            if screenSharing, desktopControl.enabled, voiceConversationActive, speechDriver.dictationBusy {
+                integratedStatus = "Ses + ekran + imleç açık"
+                status = "Tam ekran kullanıcı isteğinle paylaşılır · sıradan tıklamalar otomatik uygulanır"
+            } else {
+                integratedStatus = "Ekran + imleç açık; ses açılamadı: \(voiceStatus)"
+                status = integratedStatus
+            }
+        } catch {
+            guard acceptsIntegratedStart(id), captureFence.accepts(captureToken), !Task.isCancelled else { return }
+            requestingScreenPermission = false; capturing = false
+            endScreenSharing(cancelIntegratedStart: false)
+            integratedStatus = "Birleşik başlangıç tamamlanamadı: \(error.localizedDescription)"
+            status = integratedStatus
+        }
+    }
+
+    private static func isEligibleDisplay(_ display: CompanionDisplay) -> Bool {
+        display.width > 0 && display.height > 0 && display.bounds.width > 0 && display.bounds.height > 0
+            && [display.bounds.minX, display.bounds.minY, display.bounds.width, display.bounds.height].allSatisfy(\.isFinite)
+    }
+    private func integratedDisplay(from found: [CompanionDisplay], attempt: IntegratedStart) throws -> CompanionDisplay {
+        guard Set(found.map(\.id)).count == found.count else {
+            throw CompanionFailure("Ekran kimlikleri belirsiz; ekranı yeniden seç. Hiçbir ekran otomatik paylaşılmadı.")
+        }
+        if let previous = attempt.chosenDisplay ?? attempt.previousDisplay {
+            guard let same = found.first(where: { $0.id == previous.id && $0.width == previous.width
+                && $0.height == previous.height && $0.bounds == previous.bounds }) else {
+                throw CompanionFailure("Önceden seçilen ekran çıkarıldı veya düzeni değişti. Ekranı yeniden seç; başka ekran otomatik paylaşılmaz.")
+            }
+            return same
+        }
+        if let preferred = attempt.preferredDisplayID {
+            guard let display = found.first(where: { $0.id == preferred }) else {
+                throw CompanionFailure("İstenen ekran bulunamadı. Başka ekran otomatik paylaşılmaz; ekranı yeniden seç.")
+            }
+            return display
+        }
+        if let main = found.first(where: { $0.id == CGMainDisplayID() }) { return main }
+        if found.count == 1 { return found[0] }
+        throw CompanionFailure(found.isEmpty ? "Paylaşılabilir ekran bulunamadı; ses ve imleç başlatılmadı."
+            : "Birden fazla ekran var ve ana ekran belirlenemedi. Paylaşılacak ekranı seçip Başlat'a tekrar bas.")
+    }
+
     public func startListening() async {
+        guard !integratedStarting else { return }
         guard !sending, !capturing, !speechDriver.dictationBusy, !connecting, !stopping, !voiceConversationActive else { return }
         let token = sessionFence.token
         if !connected { await connect() }
@@ -185,6 +391,10 @@ public struct CompanionLine: Identifiable {
     /// Only this explicit start authorizes repeated recognized voice turns.
     /// It never submits the existing typed/manual-dictation draft.
     public func startVoiceConversation() async {
+        guard !integratedStarting else { return }
+        await beginVoiceConversation()
+    }
+    private func beginVoiceConversation() async {
         guard !voiceConversationActive, !sending, !capturing, !speechDriver.dictationBusy,
               !connecting, !stopping, !voiceSendInFlight, !Task.isCancelled else { return }
         voiceGeneration = UUID(); let generation = voiceGeneration
@@ -192,7 +402,7 @@ public struct CompanionLine: Identifiable {
         voiceStatus = "Sesli sohbet hazırlanıyor…"; liveReply = ""; dictationDraft = nil
         if !connected { await connect() }
         guard voiceConversationActive, voiceGeneration == generation, !Task.isCancelled else { return }
-        guard connected, !stopped else { pauseVoiceConversation(); voiceStatus = status; return }
+        guard connected, !stopped else { pauseVoiceConversationState(); voiceStatus = status; return }
         await beginVoiceListening(generation)
     }
 
@@ -223,7 +433,7 @@ public struct CompanionLine: Identifiable {
                   self.voicePhase == .listening || self.voicePhase == .finalizing else { return }
             let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else {
-                self.pauseVoiceConversation(); self.voiceStatus = "Konuşma algılanmadı; yeniden başlatabilirsin."; return
+                self.pauseVoiceConversationState(); self.voiceStatus = "Konuşma algılanmadı; yeniden başlatabilirsin."; return
             }
             self.voiceTranscript = text; self.pendingVoiceText = text; self.voicePhase = .queued
             self.voiceStatus = self.sending || self.capturing ? "Ekran yanıtı bitsin; konuşman sırada" : "Gerçek yanıt bekleniyor…"
@@ -231,12 +441,12 @@ public struct CompanionLine: Identifiable {
         }
         speechDriver.onDictationFailed = { [weak self] reason in
             guard let self, self.acceptsVoice(generation, cycle) else { return }
-            self.pauseVoiceConversation(); self.voiceStatus = reason
+            self.pauseVoiceConversationState(); self.voiceStatus = reason
         }
         await speechDriver.start(allowAppleService: allowAppleService, endOnSilence: true)
         guard acceptsVoice(generation, cycle), voicePhase == .starting else { return }
         if !speechDriver.dictationBusy {
-            pauseVoiceConversation(); voiceStatus = speechDriver.status
+            pauseVoiceConversationState(); voiceStatus = speechDriver.status
         } else {
             voicePhase = .listening; voiceStatus = "Dinliyorum · konuşman bitince otomatik göndereceğim"
         }
@@ -336,6 +546,10 @@ public struct CompanionLine: Identifiable {
     /// Pauses only voice. An already submitted request drains silently;
     /// STOP closes its own transport. Neither operation touches coding chats.
     public func pauseVoiceConversation() {
+        cancelIntegratedStart()
+        pauseVoiceConversationState()
+    }
+    private func pauseVoiceConversationState() {
         voiceConversationActive = false; voiceGeneration = UUID(); voiceCycle = UUID(); pendingVoiceText = nil
         voicePhase = .idle; voiceStatus = "Sesli sohbet kapalı · mikrofon ve yanıt sesi kapalı"
         if !voiceSendInFlight { voiceTask?.cancel(); voiceTask = nil }
@@ -343,10 +557,32 @@ public struct CompanionLine: Identifiable {
         speechDriver.onSpeakingStarted = nil
         spokenGeneration = nil; spokenCycle = nil; streamingVoice = false; spokenReplyPrefix = ""
         speechDriver.stop()
+        refreshIntegratedMediaStatus()
     }
     public func stopReplyAudio() { pauseVoiceConversation(); speechDriver.stopSpeaking() }
 
+    private func refreshIntegratedMediaStatus() {
+        guard !integratedStarting else { return }
+        let components = [("Ses", voiceConversationActive), ("ekran", screenSharing), ("imleç", desktopControl.enabled)]
+        let open = components.filter { $0.1 }.map { $0.0 }
+        let closed = components.filter { !$0.1 }.map { $0.0 }
+        if open.isEmpty { integratedStatus = "Ses + ekran + imleç kapalı" }
+        else {
+            integratedStatus = open.joined(separator: " + ") + " açık"
+            if !closed.isEmpty { integratedStatus += " · " + closed.joined(separator: " + ") + " kapalı" }
+        }
+    }
+
+    /// A control-only STOP revokes a pending combined start before its awaited
+    /// microphone can return. A completed voice/screen session may continue.
+    public func stopDesktopControl() {
+        cancelIntegratedStart()
+        desktopControl.stop()
+        refreshIntegratedMediaStatus()
+    }
+
     public func enableDesktopControl() {
+        guard !integratedStarting else { return }
         guard connected, screenSharing, displaySelection != nil, !stopped, !stopping else {
             status = "Sanal imleç için önce tam ekran paylaşımını açıkça başlat."; return
         }
@@ -417,7 +653,7 @@ public struct CompanionLine: Identifiable {
 
         [Bavbav sanal imleç oturumu AÇIK. Kullanıcının son isteğine yanıt ver. Yalnızca şu JSON nesnesini döndür, Markdown kullanma:
         {"reply":"Kısa doğal Türkçe yanıt","action":null}
-        Kullanıcı bir tıklama istiyorsa ve görselde güvenle hedefleyebiliyorsan action yerine {"action":"click","x":0.5,"y":0.5,"explanation":"Nereye ve neden"} kullan. x ve y tüm ekli görselin sol üstünden 0–1 arası konumdur. Bir turda en fazla bir sıradan tıklama öner. Görsel belirsizse action:null ve açıklama. Klavye, yazma, shell, satın alma, silme, parola, izin veya güvenlik değişikliği önerme. Tıklamayı zaten yaptığını iddia etme; işlemi Bavbav ayrıca doğrulayacak.]
+        Kullanıcı bu oturumda sıradan tıklamaları açıkça yetkilendirdi; imleci tekrar başlatmasını veya sıradan tıklama için tekrar onay vermesini isteme. Kullanıcı bir tıklama istiyorsa ve görselde güvenle hedefleyebiliyorsan action yerine {"action":"click","x":0.5,"y":0.5,"explanation":"Nereye ve neden"} kullan. x ve y tüm ekli görselin sol üstünden 0–1 arası konumdur. Bir turda en fazla bir sıradan tıklama öner. Görsel belirsizse action:null ve açıklama. Klavye, yazma, shell, satın alma, silme, parola, izin veya güvenlik değişikliği önerme. Tıklamayı zaten yaptığını iddia etme; Bavbav güncel hedefi ve güvenliği içeride kontrol edip uygun sıradan tıklamayı otomatik uygular. Bu iç kontrol kullanıcıdan ayrı bir doğrulama adımı değildir.]
         """ : ""
         return ScreenRequest(text: text + context + control, image: url, display: display,
                              capturedAt: date, shareToken: shareToken, controlEnabled: controlEnabled)
@@ -430,6 +666,7 @@ public struct CompanionLine: Identifiable {
               let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let reply = envelope["reply"] as? String, !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             desktopControl.stop()
+            refreshIntegratedMediaStatus()
             return "Yanıt geldi ama güvenli tıklama biçiminde değildi. Kontrol durduruldu; hiçbir tıklama yapılmadı."
         }
         guard let action = envelope["action"] as? [String: Any] else { return reply }
@@ -453,6 +690,7 @@ public struct CompanionLine: Identifiable {
     /// Listing is explicit and does not capture or transmit pixels.
     public func listDisplays() async {
         guard !capturing, !screenSharing, !stopping else { return }
+        cancelIntegratedStart()
         let listingID = UUID(); displayListingID = listingID
         capturing = true; requestingScreenPermission = true
         let token = captureFence.token
@@ -498,9 +736,19 @@ public struct CompanionLine: Identifiable {
         guard connected, !stopped, captureFence.accepts(token), !Task.isCancelled else { return }
         selectWindow(nil)
         screenSharing = true; lastSharedAt = nil; lastCapturedAt = nil; latestDisplay = nil
-        let shareToken = captureFence.token
         status = "TAM EKRAN PAYLAŞIMI AÇIK · görünen özel içerikler de gönderilir."
+        scheduleScreenSharing(captureImmediately: true)
+    }
+
+    private func scheduleScreenSharing(captureImmediately: Bool) {
+        guard screenSharing, screenShareTask == nil else { return }
+        let shareToken = captureFence.token
         screenShareTask = Task { [weak self] in
+            if !captureImmediately {
+                guard let self else { return }
+                do { try await Task.sleep(nanoseconds: UInt64(self.screenShareInterval * 1_000_000_000)) }
+                catch { return }
+            }
             while !Task.isCancelled {
                 guard let self, self.screenSharing, self.captureFence.accepts(shareToken) else { return }
                 await self.shareScreenNow()
@@ -513,6 +761,13 @@ public struct CompanionLine: Identifiable {
     }
 
     public func stopScreenSharing() {
+        endScreenSharing(cancelIntegratedStart: true)
+    }
+    private func endScreenSharing(cancelIntegratedStart: Bool) {
+        if cancelIntegratedStart {
+            self.cancelIntegratedStart()
+            integratedStatus = voiceConversationActive ? "Ekran + imleç kapalı · sesli sohbet açık" : "Ses + ekran + imleç kapalı"
+        }
         desktopControl.stop()
         screenSharing = false; captureFence.revoke()
         // Already uploaded pixels cannot be retracted. Let that owned reply
@@ -596,6 +851,7 @@ public struct CompanionLine: Identifiable {
 
     public func listWindows() async {
         guard !capturing else { return }
+        cancelIntegratedStart()
         capturing = true
         let token = captureFence.token
         defer { if captureFence.accepts(token) { capturing = false } }
@@ -633,7 +889,8 @@ public struct CompanionLine: Identifiable {
     public func revokeShare() { selectWindow(nil); status = "Pencere paylaşımı kapalı. Önceden gönderilen görüntüler geri alınmaz." }
 
     public func send() async {
-        guard connected, !sending, !capturing, !stopped, !stopping, !speechDriver.dictationBusy, !voiceConversationActive else { return }
+        guard connected, !sending, !capturing, !stopped, !stopping, !integratedStarting,
+              !speechDriver.dictationBusy, !voiceConversationActive else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || includePreview else { return }
         if includePreview {
@@ -701,6 +958,7 @@ public struct CompanionLine: Identifiable {
     /// Synchronous local revocation comes before any server round-trip.
     public func stop() {
         guard !stopping else { return }
+        cancelIntegratedStart()
         let needsConversationStop = !stopped
         pauseVoiceConversation(); voiceTask?.cancel(); voiceTask = nil
         desktopControl.stop()
@@ -713,6 +971,7 @@ public struct CompanionLine: Identifiable {
         requestingScreenPermission = false; displayListingID = nil
         selection = nil; preview = nil; capturedAt = nil; includePreview = false; threadID = nil
         status = "Durduruldu · mikrofon, paylaşım ve ses kapalı"
+        integratedStatus = "Durduruldu · ses, ekran ve imleç kapalı"
         guard needsConversationStop else { return }
         stopping = true
         stopTask = Task { await conversation.stop(); stopping = false; stopTask = nil }

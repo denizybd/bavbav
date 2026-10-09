@@ -39,7 +39,9 @@ public struct CompanionDisplay: Identifiable, Equatable, Sendable {
 }
 
 @MainActor public protocol CompanionScreenSource: AnyObject {
-    /// Invoked only by the visible selection button, never by connect or a timer.
+    /// A read-only permission check used to resume a still-pending explicit start.
+    var displaySelectionAccessReady: Bool { get }
+    /// Invoked only by visible selection/start controls, never by connect or a timer.
     func prepareDisplaySelection() async throws
     func windows() async throws -> [CompanionWindow]
     func capture(_ window: CompanionWindow) async throws -> Data
@@ -50,6 +52,7 @@ public struct CompanionDisplay: Identifiable, Equatable, Sendable {
 /// Legacy window-only adapters remain compatible, but never broaden their scope
 /// by substituting a window or an arbitrary display for a full-screen request.
 public extension CompanionScreenSource {
+    var displaySelectionAccessReady: Bool { true }
     func prepareDisplaySelection() async throws {}
     func displays() async throws -> [CompanionDisplay] {
         throw CompanionFailure("Bu ekran kaynağı tam ekran paylaşımını desteklemiyor.")
@@ -62,10 +65,12 @@ public extension CompanionScreenSource {
 @MainActor public final class SelectedWindowSource: CompanionScreenSource {
     public init() {}
 
+    public var displaySelectionAccessReady: Bool { CGPreflightScreenCaptureAccess() }
+
     public func prepareDisplaySelection() async throws {
         try Task.checkCancellation()
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
-            throw CompanionFailure("Ekran Kaydı izni henüz verilmedi. Sistem Ayarları → Gizlilik ve Güvenlik → Ekran ve Sistem Sesi Kaydı altında Bavbav'ı aç; macOS isterse uygulamayı yeniden başlat. Sonra Ekranları seç / yenile'ye tekrar bas.")
+            throw CompanionFailure("Ekran Kaydı izni henüz verilmedi. Sistem Ayarları → Gizlilik ve Güvenlik → Ekran ve Sistem Sesi Kaydı altında Bavbav'ı aç; macOS isterse uygulamayı yeniden başlat. Açık başlangıç bekliyorsa panele döndüğünde izin tekrar sorulmadan kontrol edilir; yeniden başlatma sonrası Başlat'a tekrar bas.")
         }
         try Task.checkCancellation()
     }
@@ -75,6 +80,9 @@ public extension CompanionScreenSource {
         // or account connection. No capture or microphone is started here.
         guard #available(macOS 14.0, *) else {
             throw CompanionFailure("Tam ekran paylaşımı macOS 14 veya üzerini gerektiriyor.")
+        }
+        guard displaySelectionAccessReady else {
+            throw CompanionFailure("Ekran Kaydı izni etkin değil; ekran listesi alınmadı. Açık başlangıç için Sistem Ayarları'ndan izin verip panele dön.")
         }
         try Task.checkCancellation()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -94,6 +102,9 @@ public extension CompanionScreenSource {
     public func captureDisplay(_ selection: CompanionDisplay) async throws -> Data {
         guard #available(macOS 14.0, *) else {
             throw CompanionFailure("Tam ekran paylaşımı macOS 14 veya üzerini gerektiriyor.")
+        }
+        guard displaySelectionAccessReady else {
+            throw CompanionFailure("Ekran Kaydı izni artık etkin değil; ekran görüntüsü alınmadı.")
         }
         try Task.checkCancellation()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)

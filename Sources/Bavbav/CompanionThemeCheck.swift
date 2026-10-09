@@ -9,6 +9,7 @@ import BavbavCompanion
         var clear = 0
         var opaque = 0
         var opaqueGreen = 0
+        var foregroundByRegion: [String: Int] = [:]
     }
 
     static func run() async -> Bool {
@@ -25,17 +26,40 @@ import BavbavCompanion
         func descendants(_ view: NSView) -> [NSView] {
             [view] + view.subviews.flatMap(descendants)
         }
-        func snapshot(_ view: NSView, name: String) throws -> Pixels {
+        func snapshot(_ view: NSView, name: String, regions: [String: NSRect]) throws -> Pixels {
+            var pixels = Pixels()
             view.layoutSubtreeIfNeeded(); view.displayIfNeeded()
             guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
                 throw Failure(message: "native Companion snapshot unavailable")
+            }
+            for (regionName, frame) in regions {
+                guard let region = view.bitmapImageRepForCachingDisplay(in: frame) else {
+                    throw Failure(message: "\(regionName) rendered region snapshot unavailable")
+                }
+                view.cacheDisplay(in: frame, to: region)
+                guard let regionPNG = region.representation(using: .png, properties: [:]) else {
+                    throw Failure(message: "\(regionName) rendered region PNG encoding failed")
+                }
+                try regionPNG.write(to: directory.appendingPathComponent("companion-\(name)-\(regionName).png"), options: .atomic)
+                var foreground = 0
+                for y in 0..<region.pixelsHigh {
+                    for x in 0..<region.pixelsWide {
+                        guard let color = region.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                              color.alphaComponent > 0.98 else { continue }
+                        if max(color.redComponent, color.greenComponent, color.blueComponent) > 0.65,
+                           color.redComponent + color.greenComponent + color.blueComponent > 1.1 {
+                            foreground += 1
+                        }
+                    }
+                }
+                pixels.foregroundByRegion[regionName] = foreground
+                print("COMPANION RENDERED REGION: \(name)/\(regionName) frame=\(frame) opaqueForeground=\(foreground)")
             }
             view.cacheDisplay(in: view.bounds, to: bitmap)
             guard let png = bitmap.representation(using: .png, properties: [:]) else {
                 throw Failure(message: "Companion snapshot PNG encoding failed")
             }
             try png.write(to: directory.appendingPathComponent("companion-\(name).png"), options: .atomic)
-            var pixels = Pixels()
             for y in stride(from: 1, to: bitmap.pixelsHigh, by: 2) {
                 for x in stride(from: 1, to: bitmap.pixelsWide, by: 2) {
                     guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
@@ -77,8 +101,9 @@ import BavbavCompanion
                       "native window identity makes the shared Bavbav host and shortcut explicit")
             try check(identity.permissionGuidance.contains("ayrı bir uygulama değil"),
                       "permission guidance does not direct users to a separate Companion app")
-            try check(!controller.session.screenSharing && !controller.session.desktopControl.enabled,
-                      "reading identity never starts sharing or desktop control")
+            try check(!controller.session.screenSharing && !controller.session.desktopControl.enabled
+                      && !controller.session.voiceConversationActive && !controller.session.integratedStarting,
+                      "constructing Companion and reading identity never starts integrated media/control")
             controller.appIdentity.refresh()
             try check(controller.appIdentity.snapshot.bundleURL == identity.bundleURL,
                       "read-only permission refresh retains the actual main app identity")
@@ -112,14 +137,64 @@ import BavbavCompanion
                 try check(!controller.window.isVisible, "theme check never presents Companion")
                 try check(!controller.session.connected && !controller.session.speech.dictationBusy && !controller.session.speech.speaking,
                           "theme check never starts account inference or audio")
+                try check(!controller.session.integratedStarting && !controller.session.voiceConversationActive
+                          && !controller.session.screenSharing && !controller.session.requestingScreenPermission
+                          && !controller.session.desktopControl.enabled && !controller.session.desktopControl.automaticClicks
+                          && controller.session.preview == nil && controller.session.lastCapturedAt == nil,
+                          "layout/transparency updates never start unified media, permissions, capture or clicks")
                 try check(web.webView == nil, "theme check never creates/navigates the ChatGPT web view")
+                // A hidden SwiftUI window exposes no semantic AX children. Test-only
+                // native backgrounds carry actual laid-out bounds and shared live labels.
+                let elements = descendants(root).filter { $0.identifier?.rawValue.hasPrefix("companion.") == true }
+                let startButtons = elements.filter { $0.identifier?.rawValue == "companion.integratedStart" }
+                try check(startButtons.count == 1, "cold Companion presents one combined Start button")
+                guard let start = startButtons.first,
+                      let stop = elements.first(where: { $0.identifier?.rawValue == "companion.stopAll" }),
+                      let disclosure = elements.first(where: { $0.identifier?.rawValue == "companion.startDisclosure" }),
+                      let advanced = elements.first(where: { $0.identifier?.rawValue == "companion.advanced" }) else {
+                    throw Failure(message: "combined Start, STOP or visible scope disclosure missing")
+                }
+                try check(start.isAccessibilityEnabled() && stop.isAccessibilityEnabled(),
+                          "cold Start and independent STOP are available at \(percent)%")
+                try check(start.accessibilityLabel()?.contains("Ses + ekran + imleci başlat") == true,
+                          "primary action explicitly names voice, screen and cursor")
+                let scopeText = disclosure.accessibilityLabel() ?? ""
+                try check(scopeText.contains("mikrofonu") && scopeText.contains("fiziksel ekranın")
+                          && scopeText.contains("özel bilgiler") && scopeText.contains("tıklamalara") && scopeText.contains("STOP"),
+                          "visible Start disclosure covers microphone, full physical display, private data, clicks and STOP")
+                let startFrame = start.convert(start.bounds, to: root)
+                let stopFrame = stop.convert(stop.bounds, to: root)
+                let disclosureFrame = disclosure.convert(disclosure.bounds, to: root)
+                for element in elements {
+                    try check(!element.isAccessibilityElement() && element.hitTest(.zero) == nil && !element.isOpaque,
+                              "test-only layout backgrounds export no AX, draw no opaque fill and intercept no events")
+                }
+                for (name, frame) in [("Start", startFrame), ("STOP", stopFrame)] {
+                    try check(frame.width >= 100 && frame.height >= 24 && root.bounds.contains(frame),
+                              "\(name) has a visible useful native hit target at \(percent)%")
+                    let hit = root.hitTest(NSPoint(x: frame.midX, y: frame.midY))
+                    try check(hit != nil && !(hit is WindowFocusRing) && !(hit is CornerResizeHandle),
+                              "\(name) target reaches hosted content instead of decorative/corner overlays")
+                }
+                try check(disclosureFrame.height > 0 && root.bounds.contains(disclosureFrame)
+                          && !disclosureFrame.intersects(startFrame) && !startFrame.intersects(stopFrame),
+                          "scope disclosure and primary/STOP targets are visible without overlapping")
+                try check((advanced.accessibilityValue() as? NSNumber)?.boolValue == false
+                          && advanced.bounds.height < 50,
+                          "Gelişmiş remains a collapsed rendered disclosure")
+                try check(!elements.contains(where: { $0.identifier?.rawValue == "companion.voiceConversation" }),
+                          "separate voice start stays inside collapsed advanced controls")
+                let name = percent == 100 ? "transparent" : percent == 50 ? "half" : callbackValues.isEmpty ? "opaque" : "opaque-reset"
+                let pixels = try snapshot(root, name: name, regions: ["start": startFrame, "stop": stopFrame, "disclosure": disclosureFrame])
+                for regionName in ["start", "stop", "disclosure"] {
+                    try check((pixels.foregroundByRegion[regionName] ?? 0) > 8,
+                              "\(regionName) actual bitmap region contains readable opaque foreground at \(percent)%")
+                }
                 if percent == 0 {
-                    let pixels = try snapshot(root, name: callbackValues.isEmpty ? "opaque" : "opaque-reset")
                     try check(pixels.sampled > 100 && pixels.opaque > pixels.sampled * 99 / 100,
                               "actual opaque Companion bitmap covers even gaps at0%")
                     try check(pixels.opaqueGreen > 8, "actual opaque bitmap contains readable fully opaque accent text")
                 } else if percent == 100 {
-                    let pixels = try snapshot(root, name: "transparent")
                     try check(pixels.clear > pixels.sampled / 5, "actual100% Companion bitmap has genuinely clear backdrop regions")
                     try check(pixels.opaqueGreen > 8, "actual100% Companion accent/text remains fully opaque")
                 }
@@ -130,7 +205,7 @@ import BavbavCompanion
             try check(currentUserTransparency == originalUserTransparency, "user's saved transparency remains untouched")
             await controller.shutdown()
             try check(!controller.session.stopping, "hidden cold shutdown finishes without starting a worker")
-            print("COMPANION THEME CHECK PASSED: \(count) checks; hidden real host, background-only alpha, opaque foreground, shared preference updates, native corners/focus; no audio/network/capture")
+            print("COMPANION THEME CHECK PASSED: \(count) checks; hidden real host, combined Start/disclosure/STOP hit targets, collapsed advanced controls, background-only alpha, opaque foreground, shared preference updates, native corners/focus; no audio/network/capture")
             print("COMPANION THEME SNAPSHOTS: \(directory.path)")
             return true
         } catch {

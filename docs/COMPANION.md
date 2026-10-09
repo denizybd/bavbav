@@ -18,6 +18,26 @@ The normal packaging path now requires a stable configured certificate, stages
 and checks an update separately, and refuses to replace a running GUI. A native
 OS permission still needs the user's approval after the signer transition.
 
+## One start for voice, screen and cursor
+
+The primary **Ses + ekran + imleci başlat** button visibly authorizes this
+session's full-display sharing, ordinary requested clicks and microphone/speech.
+It replaces the separate screen-consent checkbox, share-start and control-start
+steps. The account connects, the chosen/main physical display is enumerated,
+the first actual frame is prepared, cursor access is checked, then voice starts.
+No extra "enable virtual cursor verification" step exists. Target verification
+still happens internally before a native click; it is not a per-click user prompt.
+The interface reports actual component states instead of treating a preview as
+proof that a model has received an image.
+
+Opening ⌘6, account connection, application launch and reconnect do not start this
+flow. macOS Screen Recording, Accessibility, microphone and speech decisions
+remain with the user. A still-pending explicit start can resume after permissions
+are granted and the native panel regains focus, without requesting the same
+permission again. STOP, closing/switching routes or losing the account revoke
+that pending start; focus cannot restore an old session. Detailed voice-only,
+interval and screen-selection settings remain under **Gelişmiş**.
+
 ## What is implemented
 
 `BavbavCompanion` is a Swift library product with a native SwiftUI panel.
@@ -31,7 +51,8 @@ This is **macOS speech recognition → text → Codex → macOS speech synthesis
 not built-in ChatGPT Voice, not realtime audio inference. The native panel states
 this distinction. Turkish recognition uses `tr-TR`; if on-device Turkish is
 unavailable, sending audio to Apple's speech service requires the separate
-unchecked opt-in. **Sesli sohbeti başlat** explicitly starts automatic turn-taking:
+unchecked opt-in. The primary integrated start (or advanced voice-only start)
+explicitly starts automatic turn-taking:
 recognized speech ends after about 1.35 seconds of quiet (audio energy prevents
 cutting a continuing phrase), its final text is sent once to the existing account,
 verified final-answer sentences begin native synthesis before the full reply
@@ -64,12 +85,13 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 
 ## Sharing and stop boundaries
 
-- Choose a **full physical display**, set the interval (3–60 seconds; default 10),
-  check the visible full-screen consent and click Start. Enumeration/selection
-  alone does not capture or send; startup/reconnection never restores consent.
-  The visible screen-list button explicitly checks/requests macOS Screen Recording
-  permission, displays retry/settings guidance if denied, and selects the sole
-  connected screen automatically. Multiple screens still need an explicit choice.
+- The visible integrated Start authorizes a **full physical display**, with a
+  configurable interval (3–60 seconds; default 10). It uses the existing valid
+  selection or the Mac's main display; extra screens are not silently combined.
+  Advanced display enumeration/selection alone does not capture or send;
+  startup/reconnection never restores consent. Normal macOS Screen Recording
+  permission is requested at the explicit start/selection boundary; denial
+  displays permission guidance and is not reported as a successful start.
   All visible windows, desktop, Dock and menu bar on that display can contain
   private information and will be shared. Extra displays are not silently added.
 - A ScreenCaptureKit full-display filter (macOS 14+) captures a bounded PNG:
@@ -116,9 +138,11 @@ revokes that eligibility. Application quit awaits the dedicated worker teardown.
 
 ## Visible virtual cursor and desktop clicks
 
-Screen sharing alone never grants computer input. A separate local unchecked
-consent and **Sanal imleç kontrolünü başlat** starts all-visible-app scope. The
-native adapter requires macOS Accessibility permission; it is never bypassed.
+Screen sharing alone never grants computer input. The primary integrated Start
+explicitly includes ordinary requested clicks in its visible session scope,
+without an additional control-start checkbox or button. Legacy SDK screen-only
+and voice-only methods do not enable control implicitly. The native adapter
+requires macOS Accessibility permission; it is never bypassed.
 Each actual user turn may propose one strictly parsed normalized click, paired
 with a natural Turkish reply. JSON is hidden from speech and never executed as
 code. The green click-through cursor shows the verified proposed point without
@@ -200,20 +224,21 @@ Manual acceptance:
 
 1. Open Command 6, connect and exchange a short text message.
 2. Click “Türkçe sesi dene”; confirm actual sound and “Yanıt sesini durdur”.
-3. Start **Sesli sohbeti başlat**, grant microphone/speech permissions yourself,
+3. Click **Ses + ekran + imleci başlat**, grant native permissions yourself,
    opt into Apple speech only if needed, and say a fresh Turkish phrase. Verify
    the displayed transcript automatically sends once after quiet, a real answer
    arrives and is audibly spoken, and listening resumes only after playback.
    Stop reply audio or mute: no automatic restart must follow. Separately verify
    **Yalnızca metne yaz** still requires manual Send and preserves a typed draft.
-4. Clear private screen content, select the full display, consent, start sharing.
+4. Clear private screen content before integrated Start; choose a different
+   physical display in Advanced before starting if needed.
    Verify a new preview and capture time, but do not mistake that for model receipt.
    Ask about a visual detail absent from your prompt; verify the attached frame
    reaches the model. Change that detail and repeat after a second frame. STOP
    sharing, send another message and confirm no new pixels are attached. Verify
    optional proactive observations separately; keep them off for latency testing.
-5. Explicitly enable the virtual cursor with its local consent and grant macOS
-   Accessibility yourself. Use a harmless ordinary target (e.g. selecting a blank
+5. The integrated Start also enables the virtual cursor after actual screen
+   readiness; grant macOS Accessibility yourself. Use a harmless ordinary target (e.g. selecting a blank
    document toolbar), ask for one click, and verify the green preview, native
    dispatch and actual target-app result separately. Move/close the target or STOP
    while a response is pending: no old click may be replayed or redirected. Never

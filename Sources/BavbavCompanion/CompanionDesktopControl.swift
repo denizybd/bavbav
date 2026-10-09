@@ -92,6 +92,8 @@ public struct CompanionDesktopCaptureSnapshot: Sendable {
 }
 
 @MainActor public protocol CompanionDesktopExecuting: AnyObject {
+    /// Read-only preflight. It must never display an authorization prompt.
+    var controlAccessReady: Bool { get }
     /// Only the visible local enable action may call this; never model output.
     func prepareControlAccess() -> Bool
     func visibleWindows(in screenshotBounds: CGRect) async throws -> [CompanionDesktopWindowSnapshot]
@@ -104,6 +106,7 @@ public struct CompanionDesktopCaptureSnapshot: Sendable {
 
 public extension CompanionDesktopExecuting {
     // Injectable fixture executors do not ask macOS for permissions.
+    var controlAccessReady: Bool { true }
     func prepareControlAccess() -> Bool { true }
 }
 
@@ -114,6 +117,7 @@ public extension CompanionDesktopExecuting {
 
 /// Explicit local scope + one model proposal per user turn. Sharing, microphone
 /// activation and account connection never enable computer control implicitly.
+/// The visible combined start is also an explicit local control authorization.
 @MainActor public final class CompanionDesktopControl: ObservableObject {
     @Published public private(set) var enabled = false
     @Published public private(set) var automaticClicks = false
@@ -121,6 +125,7 @@ public extension CompanionDesktopExecuting {
     @Published public private(set) var pending: CompanionDesktopProposal?
     @Published public private(set) var status = "Bilgisayar kontrolü kapalı"
     public private(set) var scope: CompanionDesktopScope = .allVisibleApps
+    public var controlAccessReady: Bool { executor.controlAccessReady }
     public static let proposalLifetime: TimeInterval = 20
     public static let maximumFrameAge: TimeInterval = 10
     private let executor: any CompanionDesktopExecuting
@@ -152,13 +157,15 @@ public extension CompanionDesktopExecuting {
         gate = SafetyGate(clock: clock, maxFrameAge: Self.maximumFrameAge, leaseDuration: 20, actionTimeout: 2)
     }
 
-    /// Call only from an explicit visible local control toggle, not model output.
-    public func enable(scope: CompanionDesktopScope = .allVisibleApps, automaticClicks: Bool = true) {
+    /// Call only from explicit visible local start controls or their pending
+    /// permission continuation, never model output or a fresh account connection.
+    public func enable(scope: CompanionDesktopScope = .allVisibleApps, automaticClicks: Bool = true,
+                       requestPermissions: Bool = true) {
         guard !executing else { status = "Önce mevcut tıklamanın durmasını bekle."; return }
         revokeProposal()
-        guard executor.prepareControlAccess() else {
+        guard (requestPermissions ? executor.prepareControlAccess() : executor.controlAccessReady) else {
             enabled = false; self.automaticClicks = false
-            status = "Erişilebilirlik ve Ekran Kaydı izni gerekiyor. Sistem Ayarları → Gizlilik ve Güvenlik altında Bavbav'a izin ver; sonra Kontrolü başlat'a tekrar bas. Otomatik izin verilmez."
+            status = "Erişilebilirlik ve Ekran Kaydı izni gerekiyor. Sistem Ayarları → Gizlilik ve Güvenlik altında Bavbav'a izin ver; açık birleşik başlangıç bekliyorsa panele dön. Otomatik izin verilmez."
             return
         }
         self.scope = scope; self.automaticClicks = automaticClicks; enabled = true

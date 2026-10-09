@@ -312,3 +312,59 @@ was performed. Original projects/chats/keys and recoverable previous app bundles
 remain intact. Full-display image-to-model, actual microphone loop, new audible
 acceptance and native click acceptance still remain distinct pending gates;
 the original integration goal is not product complete.
+
+## Combined explicit session start — 0.10.4 / build62
+
+The native ⌘6 route now presents one **Ses + ekran + imleci başlat** action,
+with the full-display/microphone/ordinary-click scope disclosed beside it.
+Independent STOP remains visible outside the scrollable body. Advanced manual
+controls are collapsed by default. Opening the app/panel, connecting an account
+or reconnecting does not start media or authorize control. The model guidance
+no longer asks for a nonexistent virtual-cursor verification switch.
+
+An explicit start connects the existing account, obtains ordinary native
+permission readiness, binds the existing selected/preferred/main physical
+display, captures the first real nonempty image, enables bounded control and
+starts voice. Ambiguous/missing/reconfigured display selection fails closed.
+Pending Screen Recording or control permission may resume only the same still-
+authorized start on focus, with read-only readiness checks and no repeat prompts.
+STOP, close, disconnect, cancellation and selection changes revoke pending
+intent; old callbacks cannot restart media. Later recognition/control failures
+update the visible status from actual remaining media flags. No autonomous model
+turn is sent at startup or on capture ticks. Native permission decisions still
+belong to the user; ordinary click restrictions and independent STOP are retained.
+
+Final stage-only packaging completed successfully with:
+
+- **1,500 Companion assertions**, including **575 integrated startup assertions**
+  and81 bounded-control assertions. These use injected account, screen, speech
+  and cursor adapters; image bytes reach the injected transport, not a real model.
+- **138 hidden native rendering/layout checks** at0/50/100% transparency,
+  plus19 scoped-hotkey and34 single-instance checks. Start and pinned STOP have
+  actual laid-out native hit targets; collapsed advanced controls are verified.
+  Hidden SwiftUI accessibility trees are empty on this OS, so test-only,
+  noninteractive native markers expose real layout and independently captured
+  pixels establish rendered foreground. Normal runtime has no marker views.
+- All existing packaged regressions, including connection, scrolling, composer,
+  rename, shortcuts, image/link/rich-message rendering and performance checks.
+- Deep/strict signature verification and a completed receipt binding version,
+  candidate path, binary SHA-256 and CodeDirectory hash.
+
+Candidate: `dist/.bavbav-build.IGcqbI/Bavbav.app`.
+Binary SHA-256: `bef3e87abcba214c589e833236a802bc224bad1fc2dd47e00a1d947475e11d15`.
+CDHash: `5011170eb87539a8d61a1ada8b986acdf01cca79`.
+Native snapshots are in the temporary `bavbav-companion-theme-9D6A8EF5-DBA8-4F6D-99E0-2187779C0A85`
+directory; opaque and transparent renders were inspected for readable disclosure,
+foreground, Start and STOP without overlap or clipping. Diagnostic host permission
+labels are not evidence of the running GUI's capture authorization.
+
+This was an explicitly development-only ad-hoc build. The installed canonical
+build60 and running PID29396 were not replaced or restarted. There are still
+zero valid signing identities; creation of a persistent local signing certificate
+and private key has not been authorized. No certificate/Keychain/TCC change,
+permission grant, live capture/input or real-account turn occurred in this QA.
+Restarting macOS is not a substitute for resolving that signer/permission binding.
+Real Turkish microphone loop, full-display image arrival at the model, audible
+response from this version and native click acceptance remain pending. The new
+combined-start implementation is regression-tested, not a fully accepted live
+product. Original projects, chats and keys remain intact.

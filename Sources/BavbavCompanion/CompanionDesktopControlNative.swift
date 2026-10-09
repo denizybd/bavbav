@@ -3,17 +3,21 @@ import ApplicationServices
 import CoreGraphics
 import CompanionSafety
 
-/// Native path is intentionally mouse-click only. No permission requests,
-/// keyboard events, shell, background-app remapping or credential extraction.
+/// Native input is intentionally mouse-click only. Permission prompts belong
+/// to the explicit local start; no keyboard, shell or credential operations.
 @MainActor public final class CompanionDesktopNativeExecutor: CompanionDesktopExecuting {
     public init() {}
     public var permissionsReady: Bool { AXIsProcessTrusted() && CGPreflightScreenCaptureAccess() && CGPreflightPostEventAccess() }
+    public var controlAccessReady: Bool { permissionsReady }
 
     public func prepareControlAccess() -> Bool {
         // Visible local Start is the only authorization prompt boundary. This
         // requests the user's macOS decision; it never clicks or bypasses Allow.
+        // Request event synthesis too, rather than leaving a failed post-event
+        // preflight with no way to resolve it through the integrated Start.
+        let mayPost = CGPreflightPostEventAccess() || CGRequestPostEventAccess()
         let trusted = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-        return trusted && CGPreflightScreenCaptureAccess() && CGPreflightPostEventAccess()
+        return trusted && CGPreflightScreenCaptureAccess() && mayPost
     }
 
     public func visibleWindows(in screenshotBounds: CGRect) async throws -> [CompanionDesktopWindowSnapshot] {

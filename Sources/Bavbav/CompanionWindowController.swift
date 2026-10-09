@@ -26,7 +26,7 @@ import BavbavCompanion
         window = CompanionWindow(contentRect: NSRect(x: 0, y: 0, width: 670, height: 810),
                                  styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
-        window.title = "Bavbav · ⌘6 · Ses + Ekran"
+        window.title = "Bavbav · ⌘6 · Ses + Ekran + İmleç"
         window.identifier = NSUserInterfaceItemIdentifier("bavbav.companion")
         window.level = .normal; window.minSize = NSSize(width: 560, height: 520)
         window.isReleasedWhenClosed = false; window.delegate = self
@@ -162,7 +162,16 @@ import BavbavCompanion
         }
     }
     func windowWillClose(_ notification: Notification) { stop() }
-    func windowDidBecomeKey(_ notification: Notification) { appIdentity.refresh() }
+    func windowDidBecomeKey(_ notification: Notification) {
+        appIdentity.refresh()
+        guard nativeRoute, !checkingWebRoute, window.isVisible, session.integratedStarting else { return }
+        // The core accepts this only for a pending explicit Start and performs
+        // read-only permission checks. Opening/focusing Companion grants no scope.
+        Task { [weak self] in
+            guard let self, self.nativeRoute, !self.checkingWebRoute, self.window.isVisible else { return }
+            await self.session.resumeIntegratedStartAfterPermissions()
+        }
+    }
     func stop() {
         cancelOpeningConnection()
         session.stop()
@@ -215,8 +224,8 @@ private struct CompanionHostView: View {
                 }
                 if showingIdentityDetails { appIdentityDetails }
                 HStack(spacing: 8) {
-                    routeButton("Bavbav · Mac sesi", useWeb: false)
-                    routeButton("ChatGPT web · doğrulama", useWeb: true)
+                    routeButton("Bavbav · ses + ekran + imleç", useWeb: false)
+                    routeButton("ChatGPT web", useWeb: true)
                 }
             }.padding(12).background(BavbavTheme.surface.panelBackdrop())
             if web {

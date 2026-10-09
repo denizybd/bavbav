@@ -25,7 +25,10 @@ Bavbav brings Codex conversations into compact, independent macOS windows. Keep 
 Built in Swift with AppKit and SwiftUI, Bavbav connects to your installed Codex App Server over local stdio. It uses your existing Codex setup for models, authentication, and coding tools.
 
 Companion (`⌘6`) adds a native Turkish voice and opt-in periodic full-screen sharing panel
-using that account, without a separate API key. This first integration uses
+using that account, without a separate API key. One visible **Ses + ekran + imleci başlat**
+action starts screen preparation, ordinary requested cursor clicks and voice together;
+opening the panel alone never starts media. Native macOS permissions still require
+the user's decision. This first integration uses
 macOS speech services rather than built-in ChatGPT Voice. See
 [capabilities, privacy boundaries and live acceptance steps](docs/COMPANION.md).
 

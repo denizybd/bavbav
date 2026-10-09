@@ -1081,6 +1081,7 @@ import CompanionSafety
         CompanionSpeechEndpointTests.run()
         CompanionSpeechPlaybackTests.run()
         checks += await CompanionDesktopControlChecks.run()
+        checks += await CompanionIntegratedSessionTests.run()
         await tests.testRepeatedOpenConnectsOnceWithoutMediaOrSend()
         await tests.testStopDuringConnectRejectsLateSuccessAndFailure()
         await tests.testFailedAccountConnectionAllowsSafeRetry()
