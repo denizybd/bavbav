@@ -25,9 +25,29 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     private var refreshTimer: Timer?
     private var conversationSyncTimer: Timer?
     private var terminationRequested = false
+    private var companion: CompanionWindowController?
+    private var diagnosticRun = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
+        diagnosticRun = environment.keys.contains { $0.hasPrefix("BAVBAV_") && $0.contains("CHECK") }
+        if environment["BAVBAV_COMPANION_LIVE_CHECK"] == "1" {
+            Task { Foundation.exit(await CompanionAcceptanceCheck.run() ? 0 : 1) }
+            return
+        }
+        if CommandLine.arguments.contains("--companion-only") {
+            // An explicit launch mode for opening the real component without
+            // restarting existing coding windows or registering their hotkeys.
+            ApplicationMenu.install()
+            showCompanion(nil)
+            if CommandLine.arguments.contains("--companion-ui-report") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.companion?.exportPreview() }
+            }
+            if CommandLine.arguments.contains("--companion-web-probe") {
+                Task { await companion?.verifyVisibleWebRoute() }
+            }
+            return
+        }
         if environment["BAVBAV_CONNECTION_CHECK"] == "1" {
             Task { Foundation.exit(await ConnectionRecoveryCheck.run() ? 0 : 1) }
             return
@@ -194,7 +214,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                     case 2: self.panels.showGroup(.recents)
                     case 3: self.panels.showGroup(.chatgpt)
                     case 4: self.panels.showGroup(.settings)
-                    case 5: self.panels.showJournal()
+                    case 5: self.showCompanion(nil)
+                    case 6: self.panels.showJournal()
                     default: break
                     }
                 }
@@ -665,6 +686,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         guard !headlessCheck else { return }
+        if CommandLine.arguments.contains("--companion") { showCompanion(nil) }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
@@ -687,7 +709,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        guard store != nil else { return }
+        guard store != nil, !diagnosticRun else { return }
         // The system restores hidden windows. Only create an entry point when
         // every panel was explicitly closed with Q; never reorder existing chats.
         if !NSApp.isHidden, !panels.hasVisibleWindows { panels.showInitialPanel() }
@@ -702,6 +724,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !diagnosticRun else { return true }
         guard panels != nil else { return true }
         sender.unhide(nil)
         if !panels.hasVisibleWindows { panels.showInitialPanel() }
@@ -709,6 +732,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        companion?.stop()
         appIconController?.stop()
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
@@ -718,6 +742,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard store != nil else { return .terminateNow }
         guard !terminationRequested else { return .terminateLater }
         terminationRequested = true
+        companion?.stop()
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
         Task {
@@ -744,7 +769,12 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showAppSettings(_ sender: Any?) {
-        panels.showAppSettings()
+        panels?.showAppSettings()
+    }
+
+    @objc func showCompanion(_ sender: Any?) {
+        if companion == nil { companion = CompanionWindowController(webSession: store?.chatGPTSession ?? ChatGPTWebSession()) }
+        companion?.show()
     }
 
     @objc private func refreshNow() {
@@ -768,6 +798,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Write Control", action: #selector(showSettings), keyEquivalent: "").representedObject = "*.models.key"
         menu.addItem(withTitle: "Journal", action: #selector(showJournal), keyEquivalent: "").representedObject = "*.journal.key"
         menu.addItem(withTitle: "Settings", action: #selector(showAppSettings(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Companion · Ses ve pencere…", action: #selector(showCompanion(_:)), keyEquivalent: "").representedObject = "*.companion.key"
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Refresh Codex", action: #selector(refreshNow), keyEquivalent: "").representedObject = "*.refresh.key"
         menu.addItem(NSMenuItem.separator())

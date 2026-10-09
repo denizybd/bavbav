@@ -226,7 +226,7 @@ enum JournalCheck {
             }
             try check(window.level == .normal && !window.isFloatingPanel, "calendar is an ordinary macOS window")
             try check(window.contentView is CornerResizeContainer && window.minSize.width == 360, "corner resizing and focus ring container")
-            try check(AppPreferences.shortcuts.contains(where: { $0.keys == "⌘5" }), "calendar shortcut appears in settings")
+            try check(AppPreferences.shortcuts.contains(where: { $0.id == "*.journal.key" && $0.keys == "⌘6" }), "calendar Command 6 appears in settings independently from Companion")
             try check(router.handle(key(49)) == nil && nav.route == .day, "Space enters selected day")
             _ = router.handle(key(49))
             try check(nav.route == .note && nav.selected != nil, "Space enters note")

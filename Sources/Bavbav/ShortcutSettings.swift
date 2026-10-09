@@ -98,7 +98,7 @@ enum ShortcutCatalog {
         }
         for (op, title, code) in [("projects","Focus Projects",18), ("recents","Focus recent chats",19),
             ("standalone","Focus standalone chats",20), ("models","Focus model settings",21),
-            ("journal","Focus journal",23)] {
+            ("companion","Focus Companion voice and window sharing",23), ("journal","Focus journal",22)] {
             add("*", "Windows · global", op, title, UInt16(code), .command, global: true)
         }
         for (op,title,code,flags) in [

@@ -7,6 +7,7 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
+        .library(name: "BavbavCompanion", targets: ["BavbavCompanion"]),
         .executable(name: "Bavbav", targets: ["Bavbav"])
     ],
     dependencies: [
@@ -14,13 +15,16 @@ let package = Package(
         .package(path: "Vendor/SwiftMath")
     ],
     targets: [
+        .target(name: "CompanionSafety", exclude: ["NOTICE.md"]),
+        .target(name: "BavbavCompanion", dependencies: ["BavbavCore", "CompanionSafety"]),
+        .executableTarget(name: "BavbavCompanionChecks", dependencies: ["BavbavCompanion", "CompanionSafety"], path: "Tests/BavbavCompanionTests"),
         .target(
             name: "BavbavCore",
             path: "Sources/BavbavCore"
         ),
         .executableTarget(
             name: "Bavbav",
-            dependencies: ["BavbavCore", .product(name: "Markdown", package: "swift-markdown"),
+            dependencies: ["BavbavCore", "BavbavCompanion", .product(name: "Markdown", package: "swift-markdown"),
                            .product(name: "SwiftMath", package: "SwiftMath")],
             path: "Sources/Bavbav",
             linkerSettings: [

@@ -18,9 +18,10 @@ enum ShortcutCustomizationCheck {
         let panels = PanelCoordinator(store: store, windowSizeDefaults: defaults)
         store.onOpenDetail = nil; store.onWillOpenDetail = nil
         var requests = 0
+        var companionRequests = 0
         var directions: [WindowDirection] = []
         let router = InputRouter(store: store, coordinator: panels, presentAppSettings: { requests += 1 },
-                                 navigateWindow: { directions.append($0) })
+                                 navigateWindow: { directions.append($0) }, presentCompanion: { companionRequests += 1 })
         let bindings = panels.appPreferences.keyBindings
         let prefs = panels.appPreferences
         let settings = panels.appSettings.window
@@ -63,6 +64,11 @@ enum ShortcutCustomizationCheck {
             }
         }
         do {
+            try check(bindings.label("*.companion.key") == "⌘5", "Companion default is Command 5")
+            try check(bindings.label("*.journal.key") == "⌘6", "journal moves to Command 6")
+            _ = router.handle(key(23, .command, window: project))
+            _ = router.handle(key(23, .command, window: project, type: .keyUp))
+            try check(companionRequests == 1, "Command 5 opens Companion, not journal")
             let catalog = ShortcutCatalog.all
             try check(catalog.count > 150, "granular action catalog")
             try check(Set(catalog.map(\.id)).count == catalog.count, "stable unique IDs")

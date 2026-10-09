@@ -7,6 +7,7 @@ final class InputRouter {
     private weak var coordinator: PanelCoordinator?
     private let store: OverlayStore
     private let presentAppSettings: () -> Void
+    private let presentCompanion: () -> Void
     private let navigateWindow: (WindowDirection) -> Void
     private let bindings: ShortcutSettings
     private var monitor: Any?
@@ -27,10 +28,11 @@ final class InputRouter {
     private var consumed: [UInt16: (Int, ShortcutStroke, Bool)] = [:]
 
     init(store: OverlayStore, coordinator: PanelCoordinator, presentAppSettings: (() -> Void)? = nil,
-         navigateWindow: ((WindowDirection) -> Void)? = nil) {
+         navigateWindow: ((WindowDirection) -> Void)? = nil, presentCompanion: (() -> Void)? = nil) {
         self.store = store; self.coordinator = coordinator
         bindings = coordinator.appPreferences.keyBindings
         self.presentAppSettings = presentAppSettings ?? { [weak coordinator] in coordinator?.showAppSettings() }
+        self.presentCompanion = presentCompanion ?? { NSApp.sendAction(#selector(BavbavAppDelegate.showCompanion(_:)), to: NSApp.delegate, from: nil) }
         self.navigateWindow = navigateWindow ?? { [weak coordinator] direction in _ = coordinator?.focusWindow(in: direction) }
         subscription = bindings.$overrides.dropFirst().sink { [weak self] _ in self?.cancelPendingPress() }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
@@ -89,6 +91,9 @@ final class InputRouter {
     }
     func handle(_ event: NSEvent) -> NSEvent? {
         let window = event.window ?? NSApp.keyWindow
+        // Companion owns its native text/Voice controls; don't route Q/Space into
+        // whichever coding panel happened to be active before it opened.
+        if window?.identifier?.rawValue == "bavbav.companion" { return event }
         let number = window?.windowNumber ?? 0
         let stroke = ShortcutStroke(event)
         if event.keyCode == 48, event.modifierFlags.contains(.command) {
@@ -210,6 +215,7 @@ final class InputRouter {
         case "standalone": coordinator?.showGroup(.chatgpt)
         case "models": coordinator?.showGroup(.settings)
         case "journal": coordinator?.showJournal()
+        case "companion": presentCompanion()
         case "preferences": presentAppSettings()
         case "hide": coordinator?.hideAll()
         case "hideOthers": NSApp.hideOtherApplications(nil)

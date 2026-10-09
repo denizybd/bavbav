@@ -19,6 +19,10 @@ enum ApplicationMenu {
         let settings = NSMenuItem(title: "Settings…", action: #selector(BavbavAppDelegate.showAppSettings(_:)), keyEquivalent: "x")
         settings.target = NSApp.delegate
         application.insertItem(settings, at: 1)
+        let companion = NSMenuItem(title: "Companion · Ses ve pencere…", action: #selector(BavbavAppDelegate.showCompanion(_:)), keyEquivalent: "")
+        companion.target = NSApp.delegate
+        companion.representedObject = "*.companion.key"
+        application.insertItem(companion, at: 2)
 
         let edit = NSMenu(title: "Edit")
         menu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit

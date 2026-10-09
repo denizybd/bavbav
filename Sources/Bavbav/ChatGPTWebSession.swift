@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Combine
 import SwiftUI
 import WebKit
@@ -33,6 +34,45 @@ final class ChatGPTWebSession: NSObject, ObservableObject, WKNavigationDelegate,
     var onWindowDirection: ((WindowDirection) -> Void)?
     private var popupWindows: [NSWindow] = []
     private var backgroundOpacity = 1.0
+    private var voicePermissionGeneration = UUID()
+    var companionVoiceVisible = false {
+        didSet { if !companionVoiceVisible { voicePermissionGeneration = UUID() } }
+    }
+
+    func stopCompanionMedia() {
+        companionVoiceVisible = false
+        webView?.setMicrophoneCaptureState(.none, completionHandler: nil)
+        webView?.pauseAllMediaPlayback(completionHandler: nil)
+    }
+
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        // No automatic grants, camera or background capture. Native selected-window
+        // sharing is separate from the website's own Voice UI.
+        guard companionVoiceVisible, webView === self.webView, webView.window?.isVisible == true,
+              origin.protocol == "https", origin.host == "chatgpt.com", frame.isMainFrame,
+              type == .microphone else { decisionHandler(.deny); return }
+        guard let window = webView.window else { decisionHandler(.deny); return }
+        let token = voicePermissionGeneration
+        let alert = NSAlert()
+        alert.messageText = "ChatGPT web mikrofonu kullanmak istiyor"
+        alert.informativeText = "Yalnızca bu görünür Companion oturumu için. Paneli kapatmak veya ses yolunu değiştirmek izni iptal eder."
+        alert.addButton(withTitle: "İzin ver"); alert.addButton(withTitle: "İptal")
+        alert.beginSheetModal(for: window) { [weak self, weak webView] response in
+            Task { @MainActor in
+                guard let self, let webView, response == .alertFirstButtonReturn,
+                      self.voicePermissionGeneration == token, self.companionVoiceVisible,
+                      webView.window?.isVisible == true else { decisionHandler(.deny); return }
+                let allowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+                    ? true : await AVCaptureDevice.requestAccess(for: .audio)
+                // STOP/close during either consent prompt invalidates the answer.
+                guard allowed, self.voicePermissionGeneration == token,
+                      self.companionVoiceVisible, webView.window?.isVisible == true else { decisionHandler(.deny); return }
+                decisionHandler(.grant)
+            }
+        }
+    }
 
     func setBackgroundOpacity(_ value: Double, force: Bool = false) {
         let next = min(1, max(0, value))

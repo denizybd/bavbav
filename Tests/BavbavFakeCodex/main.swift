@@ -246,6 +246,10 @@ while let line = readLine() {
                 "userAgent": "Bavbav Fixture"
             ]])
         case "account/read":
+            if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1" {
+                send(["id": id, "result": ["requiresOpenaiAuth": true, "account": ["type": "chatgpt"]]])
+                continue
+            }
             send(["id": id, "result": ["requiresOpenaiAuth": false]])
         case "model/list":
             send(["id": id, "result": ["data": [modelRow()], "nextCursor": NSNull()]])
@@ -277,6 +281,16 @@ while let line = readLine() {
                 "nextCursor": NSNull()
             ]])
         case "thread/start":
+            if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1" {
+                let config = params["config"] as? [String: Any]
+                guard params["sandbox"] as? String == "read-only", params["approvalPolicy"] as? String == "never",
+                      config?["features.shell_tool"] as? Bool == false,
+                      config?["features.apps"] as? Bool == false,
+                      CommandLine.arguments.contains("features.unified_exec=false"),
+                      (params["dynamicTools"] as? [Any])?.isEmpty == true else {
+                    send(["id": id, "error": ["code": -32602, "message": "unsafe companion worker"]]); continue
+                }
+            }
             if ProcessInfo.processInfo.environment["BAVBAV_RENAME_CHECK"] == "1" {
                 let threadID = "created-\(createdRows.count + 1)"
                 var row = threadRow(id: threadID, cwd: params["cwd"] as? String ?? "/tmp/fixture")
@@ -434,6 +448,23 @@ while let line = readLine() {
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             let input = params["input"] as? [[String: Any]] ?? []
             let scenario = input.first?["text"] as? String ?? "COMMAND"
+            if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1" {
+                guard (params["sandboxPolicy"] as? [String: Any])?["type"] as? String == "readOnly" else {
+                    send(["id": id, "error": ["code": -32602, "message": "unsafe companion turn"]]); continue
+                }
+                let hasImage = input.contains { $0["type"] as? String == "localImage" && FileManager.default.fileExists(atPath: $0["path"] as? String ?? "") }
+                // Complete BEFORE acknowledging start; unrelated thread output and
+                // duplicate item notifications must not contaminate the answer.
+                send(["method": "item/completed", "params": ["threadId": "unrelated", "turnId": "other",
+                    "item": ["id": "other", "type": "agentMessage", "text": "WRONG CHAT", "phase": "final_answer"]]])
+                for _ in 0..<2 {
+                    send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
+                        "item": ["id": turnID + "-agent", "type": "agentMessage", "text": hasImage ? "COMPANION_IMAGE_OK" : "COMPANION_TEXT_OK", "phase": "final_answer"]]])
+                }
+                send(["method": "turn/completed", "params": ["threadId": threadID, "turn": ["id": turnID, "status": "completed"]]])
+                send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                continue
+            }
             if ProcessInfo.processInfo.environment["BAVBAV_COMPOSER_CHECK"] == "1" {
                 let text = input.compactMap { $0["text"] as? String }.joined(separator: "\n")
                 if text.contains("COMPOSER_FAIL") {

@@ -24,6 +24,11 @@ Bavbav brings Codex conversations into compact, independent macOS windows. Keep 
 
 Built in Swift with AppKit and SwiftUI, Bavbav connects to your installed Codex App Server over local stdio. It uses your existing Codex setup for models, authentication, and coding tools.
 
+Companion (`⌘5`) adds a native Turkish voice and selected-window sharing panel
+using that account, without a separate API key. This first integration uses
+macOS speech services rather than built-in ChatGPT Voice. See
+[capabilities, privacy boundaries and live acceptance steps](docs/COMPANION.md).
+
 ![Bavbav displaying project navigation, recent conversations, and two native chat windows](docs/assets/screenshots/01-parallel-workspaces.png)
 
 <sub>All three screenshots use Bavbav's actual native interface with fictional projects and English demo conversations.</sub>
@@ -142,7 +147,7 @@ To create a project or a named chat, use `Space` + `Enter` in the relevant Proje
 
 ## Keyboard cheat sheet
 
-These are the defaults. Most navigation keys apply outside text editing; `Q`, `W`, `A`, `S`, and `D` remain ordinary letters while you type. The five panel shortcuts, `⌘1`–`⌘5`, are global and bring their panels forward without toggling them closed.
+These are the defaults. Most navigation keys apply outside text editing; `Q`, `W`, `A`, `S`, and `D` remain ordinary letters while you type. The six panel shortcuts, `⌘1`–`⌘6`, are global and bring their panels forward without toggling them closed.
 
 For `Space` + `Enter`, press Enter while holding Space, before the long press enters reorder mode.
 
@@ -150,7 +155,9 @@ For `Space` + `Enter`, press Enter while holding Space, before the long press en
 | --- | --- |
 | `⌘1` / `⌘2` | Projects / recent Codex conversations |
 | `⌘3` | Standalone chat launcher |
-| `⌘4` / `⌘5` | Active conversation's model settings / journal |
+| `⌘4` | Active conversation's model settings |
+| `⌘5` | Companion: voice and selected-window sharing |
+| `⌘6` | Journal |
 | `W` / `S` or `↑` / `↓` | Move through a list |
 | `Space` | Open the selected entry; steer a selected queue item |
 | `⌥Space` | Rename the selected project or conversation |
