@@ -14,6 +14,7 @@ private var standaloneRows: [String: [String: Any]] = [:]
 private var createdRows: [String: [String: Any]] = [:]
 private var threadNames: [String: String] = [:]
 private var composerGoals: [String: [String: Any]] = [:]
+private var heldBoundedHistoryPage: [String: Any]?
 private let outputLock = NSLock()
 
 private func recordCompanionRequest(_ message: [String: Any]) {
@@ -68,6 +69,22 @@ private func performanceItems(_ threadID: String) -> [[String: Any]] {
         return ["id": "\(threadID)-message-\(index)", "type": "agentMessage", "text": text]
     }
     return history + (recordedItems[threadID] ?? [])
+}
+
+private func boundedHistoryItems() -> [[String: Any]] {
+    let unicodeTail = String(repeating: "👩🏽‍💻a\u{301}🇹🇷\r\n", count: 5_000)
+    let outputs: [(String, String)] = [
+        ("empty", ""),
+        ("short", "fixture output"),
+        ("exact", String(repeating: "a", count: 20_000)),
+        ("over", "x" + String(repeating: "a", count: 20_000)),
+        ("unicode", "discard" + unicodeTail),
+        ("large", String(repeating: "discarded log line\n", count: 50_000) + String(repeating: "Z", count: 20_000))
+    ]
+    return outputs.map { name, output in
+        ["id": "bounded-\(name)", "type": "commandExecution", "command": "echo fixture",
+         "status": "completed", "aggregatedOutput": output]
+    }
 }
 
 private func send(_ object: [String: Any]) {
@@ -405,6 +422,21 @@ while let line = readLine() {
                 if name == "ARCHIVE_CREATED_FIXTURE" { createdRows.removeValue(forKey: threadID) }
             }
             send(["id": id, "result": [:]])
+        case "thread/read" where (params["threadId"] as? String)?.hasPrefix("bounded-history-fixture") == true:
+            let threadID = params["threadId"] as? String ?? "bounded-history-fixture"
+            if threadID == "bounded-history-fixture-release", let response = heldBoundedHistoryPage {
+                heldBoundedHistoryPage = nil
+                send(response)
+            }
+            send(["id": id, "result": ["thread": threadRow(id: threadID, cwd: "/tmp/fixture")]])
+        case "thread/items/list" where params["threadId"] as? String == "bounded-history-fixture-cancel":
+            // Let the check cancel the waiting reader before explicitly asking
+            // this server to release the response. No timing race or real turn.
+            heldBoundedHistoryPage = ["id": id, "result": ["data": [], "nextCursor": NSNull()]]
+            send(["method": "turn/completed", "params": ["threadId": "bounded-history-fixture-cancel",
+                "turn": ["id": "bounded-history-page-pending", "status": "completed", "items": []]]])
+        case "thread/items/list" where params["threadId"] as? String == "bounded-history-fixture":
+            send(["id": id, "result": ["data": boundedHistoryItems().reversed().map { ["item": $0] }, "nextCursor": NSNull()]])
         case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_IMAGE_CHECK"] == "1":
             send(["id": id, "result": ["thread": threadRow(id: "image-fixture", cwd: "/tmp/fixture")]])
         case let method where ProcessInfo.processInfo.environment["BAVBAV_IMAGE_CHECK"] == "1"

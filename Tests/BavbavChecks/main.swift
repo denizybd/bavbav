@@ -188,6 +188,13 @@ enum RolloutConversationChecks {
 struct BavbavChecks {
     static func main() async {
         do {
+            if CommandLine.arguments.contains("--bounded-history-fixture") {
+                try require(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true,
+                            "--bounded-history-fixture requires BAVBAV_CODEX_BIN pointing to BavbavFakeCodex")
+                try await checkBoundedActivityHistory()
+                print("BOUNDED HISTORY CHECKS PASSED")
+                return
+            }
             if let index = CommandLine.arguments.firstIndex(of: "--read-only-thread"),
                CommandLine.arguments.indices.contains(index + 1) {
                 let id = CommandLine.arguments[index + 1]
@@ -220,6 +227,8 @@ struct BavbavChecks {
             if CommandLine.arguments.contains("--protocol-fixture") {
                 try require(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true,
                             "--protocol-fixture requires BAVBAV_CODEX_BIN pointing to BavbavFakeCodex; no real turns will be sent")
+                try await checkBoundedActivityHistory()
+                print("✓ bounded activity output: exact limits, Unicode tails, large logs, cancelled page response")
                 try await checkConnectionRecovery()
                 print("✓ reconnect + concurrent handshake + streamed completion")
                 try await checkProtocolInteractions()
@@ -256,6 +265,51 @@ struct BavbavChecks {
         } catch {
             fputs("CHECK FAILED: \(error.localizedDescription)\n", stderr)
             Foundation.exit(1)
+        }
+    }
+
+    private static func checkBoundedActivityHistory() async throws {
+        let client = CodexAppServer()
+        do {
+            _ = try await client.connect()
+            let items = try await client.readThreadActivity(id: "bounded-history-fixture")
+            let marker = "[… earlier output hidden …]\n"
+            let tail = String(repeating: "a", count: 20_000)
+            let unicodeTail = String(repeating: "👩🏽‍💻a\u{301}🇹🇷\r\n", count: 5_000)
+            let expected: [(String, String)] = [
+                ("empty", ""), ("short", "fixture output"), ("exact", tail),
+                ("over", marker + tail), ("unicode", marker + unicodeTail),
+                ("large", marker + String(repeating: "Z", count: 20_000))
+            ]
+            try require(items.map(\.id) == expected.map { "bounded-\($0.0)" },
+                        "Bounded activity history preserves item IDs and chronological order")
+            for (item, fixture) in zip(items, expected) {
+                let output = fixture.1.trimmingCharacters(in: .whitespacesAndNewlines)
+                let body = (["$ echo fixture", output].filter { !$0.isEmpty }).joined(separator: "\n")
+                try require(item.text == body, "Bounded output changed for \(fixture.0)")
+                try require(item.kind == .command && item.status == "completed",
+                            "Bounded output lost command metadata for \(fixture.0)")
+            }
+
+            let page = TurnProbe()
+            await client.setEventHandler { event in Task { await page.record(event) } }
+            let read = Task { try await client.readThreadActivity(id: "bounded-history-fixture-cancel") }
+            guard await page.wait(for: "bounded-history-page-pending", timeoutSeconds: 5) != nil else {
+                throw CheckFailure.failed("Cancellation fixture never received its page request")
+            }
+            read.cancel()
+            _ = try await client.probeThread(id: "bounded-history-fixture-release")
+            do {
+                _ = try await read.value
+                throw CheckFailure.failed("Cancelled reader accepted a returned page")
+            } catch is CancellationError { }
+            let afterCancellation = try await client.readThreadActivity(id: "bounded-history-fixture")
+            try require(afterCancellation == items, "Cancelling one reader damaged subsequent history reads")
+            await client.setEventHandler(nil)
+            await client.shutdown()
+        } catch {
+            await client.shutdown()
+            throw error
         }
     }
 

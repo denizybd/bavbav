@@ -927,11 +927,13 @@ public actor CodexAppServer {
                 params: params,
                 timeout: 12
             )
+            try Task.checkCancellation()
             guard let entries = result["data"] as? [[String: Any]] else {
                 throw CodexClientError.invalidResponse("thread/items/list response is missing data")
             }
 
             for entry in entries {
+                try Task.checkCancellation()
                 guard
                     let item = entry["item"] as? [String: Any],
                     let message = Self.parseMessage(item)
@@ -1305,8 +1307,12 @@ public actor CodexAppServer {
     }
 
     private static func boundedText(_ text: String, limit: Int) -> String {
-        guard text.count > limit else { return text }
-        return "[… earlier output hidden …]\n" + String(text.suffix(limit))
+        // Foundation JSON strings can contain enormous tool logs. Counting all
+        // their graphemes just to keep the tail repeatedly walks the full log.
+        // Walk backwards only as far as the retained character limit instead.
+        guard let start = text.index(text.endIndex, offsetBy: -limit, limitedBy: text.startIndex),
+              start != text.startIndex else { return text }
+        return "[… earlier output hidden …]\n" + String(text[start...])
     }
 
     private static func renderJSON(_ value: Any?) -> String? {
