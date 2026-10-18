@@ -181,9 +181,11 @@ enum RichMessageCheck {
             expect(!html.text.string.contains("BAVMATH") && html.text.string.contains(literalMath),
                    "literal HTML never exposes math placeholders")
         }
-        let oversizedTable = "| " + (1...13).map { "Column\($0)" }.joined(separator: " | ") + " |\n| " +
-            Array(repeating: "---", count: 13).joined(separator: " | ") + " |\n| " +
-            Array(repeating: #"\(x^2\)"#, count: 13).joined(separator: " | ") + " |"
+        let tableHeader = (1...13).map { "Column\($0)" }.joined(separator: " | ")
+        let tableSeparator = Array(repeating: "---", count: 13).joined(separator: " | ")
+        let tableValues = Array(repeating: #"\(x^2\)"#, count: 13).joined(separator: " | ")
+        let oversizedTable = [tableHeader, tableSeparator, tableValues]
+            .map { "| " + $0 + " |" }.joined(separator: "\n")
         let tableFallback = render(oversizedTable)
         expect(!tableFallback.text.string.contains("BAVMATH") && tableFallback.text.string.contains(#"\(x^2\)"#),
                "wide-table literal fallback restores math source")

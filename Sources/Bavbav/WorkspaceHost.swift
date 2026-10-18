@@ -1,5 +1,5 @@
 import AppKit
-#if canImport(IkiWorkspaceKit)
+#if BAVBAV_WORKSPACE
 import IkiWorkspaceKit
 
 /// The Workspace UI is linked into Bavbav. Only its private stdio engine is a

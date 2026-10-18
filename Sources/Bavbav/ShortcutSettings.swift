@@ -101,7 +101,7 @@ enum ShortcutCatalog {
             ("journal","Focus journal",23), ("companion","Focus Companion voice and screen sharing",22)] {
             add("*", "Windows · global", op, title, UInt16(code), .command, global: true)
         }
-        #if canImport(IkiWorkspaceKit)
+        #if BAVBAV_WORKSPACE
         add("*", "Windows · global", "workspace", "Focus Workspace", 26, .command, global: true)
         #endif
         for (op,title,code,flags) in [

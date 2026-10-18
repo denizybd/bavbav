@@ -36,6 +36,7 @@ let package = Package(
             dependencies: ["BavbavCore", "BavbavCompanion", .product(name: "Markdown", package: "swift-markdown"),
                            .product(name: "SwiftMath", package: "SwiftMath")] + workspaceDependencies,
             path: "Sources/Bavbav",
+            swiftSettings: withWorkspace ? [.define("BAVBAV_WORKSPACE")] : [],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon")

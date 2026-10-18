@@ -68,7 +68,7 @@ enum ShortcutCustomizationCheck {
             }
         }
         do {
-            #if canImport(IkiWorkspaceKit)
+            #if BAVBAV_WORKSPACE
             let migrationSuite = suite + ".pre-workspace"
             let migrationDefaults = UserDefaults(suiteName: migrationSuite)!
             defer { migrationDefaults.removePersistentDomain(forName: migrationSuite) }
@@ -91,7 +91,7 @@ enum ShortcutCustomizationCheck {
             _ = router.handle(key(22, .command, window: project))
             _ = router.handle(key(22, .command, window: project, type: .keyUp))
             try check(companionRequests == 1, "Command 6 opens Companion, not journal")
-            #if canImport(IkiWorkspaceKit)
+            #if BAVBAV_WORKSPACE
             try check(bindings.label("*.workspace.key") == "⌘7", "Workspace default is Command 7")
             tap(26, .command, window: project)
             try check(workspaceRequests == 1, "Command 7 opens the embedded Workspace")
@@ -237,7 +237,7 @@ enum ShortcutCustomizationCheck {
                 ("*.journal.key", "5", #selector(BavbavAppDelegate.showJournal)),
                 ("*.companion.key", "6", #selector(BavbavAppDelegate.showCompanion(_:)))
             ]
-            #if canImport(IkiWorkspaceKit)
+            #if BAVBAV_WORKSPACE
             windowBindings.append(("*.workspace.key", "7", #selector(BavbavAppDelegate.showWorkspace(_:))))
             #endif
             let representedWindows = windowsMenu.items.filter { $0.representedObject is String }

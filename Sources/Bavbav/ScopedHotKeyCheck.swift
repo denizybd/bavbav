@@ -14,7 +14,7 @@ import AppKit
         }
         guard let companionIndex = definitions.firstIndex(where: { $0.operation == "companion" }),
               let journalIndex = definitions.firstIndex(where: { $0.operation == "journal" }) else { return false }
-        #if canImport(IkiWorkspaceKit)
+        #if BAVBAV_WORKSPACE
         guard check(definitions.firstIndex(where: { $0.operation == "workspace" }) == 6 && full[7] == .init(26, .command), "Workspace uses Command 7") else { return false }
         #else
         guard check(full[7] == nil, "public builds leave Command 7 available") else { return false }

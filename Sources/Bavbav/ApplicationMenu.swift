@@ -23,7 +23,7 @@ enum ApplicationMenu {
         companion.target = NSApp.delegate
         companion.representedObject = "*.companion.key"
         application.insertItem(companion, at: 2)
-        #if canImport(IkiWorkspaceKit)
+        #if BAVBAV_WORKSPACE
         let workspace = NSMenuItem(title: "Workspace…", action: #selector(BavbavAppDelegate.showWorkspace(_:)), keyEquivalent: "")
         workspace.target = NSApp.delegate
         workspace.representedObject = "*.workspace.key"
@@ -48,7 +48,7 @@ enum ApplicationMenu {
             ("Calendar", "*.journal.key", #selector(BavbavAppDelegate.showJournal)),
             ("Companion · Ses ve ekran", "*.companion.key", #selector(BavbavAppDelegate.showCompanion(_:)))
         ]
-        #if canImport(IkiWorkspaceKit)
+        #if BAVBAV_WORKSPACE
         panels.append(("Workspace", "*.workspace.key", #selector(BavbavAppDelegate.showWorkspace(_:))))
         #endif
         for (index, panel) in panels.enumerated() {

@@ -913,7 +913,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Journal", action: #selector(showJournal), keyEquivalent: "").representedObject = "*.journal.key"
         menu.addItem(withTitle: "Settings", action: #selector(showAppSettings(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Companion · Ses ve ekran…", action: #selector(showCompanion(_:)), keyEquivalent: "").representedObject = "*.companion.key"
-        #if canImport(IkiWorkspaceKit)
+        #if BAVBAV_WORKSPACE
         menu.addItem(withTitle: "Workspace…", action: #selector(showWorkspace(_:)), keyEquivalent: "").representedObject = "*.workspace.key"
         #endif
         menu.addItem(NSMenuItem.separator())
