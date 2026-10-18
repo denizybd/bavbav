@@ -101,6 +101,9 @@ enum ShortcutCatalog {
             ("journal","Focus journal",23), ("companion","Focus Companion voice and screen sharing",22)] {
             add("*", "Windows · global", op, title, UInt16(code), .command, global: true)
         }
+        #if canImport(IkiWorkspaceKit)
+        add("*", "Windows · global", "workspace", "Focus Workspace", 26, .command, global: true)
+        #endif
         for (op,title,code,flags) in [
             ("preferences","Focus app settings",UInt16(7),NSEvent.ModifierFlags.command),
             ("hide","Hide Bavbav windows",4,.command),
@@ -291,7 +294,17 @@ final class ShortcutSettings: ObservableObject {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.storageKey) {
             if let saved = try? JSONDecoder().decode([String: ShortcutBinding].self, from: data) {
-                let known = saved.filter { id, _ in ShortcutCatalog.all.contains { $0.id == id } }
+                var known = saved.filter { id, _ in ShortcutCatalog.all.contains { $0.id == id } }
+                // A new default must never invalidate the user's older custom
+                // bindings. If Command 7 was already assigned, retain that
+                // assignment and leave Workspace available from the menu.
+                if known["*.workspace.key"] == nil,
+                   let workspace = ShortcutCatalog.all.first(where: { $0.id == "*.workspace.key" }),
+                   known.values.contains(where: { !$0.disabled && $0.strokes.first == workspace.defaultBinding.strokes.first }) {
+                    var disabled = workspace.defaultBinding
+                    disabled.disabled = true
+                    known[workspace.id] = disabled
+                }
                 // Validate the complete snapshot (including independently remapped aliases).
                 if known.allSatisfy({ id, binding in validationError(id: id, binding: binding, proposed: known) == nil }) {
                     overrides = known

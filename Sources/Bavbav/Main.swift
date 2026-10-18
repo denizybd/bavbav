@@ -29,14 +29,22 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     private var conversationSyncTimer: Timer?
     private var terminationRequested = false
     private var companion: CompanionWindowController?
+    private let workspace = WorkspaceHost()
     private var diagnosticRun = false
     private var instanceLease: SingleBavbavInstance?
     private var companionOpenObserver: NSObjectProtocol?
+    private var workspaceOpenObserver: NSObjectProtocol?
     private static let companionOpenNotification = Notification.Name("dev.deniz.bavbav.open-companion")
+    private static let workspaceOpenNotification = Notification.Name("dev.deniz.bavbav.open-workspace")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
         diagnosticRun = environment.keys.contains { $0.hasPrefix("BAVBAV_") && $0.contains("CHECK") }
+            || CommandLine.arguments.contains("--workspace-ui-check")
+        if environment["BAVBAV_WORKSPACE_CHECK"] == "1" || CommandLine.arguments.contains("--workspace-ui-check") {
+            Task { Foundation.exit(await WorkspaceWindowCheck.run() ? 0 : 1) }
+            return
+        }
         if environment["BAVBAV_COMPANION_PREFLIGHT_CHECK"] == "1" {
             CompanionAcceptanceCheck.printPreflight()
             Foundation.exit(0)
@@ -152,7 +160,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             || chatGPTBoundaryCheck
         let isCheckRun = environment.keys.contains { $0.hasPrefix("BAVBAV_") && $0.contains("CHECK") }
         // Diagnostics are isolated by explicit flags. Every interactive launch,
-        // including the legacy --companion-only spelling, hosts all six panels.
+        // including the legacy --companion-only spelling, hosts every panel.
         if !isCheckRun, !claimSingleInstance() { Foundation.exit(0) }
         store = OverlayStore(journal: isCheckRun ? nil : JournalService(directory: JournalService.defaultDirectory))
         panels = PanelCoordinator(store: store)
@@ -219,13 +227,14 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                     guard let self else { return }
                     switch number {
                     // Command shortcuts are focus keys. Repeating one never
-                    // closes a window; Q is the only close command.
+                    // closes a window.
                     case 1: self.panels.showGroup(.projects)
                     case 2: self.panels.showGroup(.recents)
                     case 3: self.panels.showGroup(.chatgpt)
                     case 4: self.panels.showGroup(.settings)
                     case 5: self.panels.showJournal()
                     case 6: self.showCompanion(nil)
+                    case 7: self.showWorkspace(nil)
                     default: break
                     }
                 }
@@ -250,7 +259,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             ApplicationMenu.install(bindings: bindings)
             installStatusMenu()
             DispatchQueue.main.async { [weak self] in
-                guard NSApp.isActive, self?.companion?.window.isVisible != true else { return }
+                guard NSApp.isActive, self?.companion?.window.isVisible != true,
+                      self?.workspace.isVisible != true else { return }
                 self?.panels.showInitialPanel()
             }
         }
@@ -701,6 +711,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--companion") || CommandLine.arguments.contains("--companion-only") {
             showCompanion(nil)
         }
+        if CommandLine.arguments.contains("--workspace") { showWorkspace(nil) }
+        workspace.prepareIfConfigured()
         if CommandLine.arguments.contains("--companion-ui-report") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.companion?.exportPreview() }
         }
@@ -732,7 +744,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard store != nil, !diagnosticRun else { return }
         // The system restores hidden windows. Only create an entry point when
         // every panel was explicitly closed with Q; never reorder existing chats.
-        if !NSApp.isHidden, !panels.hasVisibleWindows, companion?.window.isVisible != true { panels.showInitialPanel() }
+        if !NSApp.isHidden, !panels.hasVisibleWindows, companion?.window.isVisible != true,
+           !workspace.isVisible { panels.showInitialPanel() }
         Task { @MainActor in
             await store.refresh()
             store.syncVisibleConversation()
@@ -747,7 +760,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard !diagnosticRun else { return true }
         guard panels != nil else { return true }
         sender.unhide(nil)
-        if !panels.hasVisibleWindows, companion?.window.isVisible != true { panels.showInitialPanel() }
+        if !panels.hasVisibleWindows, companion?.window.isVisible != true,
+           !workspace.isVisible { panels.showInitialPanel() }
         return true
     }
 
@@ -757,11 +771,12 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
         if let companionOpenObserver { DistributedNotificationCenter.default().removeObserver(companionOpenObserver) }
+        if let workspaceOpenObserver { DistributedNotificationCenter.default().removeObserver(workspaceOpenObserver) }
         instanceLease?.release()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard store != nil || companion != nil else { return .terminateNow }
+        guard store != nil || companion != nil || workspace.hasController else { return .terminateNow }
         guard !terminationRequested else { return .terminateLater }
         terminationRequested = true
         companion?.stop()
@@ -769,6 +784,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         conversationSyncTimer?.invalidate()
         Task {
             await companion?.shutdown()
+            await workspace.shutdown()
             if let store { await store.shutdown() }
             sender.reply(toApplicationShouldTerminate: true)
         }
@@ -804,6 +820,12 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         companion?.show()
     }
 
+    @objc func showWorkspace(_ sender: Any?) {
+        guard !terminationRequested else { return }
+        inputRouter?.cancelPendingPress()
+        workspace.show()
+    }
+
     private func claimSingleInstance() -> Bool {
         // Old builds predate the kernel lease. Do not start a competing host
         // beside one of them or silently terminate its active coding workers.
@@ -820,6 +842,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                 DistributedNotificationCenter.default().postNotificationName(Self.companionOpenNotification,
                     object: "dev.deniz.bavbav", userInfo: nil, deliverImmediately: true)
             }
+            if CommandLine.arguments.contains("--workspace") {
+                DistributedNotificationCenter.default().postNotificationName(Self.workspaceOpenNotification,
+                    object: "dev.deniz.bavbav", userInfo: nil, deliverImmediately: true)
+            }
             print("BAVBAV INSTANCE: reused running app pid=\(older.processIdentifier); no competing host created")
             fflush(stdout)
             return false
@@ -832,6 +858,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                 forName: Self.companionOpenNotification, object: "dev.deniz.bavbav", queue: .main) { [weak self] _ in
                     Task { @MainActor in self?.showCompanion(nil) }
                 }
+            workspaceOpenObserver = DistributedNotificationCenter.default().addObserver(
+                forName: Self.workspaceOpenNotification, object: "dev.deniz.bavbav", queue: .main) { [weak self] _ in
+                    Task { @MainActor in self?.showWorkspace(nil) }
+                }
             return true
         case .alreadyRunning(let pid):
             guard let pid, let running = NSRunningApplication(processIdentifier: pid),
@@ -841,6 +871,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             }
             if CommandLine.arguments.contains("--companion") || CommandLine.arguments.contains("--companion-only") {
                 DistributedNotificationCenter.default().postNotificationName(Self.companionOpenNotification,
+                    object: "dev.deniz.bavbav", userInfo: nil, deliverImmediately: true)
+            }
+            if CommandLine.arguments.contains("--workspace") {
+                DistributedNotificationCenter.default().postNotificationName(Self.workspaceOpenNotification,
                     object: "dev.deniz.bavbav", userInfo: nil, deliverImmediately: true)
             }
             running.activate(options: [.activateIgnoringOtherApps])
@@ -879,6 +913,9 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Journal", action: #selector(showJournal), keyEquivalent: "").representedObject = "*.journal.key"
         menu.addItem(withTitle: "Settings", action: #selector(showAppSettings(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Companion · Ses ve ekran…", action: #selector(showCompanion(_:)), keyEquivalent: "").representedObject = "*.companion.key"
+        #if canImport(IkiWorkspaceKit)
+        menu.addItem(withTitle: "Workspace…", action: #selector(showWorkspace(_:)), keyEquivalent: "").representedObject = "*.workspace.key"
+        #endif
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Refresh Codex", action: #selector(refreshNow), keyEquivalent: "").representedObject = "*.refresh.key"
         menu.addItem(NSMenuItem.separator())

@@ -23,6 +23,12 @@ enum ApplicationMenu {
         companion.target = NSApp.delegate
         companion.representedObject = "*.companion.key"
         application.insertItem(companion, at: 2)
+        #if canImport(IkiWorkspaceKit)
+        let workspace = NSMenuItem(title: "Workspace…", action: #selector(BavbavAppDelegate.showWorkspace(_:)), keyEquivalent: "")
+        workspace.target = NSApp.delegate
+        workspace.representedObject = "*.workspace.key"
+        application.insertItem(workspace, at: 3)
+        #endif
 
         let edit = NSMenu(title: "Edit")
         menu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
@@ -30,11 +36,11 @@ enum ApplicationMenu {
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
-        // Native AppKit key equivalents keep the six focus shortcuts available
+        // Native AppKit key equivalents keep the focus shortcuts available
         // from a text editor or an auxiliary window, not just Carbon hotkeys.
         let windows = NSMenu(title: "Windows")
         menu.addItem(withTitle: "Windows", action: nil, keyEquivalent: "").submenu = windows
-        let panels: [(String, String, Selector)] = [
+        var panels: [(String, String, Selector)] = [
             ("Projects", "*.projects.key", #selector(BavbavAppDelegate.showProjects)),
             ("Recent Chats", "*.recents.key", #selector(BavbavAppDelegate.showRecents)),
             ("ChatGPT", "*.standalone.key", #selector(BavbavAppDelegate.showChatGPT)),
@@ -42,6 +48,9 @@ enum ApplicationMenu {
             ("Calendar", "*.journal.key", #selector(BavbavAppDelegate.showJournal)),
             ("Companion · Ses ve ekran", "*.companion.key", #selector(BavbavAppDelegate.showCompanion(_:)))
         ]
+        #if canImport(IkiWorkspaceKit)
+        panels.append(("Workspace", "*.workspace.key", #selector(BavbavAppDelegate.showWorkspace(_:))))
+        #endif
         for (index, panel) in panels.enumerated() {
             let item = windows.addItem(withTitle: panel.0, action: panel.2, keyEquivalent: String(index + 1))
             item.target = NSApp.delegate

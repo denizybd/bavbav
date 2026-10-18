@@ -1,3 +1,8 @@
 .build/
 dist/
 .DS_Store
+# Private Workspace sources/runtime are staged locally for the integrated build.
+# Keep these out of Bavbav's public repository; release archives include them
+# explicitly from the prepared staging directories.
+Sources/IkiWorkspaceKit/
+Vendor/IkiWorkspace/Resources/

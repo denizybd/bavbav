@@ -4,10 +4,24 @@ set -euo pipefail
 project_dir="${0:A:h:h}"
 app_dir="$project_dir/dist/Bavbav.app"
 binary="$project_dir/.build/release/Bavbav"
+[[ "${BAVBAV_WITH_WORKSPACE:-0}" == 0 || "${BAVBAV_WITH_WORKSPACE:-0}" == 1 ]] || { print -u2 -- "BAVBAV_WITH_WORKSPACE must be 0 or 1."; exit 1; }
+export BAVBAV_WITH_WORKSPACE="${BAVBAV_WITH_WORKSPACE:-0}"
+workspace_resources_dir="$project_dir/Vendor/IkiWorkspace/Resources"
+if [[ -n "${IKI_WORKSPACE_APP:-}" ]]; then
+    workspace_resources_dir="${IKI_WORKSPACE_APP:A}/Contents/Resources"
+fi
 
 [[ $# -eq 0 ]] || { print -u2 -- "Usage: BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh (or omit BAVBAV_STAGE_ONLY to install after checks)"; exit 1; }
 [[ "${BAVBAV_STAGE_ONLY:-0}" == 0 || "${BAVBAV_STAGE_ONLY:-0}" == 1 ]] || { print -u2 -- "BAVBAV_STAGE_ONLY must be 0 or 1."; exit 1; }
 [[ ! -L "$project_dir/dist" ]] || { print -u2 -- "Refusing to build through a symlinked dist directory."; exit 1; }
+if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
+for resource in runtime/node engine/src/native-bridge.mjs app-version.json; do
+    [[ -f "$workspace_resources_dir/$resource" ]] || {
+        print -u2 -- "Workspace resource missing: $workspace_resources_dir/$resource. Restore Vendor/IkiWorkspace/Resources from this release, or set IKI_WORKSPACE_APP to its matching prepared Workspace app bundle."
+        exit 1
+    }
+done
+fi
 # Fail before icons, compilation, or any bundle mutation if stable signing is
 # not configured. Never silently fall back to ad-hoc signing for production.
 signing_identity="$(zsh "$project_dir/scripts/sign-app.sh" --preflight)"
@@ -39,6 +53,24 @@ cp "$project_dir/AppResources/Bavbav-v3.icns" "$staged_app_dir/Contents/Resource
 cp "$project_dir/AppResources/BavbavIcon-v3-light.png" "$staged_app_dir/Contents/Resources/BavbavIcon-v3-light.png"
 cp "$project_dir/AppResources/BavbavIcon-v3-dark.png" "$staged_app_dir/Contents/Resources/BavbavIcon-v3-dark.png"
 cp -R "$project_dir/.build/release/SwiftMath_SwiftMath.bundle" "$staged_app_dir/Contents/Resources/SwiftMath_SwiftMath.bundle"
+if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
+# Link the native Workspace views into the Bavbav executable, and embed only
+# their private engine/runtime resources. There is no nested Workspace app.
+/usr/bin/ditto "$workspace_resources_dir" "$staged_app_dir/Contents/Resources/IkiWorkspace"
+# This app contains one native architecture. Keep only its matching addons in
+# the staged copy; foreign prebuilds unnecessarily exceed the P2P snapshot cap.
+# The prepared source resources remain unchanged for future platform builds.
+case "$(/usr/bin/uname -m)" in
+    arm64) workspace_prebuild_platform="darwin-arm64" ;;
+    x86_64) workspace_prebuild_platform="darwin-x64" ;;
+    *) print -u2 -- "Unsupported Workspace build architecture."; exit 1 ;;
+esac
+for workspace_prebuild_dir in "$staged_app_dir"/Contents/Resources/IkiWorkspace/engine/node_modules/**/prebuilds/*(N/); do
+    if [[ "${workspace_prebuild_dir:t}" != "$workspace_prebuild_platform" ]]; then
+        /bin/rm -rf -- "$workspace_prebuild_dir"
+    fi
+done
+fi
 mkdir -p "$staged_app_dir/Contents/Resources/Licenses"
 cp "$project_dir/Vendor/SwiftMath/LICENSE" "$staged_app_dir/Contents/Resources/Licenses/SwiftMath.txt"
 cp "$project_dir/.build/checkouts/swift-markdown/LICENSE.txt" "$staged_app_dir/Contents/Resources/Licenses/swift-markdown.txt"
@@ -49,6 +81,9 @@ zsh "$project_dir/scripts/check-signing-requirements.sh" "$staged_app_dir"
 BAVBAV_COMPANION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavCompanionChecks"
 BAVBAV_COMPANION_WEB_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_COMPANION_WINDOW_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
+if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
+    BAVBAV_WORKSPACE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
+fi
 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavChecks" --protocol-fixture
 BAVBAV_CONNECTION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_HEADLESS_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
