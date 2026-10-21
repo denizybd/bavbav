@@ -12,12 +12,10 @@ import time
 
 def source_hash(root):
     root = pathlib.Path(root).resolve()
-    workspace_mode = os.environ.get("BAVBAV_WITH_WORKSPACE", "auto")
-    if workspace_mode not in ("auto", "0", "1"):
-        raise RuntimeError("BAVBAV_WITH_WORKSPACE must be auto, 0, or 1.")
-    workspace_enabled = workspace_mode == "1" or (
-        workspace_mode == "auto" and (root / "Sources/IkiWorkspaceKit").is_dir()
-    )
+    workspace_mode = os.environ.get("BAVBAV_WITH_WORKSPACE", "0")
+    if workspace_mode not in ("0", "1"):
+        raise RuntimeError("BAVBAV_WITH_WORKSPACE must be 0 or 1.")
+    workspace_enabled = workspace_mode == "1"
     names = subprocess.check_output(
         ["/usr/bin/git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=root
     ).decode("utf-8").split("\0")
@@ -74,7 +72,7 @@ if __name__ == "__main__":
         path = root / "Vendor/IkiWorkspace/Resources/app-version.json"
         # Public builds have no private runtime manifest to stamp. The build
         # script independently rejects a requested-but-incomplete private build.
-        if os.environ.get("BAVBAV_WITH_WORKSPACE") != "0" and path.is_file():
+        if os.environ.get("BAVBAV_WITH_WORKSPACE", "0") == "1" and path.is_file():
             manifest = json.loads(path.read_text())
             info = plistlib.loads((root / "AppResources/Info.plist").read_bytes())
             manifest.update(version=info["CFBundleShortVersionString"], build=int(info["CFBundleVersion"]), commit=digest, sourceHash=digest, builtBy="deniz")

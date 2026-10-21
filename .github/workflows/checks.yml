@@ -1,0 +1,33 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  public-build:
+    name: Public macOS build and core checks
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      BAVBAV_WITH_WORKSPACE: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build without private Workspace sources
+        run: swift build --build-system native --disable-sandbox
+      - name: Core checks
+        run: .build/debug/BavbavChecks
+      - name: App Server protocol fixture
+        run: BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/BavbavChecks --protocol-fixture
+      - name: Offline handoff and worker fixtures
+        run: .build/debug/BavbavOfflineChecks
+      - name: Local AI installer safety fixtures
+        run: python3 scripts/local-ai-setup.py check

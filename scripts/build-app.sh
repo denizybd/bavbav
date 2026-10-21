@@ -13,25 +13,16 @@ fi
 [[ "${BAVBAV_STAGE_ONLY:-0}" == 0 || "${BAVBAV_STAGE_ONLY:-0}" == 1 ]] || { print -u2 -- "BAVBAV_STAGE_ONLY must be 0 or 1."; exit 1; }
 [[ "${BAVBAV_NOTIFY_RELEASE:-1}" == 0 || "${BAVBAV_NOTIFY_RELEASE:-1}" == 1 ]] || { print -u2 -- "BAVBAV_NOTIFY_RELEASE must be 0 or 1."; exit 1; }
 [[ ! -L "$project_dir/dist" ]] || { print -u2 -- "Refusing to build through a symlinked dist directory."; exit 1; }
-case "${BAVBAV_WITH_WORKSPACE:-auto}" in
-    auto)
-        if [[ -d "$project_dir/Sources/IkiWorkspaceKit" ]]; then
-            export BAVBAV_WITH_WORKSPACE=1
-        else
-            export BAVBAV_WITH_WORKSPACE=0
-        fi
-        ;;
-    0|1) export BAVBAV_WITH_WORKSPACE="${BAVBAV_WITH_WORKSPACE}" ;;
-    *) print -u2 -- "BAVBAV_WITH_WORKSPACE must be auto, 0 or 1."; exit 1 ;;
-esac
+[[ "${BAVBAV_WITH_WORKSPACE:-0}" == 0 || "${BAVBAV_WITH_WORKSPACE:-0}" == 1 ]] || { print -u2 -- "BAVBAV_WITH_WORKSPACE must be 0 or 1."; exit 1; }
+export BAVBAV_WITH_WORKSPACE="${BAVBAV_WITH_WORKSPACE:-0}"
 if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
     [[ -d "$project_dir/Sources/IkiWorkspaceKit" && ! -L "$project_dir/Sources/IkiWorkspaceKit" ]] || {
         print -u2 -- "Workspace was explicitly enabled but its private native sources are missing. Restore Sources/IkiWorkspaceKit or use BAVBAV_WITH_WORKSPACE=0 for the public-source build."
         exit 1
     }
-    for resource in runtime/node engine/src/native-bridge.mjs app-version.json; do
+    for resource in runtime/node engine/package.json engine/src/native-bridge.mjs engine/src/ui-client.mjs engine/src/engine-service.mjs engine/src/thunderbolt.mjs app-version.json; do
         [[ -f "$workspace_resources_dir/$resource" ]] || {
-            print -u2 -- "Workspace resource missing: $workspace_resources_dir/$resource. Restore Vendor/IkiWorkspace/Resources from this release, or set IKI_WORKSPACE_APP to its matching prepared Workspace app bundle. Auto mode never silently drops a present private Workspace integration."
+            print -u2 -- "Workspace resource missing: $workspace_resources_dir/$resource. Restore Vendor/IkiWorkspace/Resources from this release, or set IKI_WORKSPACE_APP to its matching prepared Workspace app bundle. Private builds must explicitly provide their matching Workspace resources."
             exit 1
         }
     done
@@ -44,6 +35,13 @@ for local_ai_source in Resources/LocalAI/model-lock.json Resources/LocalAI/exten
         exit 1
     }
 done
+local_ai_repository="${BAVBAV_LOCAL_AI_REPOSITORY:-$project_dir}"
+[[ "$local_ai_repository" == /* && -d "$local_ai_repository" ]] || { print -u2 -- "BAVBAV_LOCAL_AI_REPOSITORY must identify an existing absolute Bavbav checkout."; exit 1; }
+local_ai_repository="${local_ai_repository:A}"
+for local_ai_required in scripts/local-ai-setup.py Resources/LocalAI/model-lock.json; do
+    [[ -f "$local_ai_repository/$local_ai_required" && ! -L "$local_ai_repository/$local_ai_required" ]] || { print -u2 -- "Local AI repository is missing a regular required file: $local_ai_required"; exit 1; }
+done
+/usr/bin/cmp -s "$project_dir/Resources/LocalAI/model-lock.json" "$local_ai_repository/Resources/LocalAI/model-lock.json" || { print -u2 -- "Local AI repository uses a different model integrity lock; no candidate was created."; exit 1; }
 # Fail before icons, compilation, or any bundle mutation if stable signing is
 # not configured. Never silently fall back to ad-hoc signing for production.
 signing_identity="$(zsh "$project_dir/scripts/sign-app.sh" --preflight)"
@@ -86,7 +84,7 @@ cp "$project_dir/Resources/LocalAI/extension-manifest.json" "$local_ai_bundle_di
 cp "$project_dir/scripts/local-ai-setup.py" "$local_ai_bundle_dir/local-ai-setup.py"
 [[ "$(/usr/bin/plutil -extract schemaVersion raw "$local_ai_bundle_dir/model-lock.json")" == 1 && "$(/usr/bin/plutil -extract schemaVersion raw "$local_ai_bundle_dir/extension-manifest.json")" == 1 ]] || { print -u2 -- "Invalid Local AI native extension resource schema."; exit 1; }
 /usr/bin/plutil -create xml1 "$local_ai_bundle_dir/host.json"
-/usr/bin/plutil -insert repositoryPath -string "$project_dir" "$local_ai_bundle_dir/host.json"
+/usr/bin/plutil -insert repositoryPath -string "$local_ai_repository" "$local_ai_bundle_dir/host.json"
 /usr/bin/plutil -insert extensionVersion -string "$(/usr/bin/plutil -extract version raw "$local_ai_bundle_dir/extension-manifest.json")" "$local_ai_bundle_dir/host.json"
 /usr/bin/plutil -convert json "$local_ai_bundle_dir/host.json"
 # Link the native Workspace views into the Bavbav executable, and embed only
@@ -114,6 +112,7 @@ cp "$project_dir/.build/checkouts/swift-cmark/COPYING" "$staged_app_dir/Contents
 chmod +x "$staged_app_dir/Contents/MacOS/Bavbav"
 zsh "$project_dir/scripts/sign-app.sh" "$staged_app_dir"
 zsh "$project_dir/scripts/check-signing-requirements.sh" "$staged_app_dir"
+BAVBAV_WORKSPACE_RESOURCE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_COMPANION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavCompanionChecks"
 BAVBAV_COMPANION_WEB_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_COMPANION_WINDOW_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
@@ -133,6 +132,7 @@ BAVBAV_SIDE_CHAT_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFak
 "$project_dir/.build/release/BavbavOfflineChecks"
 /usr/bin/python3 "$local_ai_bundle_dir/local-ai-setup.py" --repo "$project_dir" check
 BAVBAV_OFFLINE_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_SHARED_LOCAL_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_IMAGE_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_PREFERENCES_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_RESIZE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"

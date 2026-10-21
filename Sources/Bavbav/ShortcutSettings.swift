@@ -98,10 +98,12 @@ enum ShortcutCatalog {
         }
         for (op, title, code) in [("projects","Focus Projects",18), ("recents","Focus recent chats",19),
             ("standalone","Focus standalone chats",20), ("models","Focus model settings",21),
-            ("journal","Focus journal",23), ("companion","Focus Companion voice and screen sharing",22),
-            ("workspace","Focus Deniz and Emir Workspace",26)] {
+            ("journal","Focus journal",23), ("companion","Focus Companion voice and screen sharing",22)] {
             add("*", "Windows · global", op, title, UInt16(code), .command, global: true)
         }
+        #if BAVBAV_WORKSPACE
+        add("*", "Windows · global", "workspace", "Focus Workspace", 26, .command, global: true)
+        #endif
         for (op,title,code,flags) in [
             ("preferences","Focus app settings",UInt16(7),NSEvent.ModifierFlags.command),
             ("hide","Hide Bavbav windows",4,.command),

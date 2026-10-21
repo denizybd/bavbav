@@ -1,125 +1,52 @@
 <p align="center">
-  <img src="AppResources/BavbavIcon-v3-dark.png" alt="Bavbav app icon" width="112" />
+  <img src="AppResources/BavbavIcon-v3-dark.png" alt="Bavbav icon" width="96" />
 </p>
 
 <h1 align="center">Bavbav</h1>
 
-<p align="center">
-  <strong>A native macOS workspace for Codex.</strong><br />
-  Keep your projects, conversations, and next steps in view.
-</p>
+<p align="center"><strong>A native macOS workspace for Codex.</strong><br />Parallel conversations. Queued instructions. Keyboard navigation.</p>
+
+<p align="center">macOS 14+ · SwiftUI + AppKit</p>
 
 <p align="center">
-  macOS 14+ &nbsp;·&nbsp; SwiftUI + AppKit &nbsp;·&nbsp; Keyboard-first
+  <a href="https://github.com/denizybd/bavbav/releases">Downloads</a> ·
+  <a href="#build-from-source">Build</a> ·
+  <a href="docs/GUIDE.md">User guide</a> ·
+  <a href="docs/WORKSPACE.md">Workspace</a>
 </p>
 
-<p align="center">
-  <a href="#get-started">Get started</a> &nbsp;·&nbsp;
-  <a href="#keyboard-cheat-sheet">Keyboard shortcuts</a> &nbsp;·&nbsp;
-  <a href="#under-the-hood">Architecture</a> &nbsp;·&nbsp;
-  <a href="https://github.com/denizybd/bavbav/issues">Report an issue</a>
-</p>
+![Bavbav with project navigation and parallel native chat windows](docs/assets/screenshots/01-parallel-workspaces.png)
 
-Bavbav brings Codex conversations into compact, independent macOS windows. Keep a live preview in sight, work across several projects, and line up your next instructions while an agent is still running. Move between them with the keyboard, with each conversation keeping its own draft and queue.
+<sub>Actual native interface with fictional projects and demo conversations.</sub>
 
-Built in Swift with AppKit and SwiftUI, Bavbav connects to your installed Codex App Server over local stdio. It uses your existing Codex setup for models, authentication, and coding tools.
+Bavbav brings your installed Codex runtime into independent macOS windows. Keep several projects in view, queue follow-up instructions while an agent works, and move between conversations without losing your draft or reading position.
 
-Companion (`⌘6`) adds a native Turkish voice and opt-in periodic full-screen sharing panel
-using that account, without a separate API key. One visible **Ses + ekran + imleci başlat**
-action starts screen preparation, ordinary requested cursor clicks and voice together;
-opening the panel alone never starts media. Native macOS permissions still require
-the user's decision. This first integration uses
-macOS speech services rather than built-in ChatGPT Voice. See
-[capabilities, privacy boundaries and live acceptance steps](docs/COMPANION.md).
+## What you can do
 
-Workspace (`⌘7`) opens Deniz and Emir's native P2P project and chat window inside
-Bavbav, preserving the existing Workspace identity and pairing. See
-[the embedded Workspace and its build resources](docs/WORKSPACE.md).
+- **Work across conversations.** Keep several native chat windows beside your editor or preview.
+- **Queue and steer.** Reorder waiting instructions or send one into an active turn.
+- **Stay on the keyboard.** Jump between projects, chats, models, and your journal.
+- **Keep work in sight.** Adjust background transparency while text stays readable.
+- **Use native tools.** Read rich Markdown and formulas, attach files, and inspect command activity.
+- **Browse inside Bavbav.** Open links in a native web window (`⌘8`), search a conversation and create an independent side chat from its `⋯` menu.
+- **Continue eligible work offline.** Use one pinned Qwen3 14B local worker (`⌘9`) for bounded text/file analysis and patch proposals, with durable checkpoints and explicit handoff back to the original conversation.
 
-Local AI (`⌘9`, app-local) adds a native offline-handoff extension using the
-existing Qwen3 14B model, with verified runtime/model files physically inside the
-checkout. It queues eligible text/read-only analysis, preserves uncertain cloud
-work instead of replaying it, and prepares an explicit report in the original
-chat's composer. Version 0.1.0 does **not** execute commands or apply file edits.
-See [offline workflow and verification](docs/OFFLINE-AI.md) and
-[automatic setup and model provenance](docs/LOCAL-AI-RUNTIME.md).
+[See the queue and transparency demos →](docs/GUIDE.md#queue-reorder-steer)
 
-![Bavbav displaying project navigation, recent conversations, and two native chat windows](docs/assets/screenshots/01-parallel-workspaces.png)
+## One app, optional Workspace
 
-<sub>All three screenshots use Bavbav's actual native interface with fictional projects and English demo conversations.</sub>
+Bavbav is the main application. **Bavbav Workspace** adds the private collaboration module inside the same app, with project snapshots, chat, and paired P2P synchronization.
 
-## Why Bavbav
-
-- **Keep several conversations open.** Arrange project chats beside one another. Switch focus without replacing the whole workspace, and return to an open conversation with its reading position intact.
-- **Give the next instruction when it occurs to you.** Queue follow-ups for the same conversation, reorder them, or send a selected instruction into the running turn.
-- **Close a window while work continues.** Press `Q` outside text editing to dismiss a chat. Bavbav releases its view while the active Codex turn keeps running; the menu bar shows the number of running chats.
-- **Make room for the work underneath.** Adjust background transparency while text, controls, and focus outlines stay opaque. Resize panels from their corners and keep the dimensions you prefer.
-
-## Queue, reorder, steer
-
-Sending a message while the same conversation is working adds it to that conversation's queue. A different conversation can start its own turn immediately.
-
-Open the queue to change the order, bring an instruction back into the composer, or **steer** the active turn with a selected message. Normal and Plan modes apply to new turns; changing modes does not rewrite the mode of a turn already in progress.
-
-![Bavbav's native message queue with three waiting instructions and an active coding conversation](docs/assets/screenshots/02-message-queue.png)
-
-## Keep the preview in sight
-
-Background transparency runs from fully opaque to fully transparent. Message surfaces and code blocks follow the same setting, while the foreground remains readable. A thin green outline identifies the focused window.
-
-At 0%, windows use a solid opaque backing and native opaque-window mode; window shadows and transparency-related foreground effects are disabled. Higher values restore background-only transparency. This avoids the transparent-window path, but is not a measured CPU or GPU performance guarantee.
-
-The windows behave like regular macOS windows: bring them forward with shortcuts, arrange them around your editor or preview, and use `⌘Tab` to move between apps.
-
-![Two transparent Bavbav conversation windows showing command activity and an English coding discussion](docs/assets/screenshots/03-transparent-workflow.png)
-
-## Inside the workspace
-
-| Feature | What you can do |
+| Build | Included |
 | --- | --- |
-| **Projects and recents** | Reopen Codex conversations, create project folders and chats, rename entries, and keep a preferred order. |
-| **Rich messages** | Read Markdown, tables, code blocks, mathematical notation, and images in native views. Select message text and copy code directly. |
-| **Visible tool activity** | Toggle commands, file changes, and tool output with `⇧Tab`, independently for each conversation. |
-| **Attachments** | Drop images or documents into a chat, or choose files from the composer. Preview and remove them before sending. |
-| **Normal, Plan, and Goal** | Choose how the next turn should work, and manage a conversation goal when the installed server supports it. |
-| **Models and effort** | Choose from the connected account's model catalog, adjust reasoning effort, or inherit the conversation's settings. |
-| **Standalone chat** | Start a Codex-powered conversation outside your project folders. |
-| **Journal** | Turn new conversations into short, editable notes about events, decisions, and plans, with links back to their sources. |
-| **Custom shortcuts** | Rebind actions by context, search bindings, and tune hold durations. On-screen hints follow your choices. |
-| **Offline handoff** | Continue eligible text/file analysis with one pinned local worker, keep durable receipts, and explicitly hand a report back to the original conversation. |
+| Public Bavbav | Codex conversations, queues, journal, Companion, native web browsing, and the optional Local AI extension. Builds from this repository alone. |
+| Authorized Workspace build | Everything above plus the private Workspace module, opened with `⌘7`. Requires access to its separate sources. |
 
-Attachments are limited to **12 files per message, 25 MiB per file**. Images are passed to Codex as local image inputs; documents are passed as local file references for its tools to read. Dropping a file adds it to the draft without sending it.
+The private module is maintained separately. Its engine, runtime, pairing data, and personalized distribution packages are not part of this public repository or public download. [Architecture and build instructions →](docs/WORKSPACE.md)
 
-## Get started
+## Build from source
 
-### Requirements
-
-- **macOS 14 or later.** A Swift 6 toolchain and macOS SDK are required to build; check your installation with `swift --version`.
-- **Codex installed and signed in.** Follow the [official Codex CLI setup](https://learn.chatgpt.com/docs/codex/cli) and [authentication guide](https://learn.chatgpt.com/docs/auth). Bavbav uses the installed executable and its existing authentication.
-- **Git and internet access** to clone the repository and resolve Swift dependencies. Cloud Codex requests require a connection; the optional Local AI extension works offline after its pinned assets are provisioned. Python 3 is required for local setup.
-
-> **Execution defaults:** Bavbav currently starts and resumes coding turns with full filesystem/network access and `approvalPolicy: never`. Commands can run and files can change without an approval card. Use it with workspaces and instructions you trust. macOS privacy permissions still apply.
-
-### Build and launch
-
-Confirm your Codex CLI is available and authenticated:
-
-```sh
-codex --version
-codex login status
-```
-
-If needed, run `codex login` and complete the sign-in flow. The packaged build
-also requires an existing stable local code-signing identity; see
-[local signing and permission-stable builds](docs/LOCAL-SIGNING.md). The
-scripts do not create keys/certificates or change macOS permission records.
-The embedded Workspace is optional for the public checkout. When its private
-native sources are present, packaging also requires the matching prepared
-runtime resources as described in [Workspace build instructions](docs/WORKSPACE.md).
-`BAVBAV_WITH_WORKSPACE=auto` detects those sources; `0` explicitly builds without
-Workspace and `1` requires it. Missing resources never silently disable a present
-private integration.
-Then build Bavbav:
+Requires **macOS 14+**, a **Swift 6 toolchain**, Git, and an installed, authenticated Codex runtime. Swift dependencies are downloaded during the first build.
 
 ```sh
 git clone https://github.com/denizybd/bavbav.git
@@ -127,183 +54,55 @@ cd bavbav
 BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh
 ```
 
-The build packages and checks a separate candidate, prints its absolute path,
-and leaves any running/installed Bavbav untouched. Quit Bavbav normally with
-`⌘Q`, install the exact printed candidate, and launch the canonical bundle
-through macOS LaunchServices:
+Configure a stable local signing identity using the [signing guide](docs/LOCAL-SIGNING.md). For an explicit development build without one:
 
 ```sh
-zsh scripts/install-app.sh "/absolute/path/to/bavbav/dist/.bavbav-build.XXXXXX/Bavbav.app"
-open "$PWD/dist/Bavbav.app"
+BAVBAV_ALLOW_ADHOC_SIGNING=1 BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh
 ```
 
-The installer checks the selected signer, bundle/build target, and completed
-fixture receipt, refuses if normal Bavbav is running, and keeps the previous
-bundle recoverable. `zsh scripts/build-app.sh` without stage-only invokes that
-same installer after checks; it still cannot replace a running app. Missing
-stable signing fails safely unless you explicitly choose the warned
-`BAVBAV_ALLOW_ADHOC_SIGNING=1` development-only path. Build/fixture success is
-not proof of live microphone, screen-capture, or input permission.
+The script builds and checks a separate app candidate and prints its path. It does not replace a running installation. Installation and launch steps are in the [user guide](docs/GUIDE.md#build-and-launch).
 
-<details>
-<summary>Launching from Finder or using another Codex installation</summary>
+Public preview downloads are local development builds, **not Apple-notarized releases**. Their release notes identify the tested architecture and build scope.
 
-Without an override, Bavbav looks for an executable in this order:
+> Bavbav currently runs coding turns with full filesystem/network access and no per-command approval cards. Use trusted projects and instructions. Cloud model requests use your Codex account. The optional Local AI extension uses a separate, explicitly identified local model after setup.
 
-1. ChatGPT, then Codex app bundles in `/Applications`, followed by the user's `Applications` folder. Each bundle supports the new `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`, the `codex-cli/bin/codex` wrapper, and the legacy `Contents/Resources/codex` location.
-2. `/opt/homebrew/bin/codex`, then `/usr/local/bin/codex`.
-3. `codex` in absolute directories from the inherited `PATH` (relative and empty entries are ignored).
+## Local AI extension
 
-If your installation is in one of those locations, you can launch normally:
+The 0.16.0 (74) unified release candidate combines the conversation-account window with the Local AI extension and the current private Workspace runtime. The native extension has its own version, 0.1.0; publication of this feature branch is not evidence that a running installation has been updated. [Thunderbolt setup and verification boundaries](docs/THUNDERBOLT.md) describe the offline cable route.
 
-```sh
-open dist/Bavbav.app
-```
+The native extension uses `huihui_ai/qwen3-abliterated:14b-v2` exactly. Its verified runtime and model files live physically in ignored `Runtime/LocalAI` inside the checkout; tracked integrity locks and the installer provide automatic setup without committing multi-gigabyte weights. Version 0.1.0 is read-only: it can inspect allowed files and propose changes, not execute shell commands or apply edits. Unknown cloud outcomes are held for exact-turn reconciliation rather than replayed. Reports return to the original composer only after explicit acceptance.
 
-For another location, set an absolute override for a normal LaunchServices
-launch (on macOS versions supporting `open --env`):
+The conversation-account window also offers **Deniz**, **Emir**, and **Local · this Mac** as separate choices. Local runs on the Mac you are using, not your peer's computer, and does not spend either account's quota or send its messages to the P2P account channel. Public builds can use Local without the private Workspace component. Switching providers never sends a message automatically; local continuation carries only bounded visible context and is not the same cloud session continuing offline.
 
-```sh
-open --env BAVBAV_CODEX_BIN="/absolute/path/to/codex" "$PWD/dist/Bavbav.app"
-```
+See [offline workflow and limits](docs/OFFLINE-AI.md), [setup and model provenance](docs/LOCAL-AI-RUNTIME.md), and [chat window actions](docs/CHAT-WINDOW-ACTIONS.md).
 
-`BAVBAV_CODEX_BIN` takes priority over the automatic locations. An invalid explicit override reports an error instead of silently launching a different installation. Finder launches do not inherit terminal-only environment variables; the known bundle locations work without them. Authenticate using the same Codex installation you select here.
+An isolated packaging checkout may set `BAVBAV_LOCAL_AI_REPOSITORY="/absolute/path/to/bavbav"` to use an existing, persistent model checkout. The packager validates the setup script and identical model lock; it does not copy the multi-gigabyte store into the application.
 
-Launching `Contents/MacOS/Bavbav` directly is reserved for developer checks;
-do not use a terminal-child launch to validate macOS privacy-permission
-ownership. If Bavbav is already running, quit it first before changing a launch
-environment override.
+## Keyboard essentials
 
-Bavbav resolves the executable again whenever it starts a new Codex process. After an initial connection failure, the existing 15-second refresh retries the complete handshake, message subscription, and settings load while a window is open. Reconnection does not automatically resend prompts.
-
-Newly created chats can be renamed before their first message. While Codex has not yet included an empty chat in its stored catalog, Bavbav keeps its small draft metadata in the current session, so refresh and project navigation do not discard its name or selection. Once the server lists it, normal catalog ownership resumes; this is not a cache of every missing or archived chat.
-
-</details>
-
-### Your first conversation
-
-1. Press **`⌘1`** to open Projects. Bavbav combines Codex's saved local projects with the working directories of existing conversations.
-2. Use **`W` / `S`** or the arrow keys to select a project, then **`Space`** to open it. Select a conversation and press **`Space`** again.
-3. Press **`Enter`** to write. Send an instruction, keep the chat open, and open another conversation alongside it.
-4. Use **`⌘4`** for the active conversation's model and effort, or **`⌘X`** for appearance and shortcut settings.
-
-To create a project or a named chat, use `Space` + `Enter` in the relevant Projects list. New project folders are created beside the selected project, or under `~/Documents/ChatGPT` when no projects exist. You can also use `⌘3` for a standalone conversation.
-
-## Keyboard cheat sheet
-
-These are the defaults. Most navigation keys apply outside text editing; `Q`, `W`, `A`, `S`, and `D` remain ordinary letters while you type. The seven window shortcuts, `⌘1`–`⌘7`, are global and bring their windows forward without toggling them closed.
-
-For `Space` + `Enter`, press Enter while holding Space, before the long press enters reorder mode.
-
-| Keys | Action |
+| Shortcut | Action |
 | --- | --- |
-| `⌘1` / `⌘2` | Projects / recent Codex conversations |
-| `⌘3` | Standalone chat launcher |
-| `⌘4` | Active conversation's model settings |
-| `⌘5` | Journal |
-| `⌘6` | Companion: voice and periodic full-screen sharing |
-| `⌘7` | Deniz and Emir Workspace: P2P projects and chat |
-| `⌘8` / `⌘9` | Bavbav web window / Local AI offline-handoff extension (app-local) |
-| `W` / `S` or `↑` / `↓` | Move through a list |
-| `Space` | Open the selected entry; steer a selected queue item |
-| `⌥Space` | Rename the selected project or conversation |
-| Hold `Space`, then `W` / `S` | Reorder an entry or queued message |
-| `Space` + `Enter` | Create a project/chat in Projects; toggle the queue in a conversation |
-| `⇧W` / `⇧A` / `⇧S` / `⇧D` | Focus the window above / left / below / right |
-| `⇧W+A`, `⇧W+D`, `⇧S+A`, `⇧S+D` | Focus a diagonal window; hold both letters together, in either order |
-| `Enter` | Open the composer; send while writing; close an empty composer |
-| `⇧Enter` / `⌘.` | Insert a newline / leave text editing |
-| `⌘K` / `⌘O` | Open composer tools / choose an attachment while writing |
-| `⇧Tab` | Show or hide command and tool activity |
-| `B` / `End` | Jump to the latest message |
-| `Q` | Go back or close the active panel; return a selected queue item to the composer |
-| `⌘X` | Open app settings, including while writing |
-| `⌘H` / `⌘Q` | Hide Bavbav / quit it completely |
+| `⌘1` / `⌘2` | Projects / recent chats |
+| `⌘3` / `⌘4` | Standalone chat / model settings |
+| `⌘5` / `⌘6` | Journal / Companion |
+| `⌘7` | Workspace, in authorized builds |
+| `⌘8` / `⌘9` | Native web window / Local AI (app-local shortcuts) |
+| `Q` outside text editing | Close a chat view while its active turn continues |
+| `⇧Tab` | Show or hide tool activity |
 
-Click a message and use `⌘A` / `⌘C` to select and copy its text. Inside Bavbav, the default `⌘X` opens settings instead of cutting text; you can change this binding in **Settings → Shortcuts**.
+[Full shortcut guide](docs/GUIDE.md#keyboard-cheat-sheet) · [Companion](docs/COMPANION.md) · [Architecture](docs/GUIDE.md#under-the-hood)
 
-## Execution and local data
-
-Bavbav's interface runs locally. Normal Codex conversations and model requests go through your installed Codex runtime and its configured services; local rendering alone does not mean offline inference. The separately labeled Local AI extension uses its pinned repository-owned model, with the narrower read-only capabilities described above.
-
-- **Drafts and attachments:** Drafts persist locally. Imported files are copied into `~/Library/Application Support/Bavbav/Attachments/`; original files are left in place. The pending message queue is held in memory and is not guaranteed to recover after a full quit.
-- **Images and links:** Local and embedded images can render in messages. Remote HTTPS image previews require an explicit load action. Raw HTML is not executed; local file links reveal files in Finder.
-- **Journal:** Automatic note extraction is enabled by default and uses additional Codex requests, capped at 60 per day. Press `P` in the journal to pause it. It processes new conversation activity rather than automatically scanning your entire history. Notes are stored under `~/Library/Application Support/Bavbav/Journal/`, retain source references, and can be edited or deleted. These local files are not separately encrypted.
-- **Local AI:** Durable task checkpoints/receipts live under `~/Library/Application Support/Bavbav/OfflineAI/Tasks/`. Runtime and exact model weights remain in the checkout's ignored `Runtime/LocalAI/`; GitHub and the app bundle contain setup code/manifests, not a 9 GB weight commit. A local result is not automatically sent to the cloud.
-- **Closing and quitting:** `Q` closes a view while Bavbav and its active work remain running. `⌘Q` exits the app; continued background work is not promised after quitting or shutting down the Mac.
-
-## Under the hood
-
-```mermaid
-flowchart LR
-    UI["Native windows<br/>AppKit + SwiftUI + TextKit"]
-    State["Conversation state<br/>Drafts, queues, focus, history"]
-    Server["Local Codex App Server"]
-    Runtime["Codex models and tools"]
-    UI <--> State
-    State <-->|"JSON-RPC over stdio"| Server
-    Server <--> Runtime
-```
-
-| Location | Responsibility |
-| --- | --- |
-| [`Sources/Bavbav`](Sources/Bavbav) | Window coordination, keyboard routing, native transcripts, composer, appearance, and journal UI. |
-| [`Sources/BavbavCore`](Sources/BavbavCore) | App Server transport, project discovery, conversation models, message reconciliation, and journal rules. |
-| [`Sources/BavbavOffline`](Sources/BavbavOffline) | Independent native offline extension: durable single-worker queue, read-only file tools, bounded local model transport, and explicit handoff reports. |
-| [`Tests/BavbavChecks`](Tests/BavbavChecks) | Core behavior checks and optional protocol/integration checks. |
-| [`Tests/BavbavFakeCodex`](Tests/BavbavFakeCodex) | A local server fixture for repeatable protocol and UI checks. |
-| [`scripts`](scripts) | Icon preparation, release builds, resource packaging, and app validation. |
-| [`Vendor/SwiftMath`](Vendor/SwiftMath) | Native mathematical typesetting, with a small resource lookup patch for packaged macOS apps. |
-
-The UI keeps runtime state per conversation, reconciles optimistic sends with server events, and protects current content from stale history responses. Closing a detail window releases its view without clearing the running turn or its queue. Rich-text, formula, and image caches have explicit size limits.
-
-When an App Server history projection stops advancing, Bavbav supplements the indexed conversation with completed public user/assistant messages from that thread's local rollout. This read-only compatibility path does not repair or write the Codex databases, replay tool calls, or expose encrypted/private reasoning. It incrementally reads appended records off the UI thread, ignores incomplete lines, and caches at most two transcripts (2,000 messages / 8 MiB of text each; lines over 8 MiB and messages over 1 MiB are skipped). The local rollout format is not a substitute for the supported App Server protocol and can change upstream. Active conversations may refresh while sending; optimistic rows are retained until their persisted echo arrives. Writer handoffs update both the native window identity and its displayed thread.
-
-The transport follows the [Codex App Server protocol](https://learn.chatgpt.com/docs/app-server). Markdown uses the pinned `swift-markdown` dependency; mathematical notation is rendered with the vendored SwiftMath package.
-
-## Development and checks
-
-For the complete packaged-app validation:
+## Development
 
 ```sh
-BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh
-.build/release/BavbavChecks
-zsh scripts/sign-app.sh --verify "/absolute/path/printed/by/the/build/Bavbav.app"
-```
-
-The build script exercises executable discovery, connection failure/recovery and streamed replies, protocol round-trips, native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, standalone chats, and offline installer/coordinator/native-host fixtures. Its fixture checks do not send prompts to your real Codex account or load the real local model. Real local inference is a separate opt-in check described in [Offline AI verification](docs/OFFLINE-AI.md#verification-and-honest-acceptance).
-
-Conversation regression checks cover final-response/focus races, delayed history overwriting live replies, and recovered messages appearing out of order. For an explicitly selected real conversation, `.build/release/BavbavChecks --read-only-thread THREAD_ID` checks history retrieval; `BAVBAV_HISTORY_REPLAY_CHECK=THREAD_ID .build/release/Bavbav` additionally verifies that the last message is visible in a hidden native window. These diagnostics do not send or resume turns, and print counts rather than conversation text. They do not prove the state of an already-running older app.
-
-For core changes and explicit protocol checks without packaging:
-
-```sh
-swift build
-swift run BavbavChecks
+swift build --build-system native
+swift run --build-system native BavbavChecks
 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/BavbavChecks --protocol-fixture
+.build/debug/BavbavOfflineChecks
 ```
 
-Live account checks are separate and opt-in: `swift run BavbavChecks --integration` reads account and history metadata; adding `--integration-turn` sends a real ephemeral test turn and consumes model usage. Native fixture checks do not establish real-account compatibility or replace testing an interaction in the running app.
+[GitHub Actions](https://github.com/denizybd/bavbav/actions) checks the public source build and core/protocol behavior. The packaged-app script additionally exercises native fixture checks. Real account, voice, screen sharing, and two-device P2P acceptance are separate checks.
 
-## Current scope
+[Report an issue](https://github.com/denizybd/bavbav/issues) with your macOS version, commit, and reproduction steps. Keep private conversations and credentials out of reports.
 
-Bavbav is an independently developed macOS client in active development.
-
-- **Source build:** Production packaging requires a configured stable local code-signing identity. An explicit, warned ad-hoc development fallback exists; neither path is automatically an Apple Developer ID signed, notarized distribution. See [local signing](docs/LOCAL-SIGNING.md).
-- **Language:** The main keyboard-first Codex interface and this README are English; Companion currently has Turkish voice and sharing controls. Conversation content remains in its original language.
-- **Codex compatibility:** Available models and capabilities depend on your account and installed App Server version. Goal support is checked against the server.
-- **Standalone CHAT:** The current UI labels this channel `ChatGPT`, but its conversations use Codex App Server. It does not synchronize your chatgpt.com history.
-- **Concurrent writers:** If another client owns a conversation and it cannot be resumed for writing, Bavbav can fork it and continue in the new branch, leaving the original conversation intact.
-- **Journal scope:** The journal is local to Bavbav; it does not sync with Apple Calendar or Google Calendar. Automatically extracted notes may need correction.
-
-## Feedback and contributions
-
-[Open an issue](https://github.com/denizybd/bavbav/issues) with the behavior you expected, what happened, and the shortest steps that reproduce it. Include your macOS version, Bavbav commit, and Codex version. Screenshots with fictional projects are especially useful for layout and interaction reports.
-
-Focused pull requests are welcome. Explain the user-visible change and the checks you ran; for keyboard or window behavior, include what you verified in the running app. Keep credentials, private conversations, and personal project content out of reports and fixtures.
-
-The repository does not yet include a project-wide license. Third-party code and fonts retain their own licenses; the app build bundles the dependency notices.
-
----
-
-Created by [denizybd](https://github.com/denizybd). Bavbav is an independent project and is not affiliated with or endorsed by OpenAI.
+Bavbav is an independent project, not affiliated with OpenAI. No project-wide license has been selected; third-party notices remain with their dependencies.

@@ -69,6 +69,7 @@ enum ShortcutCustomizationCheck {
             }
         }
         do {
+            #if BAVBAV_WORKSPACE
             let migrationSuite = suite + ".pre-workspace"
             let migrationDefaults = UserDefaults(suiteName: migrationSuite)!
             defer { migrationDefaults.removePersistentDomain(forName: migrationSuite) }
@@ -85,6 +86,7 @@ enum ShortcutCustomizationCheck {
                       "an occupied Command 7 only disables the new Workspace default")
             try check(migrationDefaults.data(forKey: ShortcutSettings.storageKey) == olderBytes,
                       "loading a new shortcut catalog never rewrites the user's original settings")
+            #endif
             let browserMigrationSuite = suite + ".pre-browser"
             let browserMigrationDefaults = UserDefaults(suiteName: browserMigrationSuite)!
             defer { browserMigrationDefaults.removePersistentDomain(forName: browserMigrationSuite) }
@@ -110,9 +112,13 @@ enum ShortcutCustomizationCheck {
             _ = router.handle(key(22, .command, window: project))
             _ = router.handle(key(22, .command, window: project, type: .keyUp))
             try check(companionRequests == 1, "Command 6 opens Companion, not journal")
+            #if BAVBAV_WORKSPACE
             try check(bindings.label("*.workspace.key") == "⌘7", "Workspace default is Command 7")
             tap(26, .command, window: project)
             try check(workspaceRequests == 1, "Command 7 opens the embedded Workspace")
+            #else
+            try check(!ShortcutCatalog.all.contains { $0.operation == "workspace" }, "public builds do not advertise Workspace shortcuts")
+            #endif
             let catalog = ShortcutCatalog.all
             try check(catalog.count > 150, "granular action catalog")
             try check(Set(catalog.map(\.id)).count == catalog.count, "stable unique IDs")

@@ -1,5 +1,5 @@
 import AppKit
-#if BAVBAV_WITH_WORKSPACE && canImport(IkiWorkspaceKit)
+#if BAVBAV_WORKSPACE && canImport(IkiWorkspaceKit)
 import IkiWorkspaceKit
 
 /// Native AppKit diagnostic owned by Bavbav. It uses a UUID data directory,

@@ -1,5 +1,7 @@
 # Local AI / Offline Handoff — native extension 0.1.0
 
+This integration targets the Bavbav 0.16.0 (74) unified release candidate. The extension remains version 0.1.0; build, branch publication, installation, and installed-user acceptance are separate steps.
+
 Open **Windows → Yerel AI · çevrimdışı görev devri**, or press **⌘9** while Bavbav
 is active. This is a native Bavbav extension, not a ChatGPT plugin, browser tab,
 or a second application. Its controls follow Bavbav's dark appearance. The
@@ -59,6 +61,22 @@ Connectivity detection is deliberately not a claim that every cloud provider
 is reachable. An available Wi-Fi route, a VPN, DNS trouble, or a provider outage
 does not by itself prove that a possibly accepted cloud request can be replayed.
 The manual panel remains available for explicitly selected read-only work.
+
+## Local in the conversation-account window
+
+The account window offers three separate providers: **Deniz**, **Emir**, and
+**Local · this Mac**. The cloud choices retain their existing account/pairing
+requirements; Local remains available without private Workspace account RPCs.
+Local always uses this Mac's pinned model and hardware, not a remote peer's
+model. It does not consume either cloud account's quota.
+
+Local continuation is an explicit, separate task with bounded visible context;
+provider selection does not send a message, transfer credentials, copy hidden
+reasoning, or turn the local model into the same cloud session. Its messages and
+results are not sent through `accountSend`/`accountReply` or to the other device.
+If Local is unavailable or disabled, the draft stays intact; there is no silent
+fallback to Deniz or Emir. A prepared return report still requires explicit
+acceptance and never sends itself.
 
 ## Using the panel
 
@@ -157,6 +175,10 @@ python3 scripts/local-ai-setup.py --repo "$PWD" check
 BAVBAV_OFFLINE_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/release/BavbavFakeCodex" \
   .build/release/Bavbav --offline-render /absolute/path/offline.png \
   --offline-ui-report /absolute/path/offline-ui.json
+
+# Account-window Local routing, with fake workers/RPC only; no cloud account.
+BAVBAV_SHARED_LOCAL_CHECK=1 BAVBAV_CODEX_BIN="$PWD/.build/release/BavbavFakeCodex" \
+  .build/release/Bavbav
 ```
 
 The canonical package script runs these fixture levels before writing its

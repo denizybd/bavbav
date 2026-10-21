@@ -1,5 +1,7 @@
 # Repository-owned Local AI runtime
 
+Isolated release builders may set `BAVBAV_LOCAL_AI_REPOSITORY="/absolute/path/to/bavbav"` when running `scripts/build-app.sh`. It defaults to the packaging checkout and is accepted only with a regular setup script and an identical model integrity lock. The app points to that persistent checkout; the model store is not copied into the package.
+
 Bavbav's offline extension uses the **same model already used on this Mac**:
 `huihui_ai/qwen3-abliterated:14b-v2` (Qwen3 14.8B, Q4_K_M). It does not silently
 substitute another model or a cloud provider. Model generation is not itself

@@ -4,7 +4,7 @@
   "id": "dev.bavbav.local-ai",
   "name": "Local AI / Offline Handoff",
   "version": "0.1.0",
-  "minimumHostVersion": "0.14.0",
+  "minimumHostVersion": "0.16.0",
   "entryPoint": {
     "module": "BavbavOffline",
     "hostAdapter": "OfflineAIService",
