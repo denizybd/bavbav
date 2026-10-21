@@ -68,7 +68,7 @@ Public preview downloads are local development builds, **not Apple-notarized rel
 
 ## Local AI extension
 
-The 0.16.0 (72) development host combines the conversation-account window with the Local AI extension. The native extension has its own version, 0.1.0; publication of this feature branch is not evidence that a running installation has been updated.
+The 0.16.0 (74) unified release candidate combines the conversation-account window with the Local AI extension and the current private Workspace runtime. The native extension has its own version, 0.1.0; publication of this feature branch is not evidence that a running installation has been updated. [Thunderbolt setup and verification boundaries](docs/THUNDERBOLT.md) describe the offline cable route.
 
 The native extension uses `huihui_ai/qwen3-abliterated:14b-v2` exactly. Its verified runtime and model files live physically in ignored `Runtime/LocalAI` inside the checkout; tracked integrity locks and the installer provide automatic setup without committing multi-gigabyte weights. Version 0.1.0 is read-only: it can inspect allowed files and propose changes, not execute shell commands or apply edits. Unknown cloud outcomes are held for exact-turn reconciliation rather than replayed. Reports return to the original composer only after explicit acceptance.
 

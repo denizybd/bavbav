@@ -25,13 +25,15 @@
     <key>CFBundleShortVersionString</key>
     <string>0.16.0</string>
     <key>CFBundleVersion</key>
-    <string>72</string>
+    <string>74</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
     <false/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Bavbav, eşleştirdiğiniz Mac ile yerel ağ veya Thunderbolt üzerinden bağlantı kurmak; sohbetleri, projeleri ve dosyaları eşitlemek için yerel ağ erişimi kullanır.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Companion mikrofonu yalnızca sesli sohbeti başlattığınızda veya metne yazmayı seçtiğinizde kullanır. Sesli sohbette konuşmanız bittiğinde tanınan metin mevcut hesabınıza otomatik gönderilir; yanıt okunurken mikrofon kapalıdır.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

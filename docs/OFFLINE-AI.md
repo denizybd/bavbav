@@ -1,6 +1,6 @@
 # Local AI / Offline Handoff — native extension 0.1.0
 
-This integration targets the Bavbav 0.16.0 (72) development host. The extension remains version 0.1.0; build, branch publication, installation, and installed-user acceptance are separate steps.
+This integration targets the Bavbav 0.16.0 (74) unified release candidate. The extension remains version 0.1.0; build, branch publication, installation, and installed-user acceptance are separate steps.
 
 Open **Windows → Yerel AI · çevrimdışı görev devri**, or press **⌘9** while Bavbav
 is active. This is a native Bavbav extension, not a ChatGPT plugin, browser tab,

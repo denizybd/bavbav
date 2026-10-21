@@ -9,21 +9,18 @@ let workspaceTargets: [Target] = withWorkspace
     ? [.target(name: "IkiWorkspaceKit", path: "Sources/IkiWorkspaceKit")] : []
 let workspaceDependencies: [Target.Dependency] = withWorkspace ? ["IkiWorkspaceKit"] : []
 
-let package = Package(
-    name: "Bavbav",
-    platforms: [
-        .macOS(.v14)
-    ],
-    products: [
-        .library(name: "BavbavOffline", targets: ["BavbavOffline"]),
-        .library(name: "BavbavCompanion", targets: ["BavbavCompanion"]),
-        .executable(name: "Bavbav", targets: ["Bavbav"])
-    ],
-    dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
-        .package(path: "Vendor/SwiftMath")
-    ],
-    targets: [
+// Keep manifest expressions explicitly typed and small. Xcode 16.4's manifest
+// compiler otherwise times out resolving the large Package/Target overloads.
+let packageProducts: [Product] = [
+    .library(name: "BavbavOffline", targets: ["BavbavOffline"]),
+    .library(name: "BavbavCompanion", targets: ["BavbavCompanion"]),
+    .executable(name: "Bavbav", targets: ["Bavbav"])
+]
+let packageDependencies: [Package.Dependency] = [
+    .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.8.0"),
+    .package(path: "Vendor/SwiftMath")
+]
+let commonTargets: [Target] = [
         .target(name: "BavbavOffline", path: "Sources/BavbavOffline"),
         .executableTarget(name: "BavbavOfflineChecks", dependencies: ["BavbavOffline"], path: "Tests/BavbavOfflineChecks", swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
         .target(name: "CompanionSafety", exclude: ["NOTICE.md"]),
@@ -33,19 +30,27 @@ let package = Package(
             name: "BavbavCore",
             path: "Sources/BavbavCore"
         ),
-    ] + workspaceTargets + [
-        .executableTarget(
+]
+var applicationDependencies: [Target.Dependency] = [
+    .byName(name: "BavbavCore"), .byName(name: "BavbavCompanion"), .byName(name: "BavbavOffline")
+]
+applicationDependencies.append(contentsOf: workspaceDependencies)
+applicationDependencies.append(contentsOf: [
+    .product(name: "Markdown", package: "swift-markdown"),
+    .product(name: "SwiftMath", package: "SwiftMath")
+])
+let applicationSwiftSettings: [SwiftSetting] = withWorkspace ? [.define("BAVBAV_WORKSPACE")] : []
+let applicationTarget: Target = .executableTarget(
             name: "Bavbav",
-            dependencies: [.byName(name: "BavbavCore"), .byName(name: "BavbavCompanion"), .byName(name: "BavbavOffline")]
-                + workspaceDependencies + [.product(name: "Markdown", package: "swift-markdown"),
-                                            .product(name: "SwiftMath", package: "SwiftMath")],
+            dependencies: applicationDependencies,
             path: "Sources/Bavbav",
-            swiftSettings: withWorkspace ? [.define("BAVBAV_WORKSPACE")] : [],
+            swiftSettings: applicationSwiftSettings,
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Carbon")
             ]
-        ),
+        )
+let checkTargets: [Target] = [
         .executableTarget(
             name: "BavbavChecks",
             dependencies: ["BavbavCore"],
@@ -55,6 +60,17 @@ let package = Package(
             name: "BavbavFakeCodex",
             path: "Tests/BavbavFakeCodex"
         )
-    ],
+]
+var packageTargets: [Target] = commonTargets
+packageTargets.append(contentsOf: workspaceTargets)
+packageTargets.append(applicationTarget)
+packageTargets.append(contentsOf: checkTargets)
+
+let package = Package(
+    name: "Bavbav",
+    platforms: [.macOS(.v14)],
+    products: packageProducts,
+    dependencies: packageDependencies,
+    targets: packageTargets,
     swiftLanguageModes: [.v5]
 )

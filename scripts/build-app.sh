@@ -20,7 +20,7 @@ if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
         print -u2 -- "Workspace was explicitly enabled but its private native sources are missing. Restore Sources/IkiWorkspaceKit or use BAVBAV_WITH_WORKSPACE=0 for the public-source build."
         exit 1
     }
-    for resource in runtime/node engine/src/native-bridge.mjs app-version.json; do
+    for resource in runtime/node engine/package.json engine/src/native-bridge.mjs engine/src/ui-client.mjs engine/src/engine-service.mjs engine/src/thunderbolt.mjs app-version.json; do
         [[ -f "$workspace_resources_dir/$resource" ]] || {
             print -u2 -- "Workspace resource missing: $workspace_resources_dir/$resource. Restore Vendor/IkiWorkspace/Resources from this release, or set IKI_WORKSPACE_APP to its matching prepared Workspace app bundle. Private builds must explicitly provide their matching Workspace resources."
             exit 1
@@ -112,6 +112,7 @@ cp "$project_dir/.build/checkouts/swift-cmark/COPYING" "$staged_app_dir/Contents
 chmod +x "$staged_app_dir/Contents/MacOS/Bavbav"
 zsh "$project_dir/scripts/sign-app.sh" "$staged_app_dir"
 zsh "$project_dir/scripts/check-signing-requirements.sh" "$staged_app_dir"
+BAVBAV_WORKSPACE_RESOURCE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_COMPANION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavCompanionChecks"
 BAVBAV_COMPANION_WEB_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_COMPANION_WINDOW_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"

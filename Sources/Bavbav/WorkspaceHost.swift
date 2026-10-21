@@ -24,12 +24,13 @@ final class WorkspaceHost {
                           userInfo: [NSLocalizedDescriptionKey: "Bavbav kaynakları bulunamadı."])
         }
         let root = resources.appendingPathComponent("IkiWorkspace", isDirectory: true)
-        let required = ["runtime/node", "engine/src/native-bridge.mjs", "app-version.json"]
-        guard required.allSatisfy({ FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }) else {
-            throw NSError(domain: "Bavbav.Workspace", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "Workspace bileşenleri eksik. Tam Bavbav paketini yeniden kurun; eşleştirme ve proje kayıtlarınız korunur."])
+        guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              let buildText = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+              let build = Int(buildText) else {
+            throw WorkspaceRuntimeContract.Failure.invalidMetadata("Bavbav paket sürümü/derleme numarası")
         }
-        return root
+        return try WorkspaceRuntimeContract.validate(resourcesURL: root, expectedHostVersion: version,
+                                                     expectedHostBuild: build).resourcesURL
     }
 
     var isVisible: Bool {
