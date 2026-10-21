@@ -27,8 +27,13 @@ struct ChatComposerView: View {
                 Text(store.shouldQueueCurrentMessage ? "QUEUE" : "WRITE")
                     .foregroundStyle(BavbavTheme.accent)
                 if store.composerMode == .plan { badge("PLAN", color: BavbavTheme.cyan) }
+                if store.offlineAI?.shouldAutomaticallyRoute == true { badge("LOCAL · QWEN3", color: BavbavTheme.accent) }
                 if store.composerGoal?.status == "active" { badge("GOAL", color: BavbavTheme.warning) }
                 Spacer(minLength: 0)
+                Button { NotificationCenter.default.post(name: .bavbavSharedAccountChat, object: nil) } label: {
+                    Label("Kimin hesabı?", systemImage: "person.crop.circle.badge.checkmark")
+                }.buttonStyle(.plain).foregroundStyle(BavbavTheme.cyan)
+                    .help("Deniz veya Emir hesabıyla ayrı bir konuşma aç")
                 Text("\(shortcuts.key(scope + ".send.key")) \(store.composerHasPayload ? (store.shouldQueueCurrentMessage ? "ADD" : "SEND") : "CLOSE") · \(shortcuts.key(scope + ".newline.key")) LINE")
                     .foregroundStyle(BavbavTheme.muted).lineLimit(1).minimumScaleFactor(0.8)
             }.font(BavbavTheme.mono(7, weight: .bold)).readableForeground()
@@ -89,6 +94,22 @@ struct ChatComposerView: View {
                         subtitle: store.composerGoal.map { "\($0.status.uppercased()) · \($0.objective)" } ?? "Give Codex a clear objective to work toward.") {
                     store.beginComposerGoalEditing()
                 }
+                Button {
+                    NotificationCenter.default.post(name: .bavbavOpenOfflineAI, object: store.detailThread)
+                } label: {
+                    Label("Yerel AI · çevrimdışı görev devri", systemImage: "desktopcomputer")
+                        .font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.accent).readableForeground()
+                        .padding(9).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(BavbavTheme.raised.panelBackdrop()).clipShape(RoundedRectangle(cornerRadius: 5))
+                }.buttonStyle(.plain)
+                Button {
+                    NotificationCenter.default.post(name: .bavbavSharedAccountChat, object: nil)
+                } label: {
+                    Label("Konuşma kaynağı · Deniz / Emir / Yerel AI", systemImage: "person.2")
+                        .font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.accent).readableForeground()
+                        .padding(9).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(BavbavTheme.raised.panelBackdrop()).clipShape(RoundedRectangle(cornerRadius: 5))
+                }.buttonStyle(.plain)
                 if store.composerGoalEditing {
                     VStack(alignment: .leading, spacing: 7) {
                         RenameNameField(text: Binding(get: { store.goalObjective }, set: { store.updateGoalObjective($0) }),

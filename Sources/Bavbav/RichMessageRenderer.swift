@@ -80,7 +80,8 @@ enum MessageLinkPolicy {
             let path = url.path.replacingOccurrences(of: #":\d+(?::\d+)?$"#, with: "", options: .regularExpression)
             guard path.hasPrefix("/"), !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
             return URL(fileURLWithPath: path)
-        case "http", "https": return url.host?.isEmpty == false ? url : nil
+        case "http", "https":
+            return url.host?.isEmpty == false && url.user == nil && url.password == nil ? url : nil
         case "mailto": return url.path.contains("@") ? url : nil
         default: return nil
         }
@@ -94,7 +95,17 @@ enum MessageLinkPolicy {
                 return
             }
             NSWorkspace.shared.activateFileViewerSelecting([allowed])
+        } else if ["http", "https"].contains(allowed.scheme?.lowercased() ?? "") {
+            NotificationCenter.default.post(name: .bavbavOpenBrowser, object: allowed)
         } else if !NSWorkspace.shared.open(allowed) {
+            showOpenFailure("No application could open this link:\n\(allowed.absoluteString)")
+        }
+    }
+
+    static func openExternally(_ url: URL) {
+        guard let allowed = destination(url.absoluteString),
+              ["http", "https"].contains(allowed.scheme?.lowercased() ?? "") else { return }
+        if !NSWorkspace.shared.open(allowed) {
             showOpenFailure("No application could open this link:\n\(allowed.absoluteString)")
         }
     }

@@ -28,6 +28,8 @@ Bavbav brings your installed Codex runtime into independent macOS windows. Keep 
 - **Stay on the keyboard.** Jump between projects, chats, models, and your journal.
 - **Keep work in sight.** Adjust background transparency while text stays readable.
 - **Use native tools.** Read rich Markdown and formulas, attach files, and inspect command activity.
+- **Browse inside Bavbav.** Open links in a native web window (`⌘8`), search a conversation and create an independent side chat from its `⋯` menu.
+- **Continue eligible work offline.** Use one pinned Qwen3 14B local worker (`⌘9`) for bounded text/file analysis and patch proposals, with durable checkpoints and explicit handoff back to the original conversation.
 
 [See the queue and transparency demos →](docs/GUIDE.md#queue-reorder-steer)
 
@@ -37,7 +39,7 @@ Bavbav is the main application. **Bavbav Workspace** adds the private collaborat
 
 | Build | Included |
 | --- | --- |
-| Public Bavbav | Codex conversations, queues, journal, and Companion. Builds from this repository alone. |
+| Public Bavbav | Codex conversations, queues, journal, Companion, native web browsing, and the optional Local AI extension. Builds from this repository alone. |
 | Authorized Workspace build | Everything above plus the private Workspace module, opened with `⌘7`. Requires access to its separate sources. |
 
 The private module is maintained separately. Its engine, runtime, pairing data, and personalized distribution packages are not part of this public repository or public download. [Architecture and build instructions →](docs/WORKSPACE.md)
@@ -62,7 +64,19 @@ The script builds and checks a separate app candidate and prints its path. It do
 
 Public preview downloads are local development builds, **not Apple-notarized releases**. Their release notes identify the tested architecture and build scope.
 
-> Bavbav currently runs coding turns with full filesystem/network access and no per-command approval cards. Use trusted projects and instructions. Model requests use your Codex account; this is not an offline language model.
+> Bavbav currently runs coding turns with full filesystem/network access and no per-command approval cards. Use trusted projects and instructions. Cloud model requests use your Codex account. The optional Local AI extension uses a separate, explicitly identified local model after setup.
+
+## Local AI extension
+
+The 0.16.0 (72) development host combines the conversation-account window with the Local AI extension. The native extension has its own version, 0.1.0; publication of this feature branch is not evidence that a running installation has been updated.
+
+The native extension uses `huihui_ai/qwen3-abliterated:14b-v2` exactly. Its verified runtime and model files live physically in ignored `Runtime/LocalAI` inside the checkout; tracked integrity locks and the installer provide automatic setup without committing multi-gigabyte weights. Version 0.1.0 is read-only: it can inspect allowed files and propose changes, not execute shell commands or apply edits. Unknown cloud outcomes are held for exact-turn reconciliation rather than replayed. Reports return to the original composer only after explicit acceptance.
+
+The conversation-account window also offers **Deniz**, **Emir**, and **Local · this Mac** as separate choices. Local runs on the Mac you are using, not your peer's computer, and does not spend either account's quota or send its messages to the P2P account channel. Public builds can use Local without the private Workspace component. Switching providers never sends a message automatically; local continuation carries only bounded visible context and is not the same cloud session continuing offline.
+
+See [offline workflow and limits](docs/OFFLINE-AI.md), [setup and model provenance](docs/LOCAL-AI-RUNTIME.md), and [chat window actions](docs/CHAT-WINDOW-ACTIONS.md).
+
+An isolated packaging checkout may set `BAVBAV_LOCAL_AI_REPOSITORY="/absolute/path/to/bavbav"` to use an existing, persistent model checkout. The packager validates the setup script and identical model lock; it does not copy the multi-gigabyte store into the application.
 
 ## Keyboard essentials
 
@@ -72,6 +86,7 @@ Public preview downloads are local development builds, **not Apple-notarized rel
 | `⌘3` / `⌘4` | Standalone chat / model settings |
 | `⌘5` / `⌘6` | Journal / Companion |
 | `⌘7` | Workspace, in authorized builds |
+| `⌘8` / `⌘9` | Native web window / Local AI (app-local shortcuts) |
 | `Q` outside text editing | Close a chat view while its active turn continues |
 | `⇧Tab` | Show or hide tool activity |
 
@@ -83,6 +98,7 @@ Public preview downloads are local development builds, **not Apple-notarized rel
 swift build --build-system native
 swift run --build-system native BavbavChecks
 BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/BavbavChecks --protocol-fixture
+.build/debug/BavbavOfflineChecks
 ```
 
 [GitHub Actions](https://github.com/denizybd/bavbav/actions) checks the public source build and core/protocol behavior. The packaged-app script additionally exercises native fixture checks. Real account, voice, screen sharing, and two-device P2P acceptance are separate checks.

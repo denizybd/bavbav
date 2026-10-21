@@ -127,7 +127,8 @@ final class PanelCoordinator: NSObject, NSWindowDelegate {
     var openDetailWindowCount: Int { detailPanels.count }
 
     private var managedWindows: [NSWindow] {
-        [projectPanel, recentPanel, chatGPTPanel, settingsPanel, appSettings.window, journalWindow.window] + Array(detailPanels.values)
+        let browserWindows = NSApp.windows.filter { $0.identifier?.rawValue == "bavbav.browser" }
+        return [projectPanel, recentPanel, chatGPTPanel, settingsPanel, appSettings.window, journalWindow.window] + Array(detailPanels.values) + browserWindows
     }
 
     var hasVisibleWindows: Bool {
@@ -242,6 +243,9 @@ final class PanelCoordinator: NSObject, NSWindowDelegate {
             }
             panel.title = thread.title
         }
+        store.onSideChatOpened = { [weak self] source, target in
+            self?.positionSideChat(sourceID: source.id, targetID: target.id)
+        }
         store.onChatGPTLayoutChanged = { [weak self] expanded in
             self?.setChatGPTExpanded(expanded, animated: true)
         }
@@ -336,6 +340,28 @@ final class PanelCoordinator: NSObject, NSWindowDelegate {
         // Native hiding retains window order and keyboard ownership so Cmd-Tab
         // can restore the same windows. Q remains the per-window close action.
         NSApp.hide(nil)
+    }
+
+    private func positionSideChat(sourceID: String, targetID: String) {
+        guard let source = detailPanels[sourceID], let target = detailPanels[targetID], source !== target else { return }
+        let screen = source.screen?.visibleFrame ?? targetScreen().visibleFrame
+        let gap: CGFloat = 12
+        var frame = target.frame
+        if source.frame.maxX + gap + frame.width <= screen.maxX {
+            frame.origin = NSPoint(x: source.frame.maxX + gap, y: source.frame.maxY - frame.height)
+        } else if source.frame.minX - gap - frame.width >= screen.minX {
+            frame.origin = NSPoint(x: source.frame.minX - gap - frame.width, y: source.frame.maxY - frame.height)
+        } else {
+            let width = (screen.width - gap) / 2
+            guard width >= source.minSize.width, width >= target.minSize.width else { return }
+            var original = source.frame
+            original.size.width = width; original.origin.x = screen.minX
+            source.setFrame(original, display: true)
+            frame.size.width = width; frame.origin.x = original.maxX + gap
+            frame.origin.y = original.maxY - frame.height
+        }
+        frame.origin.y = min(max(screen.minY, frame.origin.y), max(screen.minY, screen.maxY - frame.height))
+        target.setFrame(frame, display: true)
     }
 
     @discardableResult

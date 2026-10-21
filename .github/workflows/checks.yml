@@ -27,3 +27,7 @@ jobs:
         run: .build/debug/BavbavChecks
       - name: App Server protocol fixture
         run: BAVBAV_CODEX_BIN="$PWD/.build/debug/BavbavFakeCodex" .build/debug/BavbavChecks --protocol-fixture
+      - name: Offline handoff and worker fixtures
+        run: .build/debug/BavbavOfflineChecks
+      - name: Local AI installer safety fixtures
+        run: python3 scripts/local-ai-setup.py check

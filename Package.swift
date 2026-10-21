@@ -6,8 +6,7 @@ import Foundation
 // in after staging the matching private module and runtime.
 let withWorkspace = ProcessInfo.processInfo.environment["BAVBAV_WITH_WORKSPACE"] == "1"
 let workspaceTargets: [Target] = withWorkspace
-    ? [.target(name: "IkiWorkspaceKit", path: "Sources/IkiWorkspaceKit")]
-    : []
+    ? [.target(name: "IkiWorkspaceKit", path: "Sources/IkiWorkspaceKit")] : []
 let workspaceDependencies: [Target.Dependency] = withWorkspace ? ["IkiWorkspaceKit"] : []
 
 let package = Package(
@@ -16,6 +15,7 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
+        .library(name: "BavbavOffline", targets: ["BavbavOffline"]),
         .library(name: "BavbavCompanion", targets: ["BavbavCompanion"]),
         .executable(name: "Bavbav", targets: ["Bavbav"])
     ],
@@ -24,6 +24,8 @@ let package = Package(
         .package(path: "Vendor/SwiftMath")
     ],
     targets: [
+        .target(name: "BavbavOffline", path: "Sources/BavbavOffline"),
+        .executableTarget(name: "BavbavOfflineChecks", dependencies: ["BavbavOffline"], path: "Tests/BavbavOfflineChecks", swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
         .target(name: "CompanionSafety", exclude: ["NOTICE.md"]),
         .target(name: "BavbavCompanion", dependencies: ["BavbavCore", "CompanionSafety"]),
         .executableTarget(name: "BavbavCompanionChecks", dependencies: ["BavbavCompanion", "CompanionSafety"], path: "Tests/BavbavCompanionTests"),
@@ -31,10 +33,12 @@ let package = Package(
             name: "BavbavCore",
             path: "Sources/BavbavCore"
         ),
+    ] + workspaceTargets + [
         .executableTarget(
             name: "Bavbav",
-            dependencies: ["BavbavCore", "BavbavCompanion", .product(name: "Markdown", package: "swift-markdown"),
-                           .product(name: "SwiftMath", package: "SwiftMath")] + workspaceDependencies,
+            dependencies: [.byName(name: "BavbavCore"), .byName(name: "BavbavCompanion"), .byName(name: "BavbavOffline")]
+                + workspaceDependencies + [.product(name: "Markdown", package: "swift-markdown"),
+                                            .product(name: "SwiftMath", package: "SwiftMath")],
             path: "Sources/Bavbav",
             swiftSettings: withWorkspace ? [.define("BAVBAV_WORKSPACE")] : [],
             linkerSettings: [
@@ -51,6 +55,6 @@ let package = Package(
             name: "BavbavFakeCodex",
             path: "Tests/BavbavFakeCodex"
         )
-    ] + workspaceTargets,
+    ],
     swiftLanguageModes: [.v5]
 )

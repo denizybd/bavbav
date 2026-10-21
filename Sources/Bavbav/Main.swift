@@ -1,4 +1,5 @@
 import AppKit
+import BavbavCore
 import Foundation
 
 @main
@@ -8,7 +9,7 @@ enum BavbavMain {
         let delegate = BavbavAppDelegate()
         app.delegate = delegate
         let environment = ProcessInfo.processInfo.environment
-        let noUI = ["BAVBAV_APP_ICON_CHECK", "BAVBAV_COMPANION_PREFLIGHT_CHECK", "BAVBAV_COMPANION_WEB_CHECK", "BAVBAV_COMPANION_WINDOW_CHECK"]
+        let noUI = ["BAVBAV_APP_ICON_CHECK", "BAVBAV_COMPANION_PREFLIGHT_CHECK", "BAVBAV_COMPANION_WEB_CHECK", "BAVBAV_COMPANION_WINDOW_CHECK", "BAVBAV_BROWSER_CHECK", "BAVBAV_SIDE_CHAT_CHECK", "BAVBAV_OFFLINE_CHECK", "BAVBAV_SHARED_LOCAL_CHECK"]
             .contains { environment[$0] == "1" }
         app.setActivationPolicy(noUI ? .prohibited : .regular)
         app.run()
@@ -29,7 +30,15 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
     private var conversationSyncTimer: Timer?
     private var terminationRequested = false
     private var companion: CompanionWindowController?
+    private var browser: BrowserWindowController?
+    private var browserOpenObserver: NSObjectProtocol?
+    private var browserDirectionObserver: NSObjectProtocol?
+    private var offlineWindow: OfflineAIWindowController?
+    private var offlineObserver: NSObjectProtocol?
     private let workspace = WorkspaceHost()
+    private var sharedAccounts: SharedAccountChat?
+    private var sharedAccountWindow: SharedAccountWindow?
+    private var sharedAccountObserver: NSObjectProtocol?
     private var diagnosticRun = false
     private var instanceLease: SingleBavbavInstance?
     private var companionOpenObserver: NSObjectProtocol?
@@ -41,6 +50,22 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         let environment = ProcessInfo.processInfo.environment
         diagnosticRun = environment.keys.contains { $0.hasPrefix("BAVBAV_") && $0.contains("CHECK") }
             || CommandLine.arguments.contains("--workspace-ui-check")
+        if environment["BAVBAV_SHARED_LOCAL_CHECK"] == "1" {
+            Task { Foundation.exit(await SharedAccountLocalCheck.run() ? 0 : 1) }
+            return
+        }
+        if environment["BAVBAV_OFFLINE_CHECK"] == "1" {
+            Task { Foundation.exit(await OfflineAIWindowCheck.run() ? 0 : 1) }
+            return
+        }
+        if environment["BAVBAV_BROWSER_CHECK"] == "1" {
+            Task { Foundation.exit(await BrowserWindowCheck.run() ? 0 : 1) }
+            return
+        }
+        if environment["BAVBAV_SIDE_CHAT_CHECK"] == "1" {
+            Task { Foundation.exit(await SideChatCheck.run() ? 0 : 1) }
+            return
+        }
         if environment["BAVBAV_WORKSPACE_CHECK"] == "1" || CommandLine.arguments.contains("--workspace-ui-check") {
             Task { Foundation.exit(await WorkspaceWindowCheck.run() ? 0 : 1) }
             return
@@ -165,6 +190,23 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         store = OverlayStore(journal: isCheckRun ? nil : JournalService(directory: JournalService.defaultDirectory))
         panels = PanelCoordinator(store: store)
         inputRouter = InputRouter(store: store, coordinator: panels)
+        if !isCheckRun {
+            let offline = OfflineAIService()
+            store.attachOfflineAI(offline)
+            Task { await offline.start() }
+            offlineObserver = NotificationCenter.default.addObserver(forName: .bavbavOpenOfflineAI, object: nil, queue: .main) { [weak self] note in
+                let thread = note.object as? CodexThread
+                Task { @MainActor in self?.presentOfflineAI(thread) }
+            }
+            browserOpenObserver = NotificationCenter.default.addObserver(forName: .bavbavOpenBrowser, object: nil, queue: .main) { [weak self] note in
+                let url = note.object as? URL
+                Task { @MainActor in self?.presentBrowser(url) }
+            }
+            browserDirectionObserver = NotificationCenter.default.addObserver(forName: .bavbavBrowserDirection, object: nil, queue: .main) { [weak self] note in
+                guard let direction = note.object as? WindowDirection else { return }
+                Task { @MainActor in _ = self?.panels.focusWindow(in: direction) }
+            }
+        }
         panels.onPanelResigned = { [weak self] in
             self?.inputRouter.cancelPendingPress()
             if self?.panels.appSettings.window.isKeyWindow != true {
@@ -259,7 +301,7 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             ApplicationMenu.install(bindings: bindings)
             installStatusMenu()
             DispatchQueue.main.async { [weak self] in
-                guard NSApp.isActive, self?.companion?.window.isVisible != true,
+                guard NSApp.isActive, self?.companion?.window.isVisible != true, self?.browser?.window.isVisible != true,
                       self?.workspace.isVisible != true else { return }
                 self?.panels.showInitialPanel()
             }
@@ -713,6 +755,17 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         }
         if CommandLine.arguments.contains("--workspace") { showWorkspace(nil) }
         workspace.prepareIfConfigured()
+        if !diagnosticRun {
+            let service = SharedAccountChat(offlineAI: store.offlineAI) { [weak self] method, args in
+                guard let self else { throw CodexClientError.disconnected }
+                return try await self.workspace.accountRequest(method, args: args)
+            }
+            store.registerUserFacingThreads([service.localSourceID])
+            sharedAccounts = service; service.start()
+            sharedAccountObserver = NotificationCenter.default.addObserver(forName: .bavbavSharedAccountChat, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.showSharedAccountChat(nil) }
+            }
+        }
         if CommandLine.arguments.contains("--companion-ui-report") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.companion?.exportPreview() }
         }
@@ -744,8 +797,8 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard store != nil, !diagnosticRun else { return }
         // The system restores hidden windows. Only create an entry point when
         // every panel was explicitly closed with Q; never reorder existing chats.
-        if !NSApp.isHidden, !panels.hasVisibleWindows, companion?.window.isVisible != true,
-           !workspace.isVisible { panels.showInitialPanel() }
+        if !NSApp.isHidden, !panels.hasVisibleWindows, companion?.window.isVisible != true, browser?.window.isVisible != true,
+           !workspace.isVisible, offlineWindow?.window.isVisible != true, sharedAccountWindow?.isVisible != true { panels.showInitialPanel() }
         Task { @MainActor in
             await store.refresh()
             store.syncVisibleConversation()
@@ -760,13 +813,20 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard !diagnosticRun else { return true }
         guard panels != nil else { return true }
         sender.unhide(nil)
-        if !panels.hasVisibleWindows, companion?.window.isVisible != true,
-           !workspace.isVisible { panels.showInitialPanel() }
+        if !panels.hasVisibleWindows, companion?.window.isVisible != true, browser?.window.isVisible != true,
+           !workspace.isVisible, offlineWindow?.window.isVisible != true, sharedAccountWindow?.isVisible != true { panels.showInitialPanel() }
         return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        sharedAccountWindow?.shutdown()
+        if let sharedAccountObserver { NotificationCenter.default.removeObserver(sharedAccountObserver) }
+        offlineWindow?.shutdown()
+        if let offlineObserver { NotificationCenter.default.removeObserver(offlineObserver) }
         companion?.stop()
+        browser?.shutdown()
+        if let browserOpenObserver { NotificationCenter.default.removeObserver(browserOpenObserver) }
+        if let browserDirectionObserver { NotificationCenter.default.removeObserver(browserDirectionObserver) }
         appIconController?.stop()
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
@@ -780,10 +840,13 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         guard !terminationRequested else { return .terminateLater }
         terminationRequested = true
         companion?.stop()
+        browser?.shutdown()
         refreshTimer?.invalidate()
         conversationSyncTimer?.invalidate()
         Task {
+            await store?.offlineAI?.shutdown()
             await companion?.shutdown()
+            await sharedAccounts?.shutdown()
             await workspace.shutdown()
             if let store { await store.shutdown() }
             sender.reply(toApplicationShouldTerminate: true)
@@ -811,6 +874,25 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         panels?.showAppSettings()
     }
 
+    @objc func showOfflineAI(_ sender: Any?) { presentOfflineAI(store?.detailThread) }
+
+    private func presentOfflineAI(_ thread: CodexThread?) {
+        guard !terminationRequested, let store, let panels, let service = store.offlineAI else { return }
+        inputRouter?.cancelPendingPress()
+        service.setSource(thread: thread, messages: thread.map { store.offlineContext(for: $0) } ?? [])
+        if offlineWindow == nil { offlineWindow = OfflineAIWindowController(service: service, preferences: panels.appPreferences) }
+        offlineWindow?.show()
+    }
+
+    @objc func showBrowser(_ sender: Any?) { presentBrowser(nil) }
+
+    private func presentBrowser(_ url: URL?) {
+        guard !terminationRequested, let panels else { return }
+        inputRouter?.cancelPendingPress()
+        if browser == nil { browser = BrowserWindowController(preferences: panels.appPreferences) }
+        browser?.show(url)
+    }
+
     @objc func showCompanion(_ sender: Any?) {
         guard !terminationRequested else { return }
         if companion == nil {
@@ -818,6 +900,12 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
                                                    preferences: panels?.appPreferences)
         }
         companion?.show()
+    }
+
+    @objc func showSharedAccountChat(_ sender: Any?) {
+        guard !terminationRequested, let sharedAccounts else { return }
+        if sharedAccountWindow == nil { sharedAccountWindow = SharedAccountWindow(service: sharedAccounts) }
+        sharedAccountWindow?.show()
     }
 
     @objc func showWorkspace(_ sender: Any?) {
@@ -913,11 +1001,13 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Journal", action: #selector(showJournal), keyEquivalent: "").representedObject = "*.journal.key"
         menu.addItem(withTitle: "Settings", action: #selector(showAppSettings(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Companion · Ses ve ekran…", action: #selector(showCompanion(_:)), keyEquivalent: "").representedObject = "*.companion.key"
-        #if BAVBAV_WORKSPACE
-        menu.addItem(withTitle: "Workspace…", action: #selector(showWorkspace(_:)), keyEquivalent: "").representedObject = "*.workspace.key"
-        #endif
+        if WorkspaceHost.isAvailable {
+            menu.addItem(withTitle: "Workspace · Deniz ve Emir…", action: #selector(showWorkspace(_:)), keyEquivalent: "").representedObject = "*.workspace.key"
+        }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Refresh Codex", action: #selector(refreshNow), keyEquivalent: "").representedObject = "*.refresh.key"
+        menu.addItem(withTitle: "Web browser", action: #selector(showBrowser(_:)), keyEquivalent: "").representedObject = "*.browser.key"
+        menu.addItem(withTitle: "Yerel AI · çevrimdışı görev devri…", action: #selector(showOfflineAI(_:)), keyEquivalent: "").representedObject = "*.offlineAI.key"
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit Bavbav", action: #selector(quit), keyEquivalent: "").representedObject = "*.quit.key"
         menu.items.forEach { $0.target = self }

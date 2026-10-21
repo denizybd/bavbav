@@ -1,5 +1,5 @@
 import AppKit
-#if BAVBAV_WORKSPACE
+#if BAVBAV_WORKSPACE && canImport(IkiWorkspaceKit)
 import IkiWorkspaceKit
 
 /// Native AppKit diagnostic owned by Bavbav. It uses a UUID data directory,
@@ -118,12 +118,11 @@ enum WorkspaceWindowCheck {
         return report["success"] as? Bool == true
     }
 }
-
 #else
 @MainActor
 enum WorkspaceWindowCheck {
     static func run() async -> Bool {
-        print("BAVBAV WORKSPACE CHECK UNAVAILABLE: this build does not include the private module")
+        print("BAVBAV WORKSPACE CHECK UNAVAILABLE: this public-source build omits the private Workspace component; no Workspace capability was tested")
         return false
     }
 }
