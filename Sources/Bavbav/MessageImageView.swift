@@ -191,12 +191,12 @@ struct MessageImageCard: View {
                 else {
                     VStack(spacing: 10) {
                         Image(systemName: "photo").font(.system(size: 24, weight: .light))
-                        Text(remote != nil && !attempted ? "Remote image" : "Could not load image")
+                        SwiftUI.Text(remote != nil && !attempted ? "Remote image" : "Could not load image")
                         if remote != nil && !attempted {
                             Button("Load image") { loadRemote = true }
-                            Text("\(remote?.host ?? "") · Downloads only when clicked")
+                            SwiftUI.Text("\(remote?.host ?? "") · Downloads only when clicked")
                         } else {
-                            Text("The file may have moved, be inaccessible, or use an unsupported format.")
+                            SwiftUI.Text("The file may have moved, be inaccessible, or use an unsupported format.")
                                 .multilineTextAlignment(.center)
                             Button("Try again") { retry += 1 }
                         }
@@ -206,9 +206,9 @@ struct MessageImageCard: View {
             .frame(height: expanded ? 440 : 220)
             .clipShape(RoundedRectangle(cornerRadius: 6))
             HStack {
-                Text(reference.title).lineLimit(1)
+                SwiftUI.Text(reference.title).lineLimit(1)
                 Spacer()
-                if image != nil { Text(expanded ? "COLLAPSE ↑" : "EXPAND ↗") }
+                if image != nil { SwiftUI.Text(expanded ? "COLLAPSE ↑" : "EXPAND ↗") }
                 if let url = MessageImageReferences.localURL(reference.source, directory: directory) {
                     Button("Show in Finder") { MessageLinkPolicy.open(url) }.buttonStyle(.plain)
                 } else if let remote {
