@@ -45,6 +45,18 @@ private func recordComposerRequest(_ message: [String: Any]) {
     try? handle.write(contentsOf: data)
 }
 
+private func recordSideChatRequest(_ message: [String: Any]) {
+    guard ProcessInfo.processInfo.environment["BAVBAV_SIDE_CHAT_CHECK"] == "1",
+          let path = ProcessInfo.processInfo.environment["BAVBAV_SIDE_CHAT_REQUEST_LOG"],
+          var data = try? JSONSerialization.data(withJSONObject: message) else { return }
+    data.append(0x0A)
+    if !FileManager.default.fileExists(atPath: path) { FileManager.default.createFile(atPath: path, contents: nil) }
+    guard let handle = FileHandle(forWritingAtPath: path) else { return }
+    defer { try? handle.close() }
+    _ = try? handle.seekToEnd()
+    try? handle.write(contentsOf: data)
+}
+
 private func completeComposerTurn(threadID: String, turnID: String, input: [[String: Any]], marker: String) {
     send(["method": "item/completed", "params": ["threadId": threadID, "turnId": turnID,
         "item": ["id": "\(turnID)-\(marker)-user", "type": "userMessage", "content": input]]])
@@ -250,6 +262,7 @@ while let line = readLine() {
         let params = message["params"] as? [String: Any] ?? [:]
         recordComposerRequest(message)
         recordCompanionRequest(message)
+        recordSideChatRequest(message)
         switch method {
         case "turn/interrupt" where ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1":
             let threadID = params["threadId"] as? String ?? "fixture-thread"
@@ -301,6 +314,9 @@ while let line = readLine() {
                 : "fixture-thread"
             var rows = [threadRow(id: listedThreadID, cwd: "/tmp/fixture")]
             rows.append(contentsOf: standaloneRows.values)
+            if ProcessInfo.processInfo.environment["BAVBAV_SIDE_CHAT_CHECK"] == "1" {
+                rows.append(contentsOf: createdRows.values)
+            }
             if ProcessInfo.processInfo.environment["BAVBAV_FIXTURE_TWO_THREADS"] == "1" {
                 rows.append(threadRow(id: "fixture-history-thread", cwd: "/tmp/fixture"))
             }
@@ -412,7 +428,8 @@ while let line = readLine() {
             }
         case "thread/name/set":
             if let threadID = params["threadId"] as? String, let name = params["name"] as? String {
-                if name == "RENAME_FAIL", ProcessInfo.processInfo.environment["BAVBAV_RENAME_CHECK"] == "1" {
+                if (name == "RENAME_FAIL" && ProcessInfo.processInfo.environment["BAVBAV_RENAME_CHECK"] == "1")
+                    || (name.hasPrefix("SIDE_NAME_FAIL") && ProcessInfo.processInfo.environment["BAVBAV_SIDE_CHAT_CHECK"] == "1") {
                     send(["id": id, "error": ["code": -32000, "message": "fixture rename rejected"]])
                     continue
                 }
@@ -452,6 +469,16 @@ while let line = readLine() {
             let data: [[String: Any]] = method == "thread/items/list"
                 ? items.reversed().map { ["item": $0] } : [["id": "image-turn", "items": items]]
             send(["id": id, "result": ["data": data, "nextCursor": NSNull()]])
+        case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_SIDE_CHAT_CHECK"] == "1":
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            send(["id": id, "result": ["thread": createdRows[threadID] ?? threadRow(id: threadID, cwd: "/tmp/fixture")]])
+        case let method where ProcessInfo.processInfo.environment["BAVBAV_SIDE_CHAT_CHECK"] == "1"
+            && ["thread/turns/list", "thread/items/list"].contains(method):
+            let threadID = params["threadId"] as? String ?? "fixture-thread"
+            let items = recordedItems[threadID] ?? visibilityItems
+            let rows: [[String: Any]] = method == "thread/items/list" ? items.reversed().map { ["item": $0] }
+                : [["id": "side-chat-history", "items": items]]
+            send(["id": id, "result": ["data": rows, "nextCursor": NSNull()]])
         case "thread/read" where ProcessInfo.processInfo.environment["BAVBAV_STANDALONE_CHECK"] == "1":
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             send(["id": id, "result": ["thread": standaloneRows[threadID] ?? threadRow(id: threadID, cwd: "/tmp/fixture")]])
@@ -495,6 +522,25 @@ while let line = readLine() {
             let entries = (recordedItems[threadID] ?? []).reversed().map { ["item": $0] }
             send(["id": id, "result": ["data": entries, "nextCursor": NSNull()]])
         case "thread/fork":
+            if ProcessInfo.processInfo.environment["BAVBAV_SIDE_CHAT_CHECK"] == "1" {
+                let sourceID = params["threadId"] as? String ?? ""
+                guard params["ephemeral"] as? Bool == false, params["excludeTurns"] as? Bool == true,
+                      params["sandbox"] as? String == "danger-full-access", params["approvalPolicy"] as? String == "never" else {
+                    send(["id": id, "error": ["code": -32602, "message": "side chat must be a persistent fork"]]); continue
+                }
+                if sourceID == "side-fail" {
+                    send(["id": id, "error": ["code": -32000, "message": "fixture fork rejected"]]); continue
+                }
+                let targetID = sourceID == "side-same" ? sourceID : "side-fork-\(createdRows.count + 1)"
+                var row = threadRow(id: targetID, cwd: params["cwd"] as? String ?? "/tmp/fixture")
+                row["name"] = "Server branch"
+                createdRows[targetID] = row
+                recordedItems[targetID] = recordedItems[sourceID] ?? visibilityItems
+                let response: [String: Any] = ["id": id, "result": ["thread": row,
+                    "model": params["model"] as? String ?? "fake-model", "reasoningEffort": "low"]]
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.12) { send(response) }
+                continue
+            }
             send(["id": id, "result": [
                 "thread": threadRow(id: "fixture-fork", cwd: params["cwd"] as? String ?? "/tmp/fixture"),
                 "model": params["model"] as? String ?? "fake-model",

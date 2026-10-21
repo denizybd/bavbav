@@ -309,8 +309,14 @@ struct ChatDetailView: View {
     @Environment(\.shortcutLabels) private var shortcuts
     @Environment(\.panelBackdropOpacity) private var backdropOpacity
     @State private var dropHover = false
+    @State private var searchVisible = false
+    @State private var searchQuery = ""
+    @State private var searchIndex = 0
+    @State private var windowNumber: Int?
+    @State private var transcriptCopied = false
+    @State private var searchFocusToken = 0
     private var commandScope: String {
-        if snapshot != nil { return "chat.read" }
+        if !isLiveWindow { return "chat.read" }
         if store.interactionTextVisible { return "interaction.write" }
         if store.composerVisible { return composerScope }
         if store.activeInteraction != nil { return "interaction.list" }
@@ -324,12 +330,31 @@ struct ChatDetailView: View {
     var snapshot: ChatWindowSnapshot? = nil
     var scrollController: ChatScrollController? = nil
     var windowThread: CodexThread? = nil
-    private var displayedThread: CodexThread? { snapshot?.thread ?? windowThread ?? store.detailThread }
-    private var displayedItems: [CodexMessage] { snapshot?.items ?? store.visibleDetailItems }
-    private var displayedLoading: Bool { snapshot?.loading ?? store.visibleDetailLoading }
-    private var displayedCommands: Bool { snapshot?.showsActivity ?? store.detailShowsActivity }
-    private var displayedError: String? { snapshot == nil ? store.composerError : snapshot?.error }
+    private var isLiveWindow: Bool {
+        snapshot == nil && (windowThread == nil || windowThread?.id == store.detailThread?.id)
+    }
+    private var displayedSnapshot: ChatWindowSnapshot? {
+        if let snapshot { return snapshot }
+        guard !isLiveWindow, let windowThread else { return nil }
+        return store.onDetailSnapshotRequested?(windowThread.id)
+    }
+    private var displayedThread: CodexThread? { displayedSnapshot?.thread ?? windowThread ?? store.detailThread }
+    private var displayedItems: [CodexMessage] {
+        store.offlineItems(displayedSnapshot?.items ?? (isLiveWindow ? store.visibleDetailItems : []), threadID: displayedThread?.id)
+    }
+    private var displayedLoading: Bool { displayedSnapshot?.loading ?? (isLiveWindow && store.visibleDetailLoading) }
+    private var displayedCommands: Bool { displayedSnapshot?.showsActivity ?? (isLiveWindow && store.detailShowsActivity) }
+    private var displayedError: String? { isLiveWindow ? store.composerError : displayedSnapshot?.error }
     private var displayedRunState: ChatRunDisplayState { displayedThread.map { store.runState(for: $0.id) } ?? .idle }
+    private var searchMatchIDs: [String] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard searchVisible, !query.isEmpty else { return [] }
+        return displayedItems.filter { $0.text.localizedCaseInsensitiveContains(query) }.map(\.id)
+    }
+    private var focusedSearchID: String? {
+        let matches = searchMatchIDs
+        return matches.indices.contains(searchIndex) ? matches[searchIndex] : nil
+    }
 
     var body: some View {
         AttachmentDropRegion(isEnabled: displayedThread != nil, onHoverChanged: { dropHover = $0 }, onDrop: { board in
@@ -354,6 +379,16 @@ struct ChatDetailView: View {
                 }.allowsHitTesting(false)
             }
         }
+        .background(ChatWindowNumberProbe { windowNumber = $0 })
+        .onReceive(NotificationCenter.default.publisher(for: .chatFindInConversation)) { notification in
+            guard let target = notification.object as? NSWindow, target.windowNumber == windowNumber else { return }
+            showSearch()
+        }
+        .onChange(of: searchQuery) { _ in searchIndex = 0 }
+        .onChange(of: searchMatchIDs) { matches in
+            searchIndex = min(searchIndex, max(0, matches.count - 1))
+        }
+        .onChange(of: displayedItems.last) { _ in transcriptCopied = false }
     }
 
     private var chatSurface: some View {
@@ -363,6 +398,28 @@ struct ChatDetailView: View {
             VStack(spacing: 0) {
                 detailHeader
                 Divider().overlay(BavbavTheme.border)
+                if searchVisible {
+                    searchBar
+                    Divider().overlay(BavbavTheme.border)
+                }
+                if store.renameTarget?.panel == .detail, store.renameTarget?.id == displayedThread?.id {
+                    VStack(spacing: 8) {
+                        RenameSlot(store: store)
+                        HStack {
+                            RenameLegend(store: store)
+                            Spacer()
+                            Button("Vazgeç") { store.cancelRename() }.disabled(store.renameSubmitting)
+                            Button("Kaydet") { store.commitRename() }.disabled(store.renameSubmitting)
+                        }.font(BavbavTheme.mono(9))
+                    }.padding(12)
+                    Divider().overlay(BavbavTheme.border)
+                }
+                if let id = displayedThread?.id, let error = store.sideChatError(for: id) {
+                    Text(error)
+                        .font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.warning).readableForeground()
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                    Divider().overlay(BavbavTheme.border)
+                }
                 messageArea
                 if interactionPresented, let request = store.activeInteraction {
                     Divider().overlay(BavbavTheme.warning.opacity(0.55))
@@ -384,14 +441,14 @@ struct ChatDetailView: View {
                     .frame(minHeight: 34)
                     .background(BavbavTheme.surface.panelBackdrop())
                 }
-                if snapshot == nil, store.queueModeVisible, store.detailHost == host {
+                if isLiveWindow, store.queueModeVisible, store.detailHost == host {
                     Divider().overlay(BavbavTheme.border)
                     queueManager
-                } else if snapshot == nil, store.currentQueueCount > 0, store.detailHost == host {
+                } else if isLiveWindow, store.currentQueueCount > 0, store.detailHost == host {
                     Divider().overlay(BavbavTheme.border)
                     queueHint
                 }
-                if snapshot == nil, store.composerVisible, store.detailHost == host {
+                if isLiveWindow, store.composerVisible, store.detailHost == host {
                     Divider().overlay(BavbavTheme.border)
                     ChatComposerView(store: store, menuHeight: max(96, geometry.size.height - 180))
                         .layoutPriority(1)
@@ -407,7 +464,7 @@ struct ChatDetailView: View {
     }
 
     private var interactionPresented: Bool {
-        guard snapshot == nil else { return false }
+        guard isLiveWindow else { return false }
         switch host {
         case .centered: return store.detailHost == .centered
         case .dock: return store.detailHost == .dock
@@ -517,7 +574,7 @@ struct ChatDetailView: View {
             }
             Spacer()
             ChatRunBadge(state: displayedRunState)
-            if snapshot == nil, displayedRunState == .working, let operation = store.detailOperation {
+            if isLiveWindow, displayedRunState == .working, let operation = store.detailOperation {
                 Text(operation)
                     .font(BavbavTheme.mono(8, weight: .light))
                     .foregroundStyle(BavbavTheme.muted).readableForeground()
@@ -532,10 +589,99 @@ struct ChatDetailView: View {
                 Text(store.isStandalone(thread) ? "STANDALONE" : URL(fileURLWithPath: thread.cwd).lastPathComponent.uppercased())
                     .font(BavbavTheme.mono(9, weight: .semibold))
                     .foregroundStyle(BavbavTheme.muted).readableForeground()
+                    .lineLimit(1)
+                    .frame(maxWidth: 100, alignment: .trailing)
+                chatMenu(for: thread)
             }
         }
         .padding(.horizontal, 16)
         .frame(height: 62)
+    }
+
+    private func chatMenu(for thread: CodexThread) -> some View {
+        // Native menus can remain open while an asynchronous fork activates a
+        // different global detail. Copy exactly the window's captured history.
+        let messages = displayedItems
+        return Menu {
+            Button {
+                Task { await store.openSideChat(from: thread) }
+            } label: { Label(store.sideChatCreatingIDs.contains(thread.id) ? "Yan sohbet açılıyor…" : "Yan sohbet aç", systemImage: "arrow.triangle.branch") }
+            .disabled(store.sideChatCreatingIDs.contains(thread.id))
+            Button { NotificationCenter.default.post(name: Notification.Name("Bavbav.OpenBrowser"), object: nil) }
+                label: { Label("Web penceresi aç", systemImage: "globe") }
+            Button { NotificationCenter.default.post(name: .bavbavOpenOfflineAI, object: thread) }
+                label: { Label("Yerel AI · çevrimdışı görev devri", systemImage: "desktopcomputer") }
+            Button { NotificationCenter.default.post(name: .bavbavSharedAccountChat, object: nil) }
+                label: { Label("Konuşma kaynağı · Deniz / Emir / Yerel AI", systemImage: "person.2") }
+            Divider()
+            Button { showSearch() } label: { Label("Bu sohbette ara", systemImage: "magnifyingglass") }
+            Button { store.beginRename(thread: thread) } label: { Label("Sohbet adını değiştir", systemImage: "pencil") }
+                .disabled(store.renameSubmitting)
+            Button { copyTranscript(messages) } label: { Label(transcriptCopied ? "Sohbet kopyalandı" : "Sohbeti kopyala", systemImage: "doc.on.doc") }
+                .disabled(!messages.contains { $0.kind.isConversation })
+            Button {
+                store.focusDetailWindow(thread)
+                store.toggleDetailActivity()
+            } label: { Label(displayedCommands ? "Komut mesajlarını gizle" : "Komut mesajlarını göster", systemImage: "terminal") }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(BavbavTheme.text).readableForeground()
+                .frame(width: 28, height: 28)
+                .background(BavbavTheme.raised.panelBackdrop())
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("Sohbet seçenekleri")
+        .accessibilityLabel("Sohbet seçenekleri · \(thread.title)")
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(BavbavTheme.accent).readableForeground()
+            ChatSearchField(text: $searchQuery, focusToken: searchFocusToken) { moveSearch(1) }
+                .frame(minWidth: 80, maxWidth: .infinity).frame(height: 24)
+            Text(searchQuery.isEmpty ? "" : (searchMatchIDs.isEmpty ? "Sonuç yok" : "\(searchIndex + 1) / \(searchMatchIDs.count)"))
+                .foregroundStyle(BavbavTheme.muted).readableForeground()
+                .accessibilityLabel("Arama sonucu sayısı")
+            Button { moveSearch(-1) } label: { Image(systemName: "chevron.up") }
+                .disabled(searchMatchIDs.isEmpty).help("Önceki sonuç")
+            Button { moveSearch(1) } label: { Image(systemName: "chevron.down") }
+                .disabled(searchMatchIDs.isEmpty).help("Sonraki sonuç · Enter")
+            Button { closeSearch() } label: { Image(systemName: "xmark") }.help("Aramayı kapat")
+        }
+        .buttonStyle(.plain)
+        .font(BavbavTheme.mono(10))
+        .foregroundStyle(BavbavTheme.text).readableForeground()
+        .padding(.horizontal, 16).frame(height: 42)
+        .background(BavbavTheme.surface.panelBackdrop())
+    }
+
+    private func showSearch() {
+        searchVisible = true
+        searchFocusToken &+= 1
+    }
+
+    private func closeSearch() {
+        searchVisible = false
+        searchQuery = ""
+        searchIndex = 0
+        if NSApp.keyWindow?.windowNumber == windowNumber { NSApp.keyWindow?.makeFirstResponder(nil) }
+    }
+
+    private func moveSearch(_ delta: Int) {
+        guard !searchMatchIDs.isEmpty else { return }
+        searchIndex = (searchIndex + delta + searchMatchIDs.count) % searchMatchIDs.count
+    }
+
+    private func copyTranscript(_ messages: [CodexMessage]) {
+        let text = messages.filter { $0.kind.isConversation }.map {
+            "\($0.title ?? ($0.role == .user ? "YOU" : "CODEX"))\n\($0.text)"
+        }.joined(separator: "\n\n")
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        transcriptCopied = true
     }
 
     @ViewBuilder
@@ -554,8 +700,119 @@ struct ChatDetailView: View {
                 : "No messages to display in this chat")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ChatTranscriptView(items: displayedItems, scroll: scrollController)
+            ChatTranscriptView(items: displayedItems, scroll: scrollController,
+                               focusedMessageID: focusedSearchID, matchingMessageIDs: Set(searchMatchIDs))
                 .id(displayedThread?.id)
+        }
+    }
+}
+
+/// A distinct native field makes search ownership observable to InputRouter.
+/// Its Return must advance a result, never send an underlying composer draft.
+@MainActor
+struct ChatSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let focusToken: Int
+    let onSubmit: () -> Void
+    @Environment(\.panelBackdropOpacity) private var opacity
+    private static let fields = NSHashTable<Field>.weakObjects()
+
+    static func isEditing(in window: NSWindow?) -> Bool {
+        guard let window, let responder = window.firstResponder else { return false }
+        if responder is Field { return true }
+        return fields.allObjects.contains { $0.window === window && $0.currentEditor() === responder }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, onSubmit: onSubmit) }
+    func makeNSView(context: Context) -> Field {
+        let field = Field()
+        field.delegate = context.coordinator
+        Self.fields.add(field)
+        return field
+    }
+    func updateNSView(_ field: Field, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.onSubmit = onSubmit
+        if field.stringValue != text, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = text }
+        field.textColor = ForegroundContrast.color(RichMessageRenderer.textColor,
+                                                   strength: ForegroundContrast.strength(backgroundOpacity: opacity))
+        field.requestedFocusToken = focusToken
+        field.requestFocus()
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var onSubmit: () -> Void
+        init(text: Binding<String>, onSubmit: @escaping () -> Void) { self.text = text; self.onSubmit = onSubmit }
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            text.wrappedValue = field.stringValue
+        }
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            onSubmit()
+            return true
+        }
+    }
+
+    final class Field: NSTextField {
+        var requestedFocusToken = 0
+        private var appliedFocusToken: Int?
+        private var focusScheduled = false
+        init() {
+            super.init(frame: .zero)
+            isBordered = false
+            drawsBackground = false
+            focusRingType = .none
+            font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+            isEditable = true
+            isSelectable = true
+            usesSingleLineMode = true
+            placeholderString = "Bu sohbette ara"
+            setAccessibilityLabel("Bu sohbette ara")
+            identifier = NSUserInterfaceItemIdentifier("bavbav.chat.search")
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            NotificationCenter.default.removeObserver(self)
+            if let window {
+                NotificationCenter.default.addObserver(self, selector: #selector(requestFocus),
+                                                       name: NSWindow.didBecomeKeyNotification, object: window)
+                requestFocus()
+            }
+        }
+        deinit { NotificationCenter.default.removeObserver(self) }
+        @objc func requestFocus() {
+            guard appliedFocusToken != requestedFocusToken, !focusScheduled, window?.isKeyWindow == true else { return }
+            focusScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.focusScheduled = false
+                guard let window = self.window, window.isKeyWindow, window.isVisible,
+                      window.makeFirstResponder(self) else { return }
+                self.appliedFocusToken = self.requestedFocusToken
+                self.currentEditor()?.selectAll(nil)
+            }
+        }
+    }
+}
+
+/// Keep Cmd+F local to the originating native window; never retain NSWindow
+/// from its own SwiftUI content or search all of the other open transcripts.
+private struct ChatWindowNumberProbe: NSViewRepresentable {
+    let changed: (Int?) -> Void
+    func makeNSView(context: Context) -> Probe { Probe(changed: changed) }
+    func updateNSView(_ view: Probe, context: Context) { view.changed = changed }
+    final class Probe: NSView {
+        var changed: (Int?) -> Void
+        init(changed: @escaping (Int?) -> Void) { self.changed = changed; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            let number = window?.windowNumber
+            DispatchQueue.main.async { [weak self] in self?.changed(number) }
         }
     }
 }

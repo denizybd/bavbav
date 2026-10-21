@@ -23,6 +23,15 @@ enum ApplicationMenu {
         companion.target = NSApp.delegate
         companion.representedObject = "*.companion.key"
         application.insertItem(companion, at: 2)
+        if WorkspaceHost.isAvailable {
+            let workspace = NSMenuItem(title: "Workspace · Deniz ve Emir…", action: #selector(BavbavAppDelegate.showWorkspace(_:)), keyEquivalent: "")
+            workspace.target = NSApp.delegate
+            workspace.representedObject = "*.workspace.key"
+            application.insertItem(workspace, at: 3)
+        }
+        let accountChat = NSMenuItem(title: "Konuşma kaynağı · Deniz / Emir / Yerel AI…", action: #selector(BavbavAppDelegate.showSharedAccountChat(_:)), keyEquivalent: "")
+        accountChat.target = NSApp.delegate
+        application.insertItem(accountChat, at: WorkspaceHost.isAvailable ? 4 : 3)
 
         let edit = NSMenu(title: "Edit")
         menu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
@@ -30,7 +39,7 @@ enum ApplicationMenu {
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
-        // Native AppKit key equivalents keep the six focus shortcuts available
+        // Native AppKit key equivalents keep the focus shortcuts available
         // from a text editor or an auxiliary window, not just Carbon hotkeys.
         let windows = NSMenu(title: "Windows")
         menu.addItem(withTitle: "Windows", action: nil, keyEquivalent: "").submenu = windows
@@ -40,14 +49,24 @@ enum ApplicationMenu {
             ("ChatGPT", "*.standalone.key", #selector(BavbavAppDelegate.showChatGPT)),
             ("Model and Effort", "*.models.key", #selector(BavbavAppDelegate.showSettings)),
             ("Calendar", "*.journal.key", #selector(BavbavAppDelegate.showJournal)),
-            ("Companion · Ses ve ekran", "*.companion.key", #selector(BavbavAppDelegate.showCompanion(_:)))
+            ("Companion · Ses ve ekran", "*.companion.key", #selector(BavbavAppDelegate.showCompanion(_:))),
+            ("Workspace · Deniz ve Emir", "*.workspace.key", #selector(BavbavAppDelegate.showWorkspace(_:)))
         ]
         for (index, panel) in panels.enumerated() {
+            if panel.1 == "*.workspace.key", !WorkspaceHost.isAvailable { continue }
             let item = windows.addItem(withTitle: panel.0, action: panel.2, keyEquivalent: String(index + 1))
             item.target = NSApp.delegate
             item.representedObject = panel.1
             item.keyEquivalentModifierMask = [.command]
         }
+        let browser = windows.addItem(withTitle: "Web browser", action: #selector(BavbavAppDelegate.showBrowser(_:)), keyEquivalent: "8")
+        browser.target = NSApp.delegate
+        browser.representedObject = "*.browser.key"
+        browser.keyEquivalentModifierMask = [.command]
+        let offline = windows.addItem(withTitle: "Yerel AI · çevrimdışı görev devri", action: #selector(BavbavAppDelegate.showOfflineAI(_:)), keyEquivalent: "9")
+        offline.target = NSApp.delegate
+        offline.representedObject = "*.offlineAI.key"
+        offline.keyEquivalentModifierMask = [.command]
         NSApp.windowsMenu = windows
         NSApp.mainMenu = menu
         if let bindings { update(menu, bindings: bindings) }

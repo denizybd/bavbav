@@ -53,13 +53,26 @@ enum MessageLinkCheck {
         expect(text.link(at: NSPoint(x: -1, y: -1)) == nil, "outside message is inert")
         let menu = text.menu(for: mouse(.rightMouseDown))
         menu?.update()
-        expect(menu?.items.prefix(2).map(\.title) == ["Open link", "Copy link"],
+        expect(menu?.items.prefix(2).map(\.title) == ["Open in Bavbav", "Copy link"],
                "right-click exposes explicit open and copy actions")
         expect(menu?.items.prefix(2).allSatisfy(\.isEnabled) == true, "context actions pass native menu validation")
         if let item = menu?.items.first, let action = item.action {
             expect(NSApp.sendAction(action, to: item.target, from: item), "context open action routes to text view")
             expect(opened.count == 2 && opened.last == opened.first, "context action opens clicked URL")
         }
+        var external: [URL] = []
+        text.openExternalLink = { external.append($0) }
+        if let item = menu?.items.first(where: { $0.title == "Open in default browser" }), let action = item.action {
+            expect(NSApp.sendAction(action, to: item.target, from: item), "explicit external action routes to text view")
+            expect(external == [URL(string: "https://example.com")!], "external browser is opt-in and separate from normal link dispatch")
+        } else { expect(false, "explicit external browser action missing") }
+        var routed: [URL] = []
+        let observer = NotificationCenter.default.addObserver(forName: .bavbavOpenBrowser, object: nil, queue: .main) { note in
+            if let url = note.object as? URL { routed.append(url) }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        MessageLinkPolicy.open(URL(string: "https://example.com/inside")!)
+        expect(routed == [URL(string: "https://example.com/inside")!], "default web opener requests the embedded window, not an external application")
         let pasteboard = NSPasteboard.general
         let saved = (pasteboard.pasteboardItems ?? []).map { item -> NSPasteboardItem in
             let copy = NSPasteboardItem()
@@ -82,7 +95,7 @@ enum MessageLinkCheck {
                     "file:///tmp/test%20file.swift:12", "file:///tmp/test%20file.swift#L12"] {
             expect(MessageLinkPolicy.destination(raw) == file, "local location normalizes: \(raw)")
         }
-        for raw in ["javascript:alert(1)", "file://remote/tmp/test", "file:///tmp/%00test", "data:text/html,test"] {
+        for raw in ["javascript:alert(1)", "file://remote/tmp/test", "file:///tmp/%00test", "data:text/html,test", "https://user:password@example.com"] {
             let before = opened.count
             _ = text.textView(text, clickedOnLink: raw, at: 0)
             expect(opened.count == before, "unsafe delegate destination blocked: \(raw)")

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "kind": "bavbav.native-extension",
+  "id": "dev.bavbav.local-ai",
+  "name": "Local AI / Offline Handoff",
+  "version": "0.1.0",
+  "minimumHostVersion": "0.14.0",
+  "entryPoint": {
+    "module": "BavbavOffline",
+    "hostAdapter": "OfflineAIService",
+    "windowController": "OfflineAIWindowController",
+    "shortcutID": "*.offlineAI.key",
+    "defaultShortcut": "Command+9"
+  },
+  "modelLock": "model-lock.json",
+  "model": "huihui_ai/qwen3-abliterated:14b-v2",
+  "runtime": {
+    "provider": "ollama",
+    "version": "0.40.6",
+    "endpoint": "http://127.0.0.1:11439",
+    "repositoryDirectory": "Runtime/LocalAI",
+    "installer": "local-ai-setup.py",
+    "requiresPython3": true,
+    "cloudFallback": false,
+    "maximumParallelJobs": 1,
+    "defaultContextLength": 4096,
+    "modelWeightsBundled": false
+  },
+  "capabilities": [
+    "durable-task-queue",
+    "workspace-read",
+    "text-search",
+    "change-proposals-only",
+    "composer-handoff-without-send"
+  ],
+  "unsupported": [
+    "shell-execution",
+    "source-file-write",
+    "automatic-cloud-replay",
+    "arbitrary-network-tools",
+    "image-or-pdf-understanding",
+    "cloud-private-reasoning-transfer"
+  ],
+  "dataBoundaries": {
+    "taskStore": "Application Support/Bavbav/OfflineAI/Tasks",
+    "accountsOrCookiesShared": false,
+    "sourceConversationPreserved": true,
+    "ambiguousCloudOutcome": "hold-without-execution",
+    "runtimeAndWeightsGitTracked": false
+  }
+}

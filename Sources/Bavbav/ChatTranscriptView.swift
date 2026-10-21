@@ -4,6 +4,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let chatJumpToBottom = Notification.Name("Bavbav.ChatJumpToBottom")
+    static let chatFindInConversation = Notification.Name("Bavbav.ChatFindInConversation")
 }
 
 /// One controller per transcript/window. Follow layout changes, not message
@@ -276,10 +277,15 @@ private struct TranscriptScrollProbe: NSViewRepresentable {
 struct ChatTranscriptView: View {
     @Environment(\.shortcutLabels) private var shortcuts
     let items: [CodexMessage]
+    let focusedMessageID: String?
+    let matchingMessageIDs: Set<String>
     @StateObject private var scroll: ChatScrollController
 
-    init(items: [CodexMessage], scroll: ChatScrollController? = nil) {
+    init(items: [CodexMessage], scroll: ChatScrollController? = nil,
+         focusedMessageID: String? = nil, matchingMessageIDs: Set<String> = []) {
         self.items = items
+        self.focusedMessageID = focusedMessageID
+        self.matchingMessageIDs = matchingMessageIDs
         _scroll = StateObject(wrappedValue: scroll ?? ChatScrollController())
     }
 
@@ -289,15 +295,34 @@ struct ChatTranscriptView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(items) { message in MessageBlock(message: message).id(message.id) }
+                ForEach(items) { message in
+                    MessageBlock(message: message)
+                        .overlay {
+                            if matchingMessageIDs.contains(message.id) {
+                                RoundedRectangle(cornerRadius: 7)
+                                    .strokeBorder(message.id == focusedMessageID ? BavbavTheme.accent : BavbavTheme.warning.opacity(0.7),
+                                                  lineWidth: message.id == focusedMessageID ? 1.5 : 0.7)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .id(message.id)
+                }
             }
             .padding(16)
             .background(TranscriptScrollProbe(controller: scroll))
         }
         .onAppear { scroll.contentChanged() }
         .onChange(of: Revision(count: items.count, last: items.last)) { _ in scroll.contentChanged() }
+        .onChange(of: focusedMessageID) { id in
+            guard let id else { return }
+            // Search is an explicit navigation, not a reason to turn normal
+            // streaming auto-follow back on or rebuild the transcript.
+            scroll.userWillScroll()
+            proxy.scrollTo(id, anchor: .center)
+        }
         .overlay(alignment: .bottomTrailing) {
             if scroll.awayFromBottom {
                 Button { scroll.jumpToBottom() } label: {
@@ -314,6 +339,7 @@ struct ChatTranscriptView: View {
                 .accessibilityLabel("Jump to the latest message")
                 .padding(12)
             }
+        }
         }
     }
 }

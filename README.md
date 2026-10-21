@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  macOS 13+ &nbsp;·&nbsp; SwiftUI + AppKit &nbsp;·&nbsp; Keyboard-first
+  macOS 14+ &nbsp;·&nbsp; SwiftUI + AppKit &nbsp;·&nbsp; Keyboard-first
 </p>
 
 <p align="center">
@@ -31,6 +31,18 @@ opening the panel alone never starts media. Native macOS permissions still requi
 the user's decision. This first integration uses
 macOS speech services rather than built-in ChatGPT Voice. See
 [capabilities, privacy boundaries and live acceptance steps](docs/COMPANION.md).
+
+Workspace (`⌘7`) opens Deniz and Emir's native P2P project and chat window inside
+Bavbav, preserving the existing Workspace identity and pairing. See
+[the embedded Workspace and its build resources](docs/WORKSPACE.md).
+
+Local AI (`⌘9`, app-local) adds a native offline-handoff extension using the
+existing Qwen3 14B model, with verified runtime/model files physically inside the
+checkout. It queues eligible text/read-only analysis, preserves uncertain cloud
+work instead of replaying it, and prepares an explicit report in the original
+chat's composer. Version 0.1.0 does **not** execute commands or apply file edits.
+See [offline workflow and verification](docs/OFFLINE-AI.md) and
+[automatic setup and model provenance](docs/LOCAL-AI-RUNTIME.md).
 
 ![Bavbav displaying project navigation, recent conversations, and two native chat windows](docs/assets/screenshots/01-parallel-workspaces.png)
 
@@ -74,6 +86,7 @@ The windows behave like regular macOS windows: bring them forward with shortcuts
 | **Standalone chat** | Start a Codex-powered conversation outside your project folders. |
 | **Journal** | Turn new conversations into short, editable notes about events, decisions, and plans, with links back to their sources. |
 | **Custom shortcuts** | Rebind actions by context, search bindings, and tune hold durations. On-screen hints follow your choices. |
+| **Offline handoff** | Continue eligible text/file analysis with one pinned local worker, keep durable receipts, and explicitly hand a report back to the original conversation. |
 
 Attachments are limited to **12 files per message, 25 MiB per file**. Images are passed to Codex as local image inputs; documents are passed as local file references for its tools to read. Dropping a file adds it to the draft without sending it.
 
@@ -81,9 +94,9 @@ Attachments are limited to **12 files per message, 25 MiB per file**. Images are
 
 ### Requirements
 
-- **macOS 13 or later.** A Swift 6 toolchain and macOS SDK are required to build; check your installation with `swift --version`.
+- **macOS 14 or later.** A Swift 6 toolchain and macOS SDK are required to build; check your installation with `swift --version`.
 - **Codex installed and signed in.** Follow the [official Codex CLI setup](https://learn.chatgpt.com/docs/codex/cli) and [authentication guide](https://learn.chatgpt.com/docs/auth). Bavbav uses the installed executable and its existing authentication.
-- **Git and internet access** to clone the repository and resolve Swift dependencies. Codex model requests also require a connection.
+- **Git and internet access** to clone the repository and resolve Swift dependencies. Cloud Codex requests require a connection; the optional Local AI extension works offline after its pinned assets are provisioned. Python 3 is required for local setup.
 
 > **Execution defaults:** Bavbav currently starts and resumes coding turns with full filesystem/network access and `approvalPolicy: never`. Commands can run and files can change without an approval card. Use it with workspaces and instructions you trust. macOS privacy permissions still apply.
 
@@ -100,6 +113,12 @@ If needed, run `codex login` and complete the sign-in flow. The packaged build
 also requires an existing stable local code-signing identity; see
 [local signing and permission-stable builds](docs/LOCAL-SIGNING.md). The
 scripts do not create keys/certificates or change macOS permission records.
+The embedded Workspace is optional for the public checkout. When its private
+native sources are present, packaging also requires the matching prepared
+runtime resources as described in [Workspace build instructions](docs/WORKSPACE.md).
+`BAVBAV_WITH_WORKSPACE=auto` detects those sources; `0` explicitly builds without
+Workspace and `1` requires it. Missing resources never silently disable a present
+private integration.
 Then build Bavbav:
 
 ```sh
@@ -172,7 +191,7 @@ To create a project or a named chat, use `Space` + `Enter` in the relevant Proje
 
 ## Keyboard cheat sheet
 
-These are the defaults. Most navigation keys apply outside text editing; `Q`, `W`, `A`, `S`, and `D` remain ordinary letters while you type. The six panel shortcuts, `⌘1`–`⌘6`, are global and bring their panels forward without toggling them closed.
+These are the defaults. Most navigation keys apply outside text editing; `Q`, `W`, `A`, `S`, and `D` remain ordinary letters while you type. The seven window shortcuts, `⌘1`–`⌘7`, are global and bring their windows forward without toggling them closed.
 
 For `Space` + `Enter`, press Enter while holding Space, before the long press enters reorder mode.
 
@@ -183,6 +202,8 @@ For `Space` + `Enter`, press Enter while holding Space, before the long press en
 | `⌘4` | Active conversation's model settings |
 | `⌘5` | Journal |
 | `⌘6` | Companion: voice and periodic full-screen sharing |
+| `⌘7` | Deniz and Emir Workspace: P2P projects and chat |
+| `⌘8` / `⌘9` | Bavbav web window / Local AI offline-handoff extension (app-local) |
 | `W` / `S` or `↑` / `↓` | Move through a list |
 | `Space` | Open the selected entry; steer a selected queue item |
 | `⌥Space` | Rename the selected project or conversation |
@@ -203,11 +224,12 @@ Click a message and use `⌘A` / `⌘C` to select and copy its text. Inside Bavb
 
 ## Execution and local data
 
-Bavbav's interface runs locally. Conversations and model requests go through your installed Codex runtime and its configured services; local rendering does not mean offline inference.
+Bavbav's interface runs locally. Normal Codex conversations and model requests go through your installed Codex runtime and its configured services; local rendering alone does not mean offline inference. The separately labeled Local AI extension uses its pinned repository-owned model, with the narrower read-only capabilities described above.
 
 - **Drafts and attachments:** Drafts persist locally. Imported files are copied into `~/Library/Application Support/Bavbav/Attachments/`; original files are left in place. The pending message queue is held in memory and is not guaranteed to recover after a full quit.
 - **Images and links:** Local and embedded images can render in messages. Remote HTTPS image previews require an explicit load action. Raw HTML is not executed; local file links reveal files in Finder.
 - **Journal:** Automatic note extraction is enabled by default and uses additional Codex requests, capped at 60 per day. Press `P` in the journal to pause it. It processes new conversation activity rather than automatically scanning your entire history. Notes are stored under `~/Library/Application Support/Bavbav/Journal/`, retain source references, and can be edited or deleted. These local files are not separately encrypted.
+- **Local AI:** Durable task checkpoints/receipts live under `~/Library/Application Support/Bavbav/OfflineAI/Tasks/`. Runtime and exact model weights remain in the checkout's ignored `Runtime/LocalAI/`; GitHub and the app bundle contain setup code/manifests, not a 9 GB weight commit. A local result is not automatically sent to the cloud.
 - **Closing and quitting:** `Q` closes a view while Bavbav and its active work remain running. `⌘Q` exits the app; continued background work is not promised after quitting or shutting down the Mac.
 
 ## Under the hood
@@ -227,6 +249,7 @@ flowchart LR
 | --- | --- |
 | [`Sources/Bavbav`](Sources/Bavbav) | Window coordination, keyboard routing, native transcripts, composer, appearance, and journal UI. |
 | [`Sources/BavbavCore`](Sources/BavbavCore) | App Server transport, project discovery, conversation models, message reconciliation, and journal rules. |
+| [`Sources/BavbavOffline`](Sources/BavbavOffline) | Independent native offline extension: durable single-worker queue, read-only file tools, bounded local model transport, and explicit handoff reports. |
 | [`Tests/BavbavChecks`](Tests/BavbavChecks) | Core behavior checks and optional protocol/integration checks. |
 | [`Tests/BavbavFakeCodex`](Tests/BavbavFakeCodex) | A local server fixture for repeatable protocol and UI checks. |
 | [`scripts`](scripts) | Icon preparation, release builds, resource packaging, and app validation. |
@@ -248,7 +271,7 @@ BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh
 zsh scripts/sign-app.sh --verify "/absolute/path/printed/by/the/build/Bavbav.app"
 ```
 
-The build script exercises executable discovery, connection failure/recovery and streamed replies, protocol round-trips, native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, and standalone chats. Its fixture checks do not send prompts to your real Codex account.
+The build script exercises executable discovery, connection failure/recovery and streamed replies, protocol round-trips, native rendering, image and link handling, attachments, composer actions, shortcuts, scrolling, window resizing, appearance, journal behavior, standalone chats, and offline installer/coordinator/native-host fixtures. Its fixture checks do not send prompts to your real Codex account or load the real local model. Real local inference is a separate opt-in check described in [Offline AI verification](docs/OFFLINE-AI.md#verification-and-honest-acceptance).
 
 Conversation regression checks cover final-response/focus races, delayed history overwriting live replies, and recovered messages appearing out of order. For an explicitly selected real conversation, `.build/release/BavbavChecks --read-only-thread THREAD_ID` checks history retrieval; `BAVBAV_HISTORY_REPLAY_CHECK=THREAD_ID .build/release/Bavbav` additionally verifies that the last message is visible in a hidden native window. These diagnostics do not send or resume turns, and print counts rather than conversation text. They do not prove the state of an already-running older app.
 

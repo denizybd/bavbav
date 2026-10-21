@@ -73,14 +73,58 @@ public actor CodexAppServer {
 
     private let journalWorker: Bool
     private let companionWorker: Bool
+    private let sharedAccountWorker: Bool
+    private var sharedAccountRoots: [String: String] = [:]
     private var journalThreadID: String?
     private var journalOutput = ""
     private var journalFinished = false
     private var journalFailure: String?
 
-    public init(journalWorker: Bool = false, companionWorker: Bool = false) {
+    public init(journalWorker: Bool = false, companionWorker: Bool = false, sharedAccountWorker: Bool = false) {
         self.journalWorker = journalWorker
         self.companionWorker = companionWorker
+        self.sharedAccountWorker = sharedAccountWorker
+    }
+
+    /// Text-only conversations on the host's existing ChatGPT session. The
+    /// remote member supplies text, never account RPCs, paths or credentials.
+    public func startSharedAccountThread(cwd: String) async throws -> CodexThread {
+        guard sharedAccountWorker else { throw CodexClientError.invalidResponse("Restricted account worker required") }
+        try await ensureConnected()
+        let profiles = try await request(method: "permissionProfile/list", params: ["cwd": cwd], timeout: 10)
+        guard (profiles["data"] as? [[String: Any]] ?? []).contains(where: { $0["id"] as? String == "bavbav_account" && $0["allowed"] as? Bool == true }) else {
+            throw CodexClientError.invalidResponse("Hesap sohbetinin kısıtlı izin profili kullanılamıyor. Codex'i güncelleyin veya yönetilen izinleri kontrol edin.")
+        }
+        let instructions = """
+        Bavbav içinde Deniz ve Emir'in hesap seçerek kullandığı metin sohbetisin. Kullanıcının mesajına doğal ve yararlı yanıt ver. Bu oturumda yalnızca gönderilen sohbet metnini kullan. Yerel dosyalara, özel sohbet geçmişlerine, hesap kimlik bilgilerine veya masaüstüne erişimin yok. Araç, shell, dosya, ağ, eklenti veya başka ajan çalıştırma. Yapmadığın bir bilgisayar işlemini yaptığını söyleme.
+        """
+        let result = try await request(method: "thread/start", params: [
+            "cwd": cwd, "ephemeral": true, "permissions": "bavbav_account", "approvalPolicy": "never",
+            "baseInstructions": instructions, "developerInstructions": instructions,
+            "environments": [], "dynamicTools": [], "selectedCapabilityRoots": [],
+            "config": ["web_search": "disabled", "project_doc_max_bytes": 0,
+                       "features.shell_tool": false, "features.unified_exec": false,
+                       "features.apps": false, "features.multi_agent": false, "agents.enabled": false,
+                       "features.hooks": false, "features.memories": false, "mcp_servers": [:]] as [String: Any]
+        ], timeout: 30)
+        guard let row = result["thread"] as? [String: Any], let thread = Self.parseThread(row) else { throw CodexClientError.invalidResponse("Account thread missing") }
+        sharedAccountRoots[thread.id] = cwd
+        return thread
+    }
+
+    public func startSharedAccountTurn(threadID: String, text: String) async throws -> CodexTurnStart {
+        guard sharedAccountWorker, let cwd = sharedAccountRoots[threadID], !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.utf8.count <= 32768 else { throw CodexClientError.invalidResponse("Unknown account conversation or invalid text") }
+        let result = try await request(method: "turn/start", params: [
+            "threadId": threadID, "input": [["type": "text", "text": text]],
+            "cwd": cwd, "approvalPolicy": "never", "environments": [], "permissions": "bavbav_account"
+        ], timeout: 30)
+        guard let turn = result["turn"] as? [String: Any], let id = turn["id"] as? String else { throw CodexClientError.invalidResponse("Account turn missing") }
+        return CodexTurnStart(id: id, status: turn["status"] as? String ?? "inProgress")
+    }
+
+    public func interruptSharedAccountTurn(threadID: String, turnID: String) async throws {
+        guard sharedAccountWorker, sharedAccountRoots[threadID] != nil else { throw CodexClientError.invalidResponse("Unknown account conversation") }
+        _ = try await request(method: "turn/interrupt", params: ["threadId": threadID, "turnId": turnID], timeout: 10)
     }
 
     /// An isolated conversation on the existing account, without desktop-input
@@ -152,6 +196,16 @@ public actor CodexAppServer {
     }
 
     /// Recover only a known pending turn after relaunch. No resuming/writer takeover.
+    /// Read-only reconciliation of the exact server turn; a later turn on the
+    /// same thread is not evidence that an uncertain request has completed.
+    public func readTurnStatus(threadID: String, turnID: String) async throws -> String? {
+        try await ensureConnected()
+        let result = try await request(method: "thread/read", params: ["threadId": threadID, "includeTurns": true], timeout: 15)
+        guard let thread = result["thread"] as? [String: Any], let turns = thread["turns"] as? [[String: Any]],
+              let turn = turns.first(where: { $0["id"] as? String == turnID }) else { return nil }
+        return turn["status"] as? String
+    }
+
     public func readJournalTurn(threadID: String, turnID: String) async throws -> (messages: [CodexMessage], complete: Bool) {
         try await ensureConnected()
         var cursor: String?
@@ -1551,14 +1605,22 @@ public actor CodexAppServer {
 
         process.executableURL = executable
         process.arguments = ["app-server", "--stdio"]
-        if companionWorker {
+        if sharedAccountWorker {
+            // Restrict only this child. Never edit owner-wide Codex settings.
+            process.arguments! += ["-c", "default_permissions=\"bavbav_account\"",
+                "-c", "permissions.bavbav_account.filesystem={\":root\"=\"deny\",\":minimal\"=\"read\",\":workspace_roots\"={\".\"=\"read\"}}",
+                "-c", "permissions.bavbav_account.network.enabled=false"]
+            process.arguments! += ["-c", "features.plugins=false", "-c", "features.in_app_browser=false",
+                "-c", "features.in_app_local_automation=false", "-c", "features.external_agent_memory_import=false"]
+        }
+        if companionWorker || sharedAccountWorker {
             process.arguments! += ["-c", "model_provider=\"openai\""]
             var environment = ProcessInfo.processInfo.environment
             environment.removeValue(forKey: "OPENAI_API_KEY")
             environment.removeValue(forKey: "CODEX_API_KEY")
             process.environment = environment
         }
-        if journalWorker || companionWorker {
+        if journalWorker || companionWorker || sharedAccountWorker {
             // Process-local restrictions: never edit the user's Codex configuration.
             process.arguments! += ["-c", "mcp_servers={}", "-c", "web_search=\"disabled\"",
                 "-c", "features.shell_tool=false", "-c", "features.unified_exec=false",
@@ -1630,6 +1692,7 @@ public actor CodexAppServer {
     }
 
     private func resetTransport(terminate: Bool, pendingError: Error) {
+        sharedAccountRoots.removeAll()
         initialized = false
         processGeneration &+= 1
         resumedThreadIDs.removeAll(keepingCapacity: false)
@@ -1753,8 +1816,8 @@ public actor CodexAppServer {
         if let method = message["method"] as? String {
             trace("event id=\(String(describing: message["id"])) method=\(method)")
             if let requestID = message["id"] {
-                if companionWorker {
-                    let reason = "Companion beklenmeyen araç/izin isteği nedeniyle durduruldu. Masaüstü kontrolü etkin değil."
+                if companionWorker || sharedAccountWorker {
+                    let reason = "Sohbet beklenmeyen araç/izin isteği nedeniyle durduruldu."
                     resetTransport(terminate: true, pendingError: CodexClientError.disconnected)
                     eventHandler?(.transportClosed(message: reason))
                     return

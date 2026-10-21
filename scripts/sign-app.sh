@@ -52,6 +52,25 @@ validate_app() {
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$candidate/Contents/Info.plist")" == APPL ]] || fail "Unexpected bundle package type."
 }
 
+sign_workspace_runtime() {
+    local candidate="$1" identity="$2" runtime_dir native_binary native_kind
+    runtime_dir="$candidate/Contents/Resources/IkiWorkspace"
+    [[ -d "$runtime_dir" ]] || return 0
+    [[ -f "$runtime_dir/runtime/node" && -x "$runtime_dir/runtime/node" && ! -L "$runtime_dir/runtime/node" ]] || fail "Embedded Workspace runtime must be a regular executable."
+    /usr/bin/codesign --force --sign "$identity" --timestamp=none "$runtime_dir/runtime/node"
+    # These addons live outside the usual Frameworks directory, so sign them
+    # explicitly before sealing the outer app. Leave Linux/Windows prebuilds as
+    # data; only Darwin Mach-O addons are executable on this platform.
+    for native_binary in "$runtime_dir"/engine/node_modules/*/prebuilds/darwin-*/*.node(N); do
+        [[ ! -L "$native_binary" ]] || fail "Embedded native addon cannot be a symlink."
+        native_kind="$(/usr/bin/file -b "$native_binary")"
+        [[ "$native_kind" == *Mach-O* ]] || fail "Unexpected Darwin native addon format."
+        /usr/bin/codesign --force --sign "$identity" --timestamp=none "$native_binary"
+        /usr/bin/codesign --verify --strict "$native_binary" || fail "Embedded native addon signature failed."
+    done
+    /usr/bin/codesign --verify --strict "$runtime_dir/runtime/node" || fail "Embedded runtime signature failed."
+}
+
 verify_signature() {
     local candidate="$1" identity="$2" requirements metadata
     /usr/bin/codesign --verify --deep --strict "$candidate" || fail "Strict signature verification failed."
@@ -90,6 +109,7 @@ case "$mode" in
         identity="$(resolve_identity)"
         validate_app "$1"
         [[ "${1:h:h}" == "$project_dir/dist" && "${1:h:t}" == .bavbav-build.* ]] || fail "Signing is restricted to staged candidates inside this checkout's dist directory; the installed app is never re-signed."
+        sign_workspace_runtime "$1" "$identity"
         /usr/bin/codesign --force --deep --sign "$identity" --timestamp=none --identifier "$bundle_identifier" "$1"
         verify_signature "$1" "$identity"
         ;;

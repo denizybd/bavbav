@@ -98,7 +98,8 @@ enum ShortcutCatalog {
         }
         for (op, title, code) in [("projects","Focus Projects",18), ("recents","Focus recent chats",19),
             ("standalone","Focus standalone chats",20), ("models","Focus model settings",21),
-            ("journal","Focus journal",23), ("companion","Focus Companion voice and screen sharing",22)] {
+            ("journal","Focus journal",23), ("companion","Focus Companion voice and screen sharing",22),
+            ("workspace","Focus Deniz and Emir Workspace",26)] {
             add("*", "Windows · global", op, title, UInt16(code), .command, global: true)
         }
         for (op,title,code,flags) in [
@@ -109,6 +110,16 @@ enum ShortcutCatalog {
             ("quit","Quit the app",12,.command)] {
             add("*","Application",op,title,code,flags)
         }
+        // App-local, not a new Carbon registration: older numbered windows keep their IDs.
+        add("*", "Application", "browser", "Open Bavbav web window", 28, .command)
+        add("*", "Application", "offlineAI", "Open local AI and offline handoff", 25, .command)
+        for (op, title, code, flags) in [
+            ("address", "Focus address and web search", UInt16(37), NSEvent.ModifierFlags.command),
+            ("reload", "Reload web page", 15, .command),
+            ("back", "Previous web page", 33, .command),
+            ("forward", "Next web page", 30, .command),
+            ("close", "Close web window outside typing", 12, [])
+        ] { add("browser.read", "Web window", op, title, code, flags) }
         for (op,title,code) in [("focusUp","Focus the window above",13), ("focusLeft","Focus the window on the left",0),
             ("focusDown","Focus the window below",1), ("focusRight","Focus the window on the right",2)] {
             add("*read","Window navigation · outside text editing",op,title,UInt16(code),.shift)
@@ -171,6 +182,15 @@ enum ShortcutCatalog {
         }
         enter("chat.read","Chat · reading","write","Open composer")
         add("chat.read","Chat · reading","close","Close this chat window",12)
+        add("chat.read", "Chat · reading", "rename", "Rename this chat", 49, .option)
+        for state in ["full", "empty"] {
+            let scope = "rename.chat.read.\(state)"
+            enter(scope, "Chat · rename · \(state)", "commitRename", state == "full" ? "Save chat name" : "Cancel empty name")
+            add(scope, "Chat · rename · \(state)", "cancelRename", "Cancel chat renaming", 47, .command)
+        }
+        for scope in ["chat.read", "chat.write.full", "chat.write.empty", "queue.list", "interaction.list"] {
+            add(scope, "Chat · find", "find", "Find in this conversation", 3, .command)
+        }
         for (scope,group) in [("chat.read","Chat · reading"),("queue.list","Message queue"),
             ("queue.list.moving","Queue · reordering"),("interaction.list","Interaction cards"),
             ("chat.write.full","Message · writing"),("chat.write.empty","Message · empty composer"),
@@ -261,7 +281,13 @@ enum ShortcutCatalog {
         return result
     }()
     static func writing(_ scope: String) -> Bool {
-        scope.contains(".write") || scope.hasPrefix("create.") || scope.hasPrefix("rename.") || scope == "text.other" || scope == "prefs.search"
+        scope.contains(".write") || scope.hasPrefix("create.") || scope.hasPrefix("rename.") || scope == "text.other" || scope == "prefs.search" || scope == "browser.text"
+    }
+    static func overlaps(_ a: ShortcutDefinition, _ b: ShortcutDefinition) -> Bool {
+        // App refresh updates projects; browser reload belongs to its own window.
+        if (a.scope.hasPrefix("browser.") && b.id == "*.refresh.key") ||
+            (b.scope.hasPrefix("browser.") && a.id == "*.refresh.key") { return false }
+        return overlaps(a.scope, b.scope)
     }
     static func overlaps(_ a: String, _ b: String) -> Bool {
         if a == b || a == "*" || b == "*" || a == "*text" || b == "*text" { return true }
@@ -291,8 +317,34 @@ final class ShortcutSettings: ObservableObject {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.storageKey) {
             if let saved = try? JSONDecoder().decode([String: ShortcutBinding].self, from: data) {
-                let known = saved.filter { id, _ in ShortcutCatalog.all.contains { $0.id == id } }
+                var known = saved.filter { id, _ in ShortcutCatalog.all.contains { $0.id == id } }
+                // A new default must never invalidate the user's older custom
+                // bindings. If Command 7 was already assigned, retain that
+                // assignment and leave Workspace available from the menu.
+                if known["*.workspace.key"] == nil,
+                   let workspace = ShortcutCatalog.all.first(where: { $0.id == "*.workspace.key" }),
+                   known.values.contains(where: { !$0.disabled && $0.strokes.first == workspace.defaultBinding.strokes.first }) {
+                    var disabled = workspace.defaultBinding
+                    disabled.disabled = true
+                    known[workspace.id] = disabled
+                }
                 // Validate the complete snapshot (including independently remapped aliases).
+                let additiveIDs = Set(ShortcutCatalog.all.filter {
+                    $0.id == "*.browser.key" || $0.id == "*.offlineAI.key" || $0.scope.hasPrefix("browser.") ||
+                    $0.scope.hasPrefix("rename.chat.read.") || $0.operation == "find" || $0.id == "chat.read.rename.key"
+                }.map(\.id))
+                for added in ShortcutCatalog.all where additiveIDs.contains(added.id) && known[added.id] == nil {
+                    if known.contains(where: { id, value in
+                        guard !value.disabled, let previous = ShortcutCatalog.all.first(where: { $0.id == id }) else { return false }
+                        let same = value.strokes == added.defaultBinding.strokes && value.hold == added.defaultBinding.hold
+                        let prefixConflict = [added.scope, previous.scope].contains(where: { $0 == "*" || $0 == "*text" }) &&
+                            value.strokes.first == added.defaultBinding.strokes.first
+                        return ShortcutCatalog.overlaps(added, previous) && (same || prefixConflict)
+                    }) {
+                        var disabled = added.defaultBinding; disabled.disabled = true
+                        known[added.id] = disabled
+                    }
+                }
                 if known.allSatisfy({ id, binding in validationError(id: id, binding: binding, proposed: known) == nil }) {
                     overrides = known
                 } else { error = "Some saved shortcuts are invalid. Safe defaults are being used." }
@@ -308,6 +360,7 @@ final class ShortcutSettings: ObservableObject {
     }
     func matches(scope: String, text: Bool = false) -> [ShortcutDefinition] {
         ShortcutCatalog.all.filter {
+            !(scope.hasPrefix("browser.") && $0.id == "*.refresh.key") &&
             ($0.scope == scope || $0.scope == "*" || ($0.scope == "*read" && !ShortcutCatalog.writing(scope))
                 || ($0.scope == "*text" && text)) && !binding($0).disabled
         }
@@ -337,7 +390,7 @@ final class ShortcutSettings: ObservableObject {
             }
         }
         let snapshot = proposed ?? overrides
-        for other in ShortcutCatalog.all where other.id != id && ShortcutCatalog.overlaps(definition.scope, other.scope) {
+        for other in ShortcutCatalog.all where other.id != id && ShortcutCatalog.overlaps(definition, other) {
             let value = snapshot[other.id] ?? other.defaultBinding
             guard !value.disabled else { continue }
             if value.strokes == binding.strokes && value.hold == binding.hold {

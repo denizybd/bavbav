@@ -20,9 +20,12 @@ enum ShortcutCustomizationCheck {
         store.onOpenDetail = nil; store.onWillOpenDetail = nil
         var requests = 0
         var companionRequests = 0
+        var browserRequests = 0
+        var workspaceRequests = 0
         var directions: [WindowDirection] = []
         let router = InputRouter(store: store, coordinator: panels, presentAppSettings: { requests += 1 },
-                                 navigateWindow: { directions.append($0) }, presentCompanion: { companionRequests += 1 })
+                                 navigateWindow: { directions.append($0) }, presentCompanion: { companionRequests += 1 },
+                                 presentWorkspace: { workspaceRequests += 1 }, presentBrowser: { browserRequests += 1 })
         let bindings = panels.appPreferences.keyBindings
         let prefs = panels.appPreferences
         let settings = panels.appSettings.window
@@ -66,11 +69,50 @@ enum ShortcutCustomizationCheck {
             }
         }
         do {
+            let migrationSuite = suite + ".pre-workspace"
+            let migrationDefaults = UserDefaults(suiteName: migrationSuite)!
+            defer { migrationDefaults.removePersistentDomain(forName: migrationSuite) }
+            let olderOverrides: [String: ShortcutBinding] = [
+                "*.projects.key": .init(strokes: [.init(26, .command)]),
+                "projects.root.up.key": .init(strokes: [.init(40)])
+            ]
+            let olderBytes = try JSONEncoder().encode(olderOverrides)
+            migrationDefaults.set(olderBytes, forKey: ShortcutSettings.storageKey)
+            let migrated = ShortcutSettings(defaults: migrationDefaults)
+            try check(migrated.label("*.projects.key") == "⌘7" && migrated.label("projects.root.up.key") == "K",
+                      "adding Workspace preserves every preexisting custom shortcut")
+            try check(migrated.label("*.workspace.key") == "DISABLED" && migrated.error == nil,
+                      "an occupied Command 7 only disables the new Workspace default")
+            try check(migrationDefaults.data(forKey: ShortcutSettings.storageKey) == olderBytes,
+                      "loading a new shortcut catalog never rewrites the user's original settings")
+            let browserMigrationSuite = suite + ".pre-browser"
+            let browserMigrationDefaults = UserDefaults(suiteName: browserMigrationSuite)!
+            defer { browserMigrationDefaults.removePersistentDomain(forName: browserMigrationSuite) }
+            let olderChord: [String: ShortcutBinding] = [
+                "projects.root.rename.key": .init(strokes: [.init(28, .command), .init(15)])
+            ]
+            let olderChordBytes = try JSONEncoder().encode(olderChord)
+            browserMigrationDefaults.set(olderChordBytes, forKey: ShortcutSettings.storageKey)
+            let browserMigration = ShortcutSettings(defaults: browserMigrationDefaults)
+            try check(browserMigration.binding(ShortcutCatalog.all.first { $0.id == "projects.root.rename.key" }!).strokes == olderChord["projects.root.rename.key"]!.strokes,
+                      "adding Web preserves a preexisting Command 8 prefix chord")
+            try check(browserMigration.label("*.browser.key") == "DISABLED" && browserMigration.error == nil,
+                      "a new app-local Web shortcut cannot invalidate existing chord settings")
+            try check(browserMigrationDefaults.data(forKey: ShortcutSettings.storageKey) == olderChordBytes,
+                      "browser migration never rewrites the original shortcut bytes")
             try check(bindings.label("*.companion.key") == "⌘6", "Companion default is Command 6")
+            try check(bindings.label("*.browser.key") == "⌘8", "web window has an app-local Command 8 shortcut")
+            tap(28, .command, window: project)
+            try check(browserRequests == 1, "Command 8 opens browser without touching a coding chat")
+            try check(bindings.validationError(id: "browser.read.reload.key", binding: .init(strokes: [.init(15, .command)])) == nil,
+                      "web reload and project refresh remain independent scopes")
             try check(bindings.label("*.journal.key") == "⌘5", "journal stays on Command 5")
             _ = router.handle(key(22, .command, window: project))
             _ = router.handle(key(22, .command, window: project, type: .keyUp))
             try check(companionRequests == 1, "Command 6 opens Companion, not journal")
+            try check(bindings.label("*.workspace.key") == "⌘7", "Workspace default is Command 7")
+            tap(26, .command, window: project)
+            try check(workspaceRequests == 1, "Command 7 opens the embedded Workspace")
             let catalog = ShortcutCatalog.all
             try check(catalog.count > 150, "granular action catalog")
             try check(Set(catalog.map(\.id)).count == catalog.count, "stable unique IDs")
@@ -201,18 +243,22 @@ enum ShortcutCustomizationCheck {
             guard let windowsMenu = NSApp.mainMenu?.items.first(where: { $0.title == "Windows" })?.submenu else {
                 throw Failure(message: "native Windows menu missing")
             }
-            try check(NSApp.windowsMenu === windowsMenu, "macOS Window menu uses the six-panel submenu")
-            let windowBindings: [(String, String, Selector)] = [
+            try check(NSApp.windowsMenu === windowsMenu, "macOS Window menu uses the panel submenu")
+            let allWindowBindings: [(String, String, Selector)] = [
                 ("*.projects.key", "1", #selector(BavbavAppDelegate.showProjects)),
                 ("*.recents.key", "2", #selector(BavbavAppDelegate.showRecents)),
                 ("*.standalone.key", "3", #selector(BavbavAppDelegate.showChatGPT)),
                 ("*.models.key", "4", #selector(BavbavAppDelegate.showSettings)),
                 ("*.journal.key", "5", #selector(BavbavAppDelegate.showJournal)),
-                ("*.companion.key", "6", #selector(BavbavAppDelegate.showCompanion(_:)))
+                ("*.companion.key", "6", #selector(BavbavAppDelegate.showCompanion(_:))),
+                ("*.workspace.key", "7", #selector(BavbavAppDelegate.showWorkspace(_:))),
+                ("*.browser.key", "8", #selector(BavbavAppDelegate.showBrowser(_:))),
+                ("*.offlineAI.key", "9", #selector(BavbavAppDelegate.showOfflineAI(_:)))
             ]
+            let windowBindings = allWindowBindings.filter { WorkspaceHost.isAvailable || $0.0 != "*.workspace.key" }
             let representedWindows = windowsMenu.items.filter { $0.representedObject is String }
             try check(Set(representedWindows.compactMap { $0.representedObject as? String }) == Set(windowBindings.map { $0.0 }),
-                      "native Window menu contains exactly the six global panel binding IDs")
+                      "native Window menu contains the available panels and app-local Web/Offline bindings")
             for (id, number, action) in windowBindings {
                 guard let item = representedWindows.first(where: { $0.representedObject as? String == id }) else {
                     throw Failure(message: "native panel menu missing \(id)")

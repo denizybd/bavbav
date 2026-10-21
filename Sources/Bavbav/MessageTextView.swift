@@ -24,6 +24,7 @@ struct MessageTextView: NSViewRepresentable {
 final class RichMessageTextView: NSTextView, NSTextViewDelegate {
     // Injectable dispatch keeps interaction checks from opening external apps.
     var openLink: (URL) -> Void = MessageLinkPolicy.open
+    var openExternalLink: (URL) -> Void = MessageLinkPolicy.openExternally
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     private(set) var rendered: RenderedMessage?
@@ -209,7 +210,8 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         // Capture the clicked destination on each item, not a mutable selection.
         // Supply explicit actions instead of relying on AppKit's generated menu.
         let menu = NSMenu(title: "Link")
-        let open = NSMenuItem(title: url.isFileURL ? "Show in Finder" : "Open link",
+        let web = ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+        let open = NSMenuItem(title: url.isFileURL ? "Show in Finder" : (web ? "Open in Bavbav" : "Open mail app"),
                               action: #selector(openContextLink(_:)), keyEquivalent: "")
         let copy = NSMenuItem(title: url.isFileURL ? "Copy file path" : "Copy link",
                               action: #selector(copyContextLink(_:)), keyEquivalent: "")
@@ -217,6 +219,12 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
             item.target = self
             item.representedObject = url
             menu.addItem(item)
+        }
+        if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            let external = NSMenuItem(title: "Open in default browser", action: #selector(openExternalContextLink(_:)), keyEquivalent: "")
+            external.target = self
+            external.representedObject = url
+            menu.addItem(external)
         }
         if selectedRange().length > 0 {
             menu.addItem(.separator())
@@ -236,6 +244,12 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         guard let value = sender.representedObject, let url = linkDestination(value) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.isFileURL ? url.path : url.absoluteString, forType: .string)
+    }
+
+    @objc private func openExternalContextLink(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject, let url = linkDestination(value),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+        openExternalLink(url)
     }
 
     private func rebuildCopyButtons() {

@@ -13,7 +13,8 @@ import AppKit
             return value
         }
         guard let companionIndex = definitions.firstIndex(where: { $0.operation == "companion" }),
-              let journalIndex = definitions.firstIndex(where: { $0.operation == "journal" }) else { return false }
+              let journalIndex = definitions.firstIndex(where: { $0.operation == "journal" }),
+              let workspaceIndex = definitions.firstIndex(where: { $0.operation == "workspace" }) else { return false }
         let companionNumber = companionIndex + 1
         let journalNumber = journalIndex + 1
         let companion = definitions[companionIndex]
@@ -23,6 +24,7 @@ import AppKit
               check(HotKeyCenter.configuration([:], onlyOperations: Set(definitions.map(\.operation))) == full,
                     "all operations preserve full configuration"),
               check(companionNumber == 6 && journalNumber == 5, "stable Companion 6 and calendar 5 event numbers"),
+              check(workspaceIndex + 1 == 7 && full[7] == .init(26, .command), "Workspace appends Command 7 without renumbering older windows"),
               check(HotKeyCenter.configuration([:], onlyOperations: ["companion"]) == [companionNumber: .init(22, .command)],
                     "Companion-only keeps Command 6 and excludes all coding/calendar registrations"),
               check(HotKeyCenter.configuration([:], onlyOperations: ["journal"]) == [journalNumber: .init(23, .command)],

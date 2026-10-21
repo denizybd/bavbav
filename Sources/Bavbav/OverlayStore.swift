@@ -1,5 +1,6 @@
 import AppKit
 import BavbavCore
+import BavbavOffline
 import Combine
 import Foundation
 
@@ -129,6 +130,9 @@ struct ChatWindowSnapshot {
 
 @MainActor
 final class OverlayStore: ObservableObject {
+    var offlineAI: OfflineAIService?
+    @Published private(set) var offlineRevision = 0
+    @Published private(set) var offlineSubmitting = false
     let journal: JournalService
     @Published private(set) var connection: ConnectionDisplay = .connecting
     @Published private(set) var projects: [CodexProject] = []
@@ -169,6 +173,8 @@ final class OverlayStore: ObservableObject {
     }
     @Published private(set) var detailOperation: String?
     @Published private(set) var detailActivityLoading = false
+    @Published private(set) var sideChatCreatingIDs: Set<String> = []
+    @Published private var sideChatErrors: [String: String] = [:]
     @Published private(set) var lastSync: Date?
     @Published private(set) var codexModels: [CodexModelDescriptor] = []
     @Published private(set) var rateLimits: CodexRateLimits?
@@ -223,6 +229,7 @@ final class OverlayStore: ObservableObject {
     var onDetailSnapshotRequested: ((String) -> ChatWindowSnapshot?)?
     var onDetailThreadIdentityChanged: ((CodexThread, CodexThread) -> Void)?
     var onThreadRenamed: ((CodexThread) -> Void)?
+    var onSideChatOpened: ((CodexThread, CodexThread) -> Void)?
     var onChatGPTLayoutChanged: ((Bool) -> Void)?
 
     private let client = CodexAppServer()
@@ -294,6 +301,56 @@ final class OverlayStore: ObservableObject {
         }
     }
 
+    func attachOfflineAI(_ service: OfflineAIService) {
+        offlineAI = service
+        service.onChange = { [weak self] in
+            self?.offlineRevision &+= 1
+            self?.updateRunningChatCount()
+        }
+        service.canReadSource = { [weak self] id in
+            guard let self else { return false }
+            return !self.sendingThreadIDs.contains(id) && self.activeTurnIDsByThreadID[id] == nil
+        }
+        service.readCloudStatus = { [weak self] threadID, turnID in
+            guard let self else { return nil }
+            return try? await self.client.readTurnStatus(threadID: threadID, turnID: turnID)
+        }
+        service.onHandoff = { [weak self] record, text in
+            guard let self, let thread = self.threadForID(record.request.sourceThreadID),
+                  self.savedDraft(for: thread.id).isEmpty, self.composerAttachments(for: thread.id).isEmpty,
+                  !self.sendingThreadIDs.contains(thread.id), self.activeTurnIDsByThreadID[thread.id] == nil,
+                  self.activeInteraction == nil else { return false }
+            self.open(thread, beginWriting: true)
+            self.composerText = OfflineAIService.redacted(text)
+            self.persistDraft(self.composerText, for: thread.id)
+            return true
+        }
+    }
+
+    func offlineItems(_ items: [CodexMessage], threadID: String?) -> [CodexMessage] {
+        guard let offlineAI, let threadID else { return items }
+        var combined = items.filter { !$0.id.hasPrefix("offline-local-") }
+        for job in offlineAI.jobs.filter({ $0.request.sourceThreadID == threadID && $0.request.cloudDisposition != .outcomeUnknown }) {
+            let messages = [
+                CodexMessage(id: "offline-local-\(job.id)-user", role: .user, text: job.request.objective,
+                             title: "YOU · LOCAL", timestamp: job.request.createdAt),
+                CodexMessage(id: "offline-local-\(job.id)-answer", role: .agent,
+                             text: job.result?.output ?? job.errorMessage ?? OfflineAIView.phase(job.phase),
+                             title: "LOCAL · QWEN3 14B", status: job.phase.rawValue,
+                             timestamp: job.request.createdAt.addingTimeInterval(0.001))
+            ]
+            for message in messages {
+                let position = combined.firstIndex { ($0.timestamp ?? .distantPast) > message.timestamp! } ?? combined.endIndex
+                combined.insert(message, at: position)
+            }
+        }
+        return combined
+    }
+
+    func offlineContext(for thread: CodexThread) -> [CodexMessage] {
+        detailThread?.id == thread.id ? visibleDetailItems : (onDetailSnapshotRequested?(thread.id)?.items ?? [])
+    }
+
     func connectAndLoad() async {
         guard !connecting else { return }
         connecting = true
@@ -312,6 +369,7 @@ final class OverlayStore: ObservableObject {
             await installEventHandlerIfNeeded()
             connection = .connected(health.accountType ?? "local")
             journal.sourceConnected = true
+            await offlineAI?.reconcilePersistedCloud()
             await refresh()
             await refreshSettingsData()
         } catch {
@@ -731,11 +789,25 @@ final class OverlayStore: ObservableObject {
             // CHAT is an action, not a saved conversation name.
             guard !chatGPTIsReordering, let item = standaloneChats.first(where: { $0.id == chatGPTInteraction.selectedID }) else { return }
             target = RenameTarget(panel: panel, scope: "standalone.list", item: .chat(item))
-        case .settings, .detail: return
+        case .detail:
+            guard let thread = detailThread else { return }
+            target = RenameTarget(panel: .detail, scope: "chat.read", item: .chat(thread))
+        case .settings: return
         }
         renameName = target.name
         renameError = nil
         renameTarget = target
+    }
+
+    /// Menus belong to the window that displays them, even when another chat
+    /// currently owns the store's active composer. Never infer this target from
+    /// a list selection or from an asynchronously updated global detail ID.
+    func beginRename(thread: CodexThread) {
+        guard !renameSubmitting else { return }
+        focusDetailWindow(thread)
+        renameName = thread.title
+        renameError = nil
+        renameTarget = RenameTarget(panel: .detail, scope: "chat.read", item: .chat(thread))
     }
 
     func cancelRename() {
@@ -895,12 +967,12 @@ final class OverlayStore: ObservableObject {
     }
 
     var visibleDetailItems: [CodexMessage] {
-        if let cachedDetailItems { return cachedDetailItems }
+        if let cachedDetailItems { return offlineItems(cachedDetailItems, threadID: detailThread?.id) }
         let items = ChatTimeline.visible(activity: detailActivityItems, conversation: detailMessages,
                                          commandsVisible: detailShowsActivity)
         cachedDetailItems = items
         timelineBuildCount &+= 1
-        return items
+        return offlineItems(items, threadID: detailThread?.id)
     }
 
     var visibleDetailLoading: Bool {
@@ -916,7 +988,8 @@ final class OverlayStore: ObservableObject {
         if pendingInteractions.contains(where: { $0.threadID == threadID }) {
             return .waiting
         }
-        if sendingThreadIDs.contains(threadID) || activeTurnIDsByThreadID[threadID] != nil {
+        if sendingThreadIDs.contains(threadID) || activeTurnIDsByThreadID[threadID] != nil
+            || offlineAI?.jobs.contains(where: { $0.request.sourceThreadID == threadID && $0.phase == .running }) == true {
             return .working
         }
         return .idle
@@ -1263,6 +1336,83 @@ final class OverlayStore: ObservableObject {
         // They must not reload history, rebuild a view, or steal text selection.
         guard detailThread?.id != thread.id || detailHost != .centered else { return }
         open(thread)
+    }
+
+    func sideChatError(for threadID: String) -> String? { sideChatErrors[threadID] }
+
+    /// A user-requested side chat is an additional persistent server branch.
+    /// Unlike active-writer recovery (`adoptFork`), this must not redirect the
+    /// source identity, move its draft/queue/attachments, or stop a running turn.
+    @discardableResult
+    func openSideChat(from source: CodexThread) async -> CodexThread? {
+        guard !sideChatCreatingIDs.contains(source.id) else { return nil }
+        sideChatCreatingIDs.insert(source.id)
+        sideChatErrors[source.id] = nil
+        defer { sideChatCreatingIDs.remove(source.id) }
+
+        let overrides: ThreadRuntimeOverrides = {
+            if detailThread?.id == source.id { return activeOverrides }
+            guard let data = defaults.data(forKey: overridesKey(source.id)),
+                  let value = try? JSONDecoder().decode(ThreadRuntimeOverrides.self, from: data) else { return .inherited }
+            return value
+        }()
+        let activeRuntime = detailThread?.id == source.id ? inheritedRuntime : .inherited
+        let standalone = isStandalone(source)
+        do {
+            let persisted = (try? await client.readPersistedRuntime(threadID: source.id)) ?? .unknown
+            let sourceModel = overrides.model ?? activeRuntime.model ?? persisted.model
+            let sourceEffort = overrides.effort ?? activeRuntime.effort ?? persisted.effort
+            let fork = try await client.forkThread(id: source.id, cwd: source.cwd, model: sourceModel,
+                                                  ephemeral: false, executionMode: .fullAccess)
+            guard fork.thread.id != source.id else {
+                throw NSError(domain: "Bavbav.SideChat", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Sunucu ayrı bir sohbet kimliği oluşturmadı."])
+            }
+            let title = "\(source.title) · yan sohbet"
+            var target = CodexThread(id: fork.thread.id, projectID: source.projectID,
+                                     cwd: fork.thread.cwd, title: fork.thread.title, preview: fork.thread.preview,
+                                     updatedAt: fork.thread.updatedAt, state: fork.thread.state,
+                                     hasMessages: fork.thread.hasMessages)
+            // The fork is already durable when naming fails; retain and expose
+            // that actual branch instead of silently creating a second one.
+            do {
+                try await client.setThreadName(id: target.id, name: title)
+                target = renamedThread(target, name: title)
+                threadNameRevision &+= 1
+                threadNameChanges[target.id] = (threadNameRevision, title)
+            } catch {
+                sideChatErrors[source.id] = "Yan sohbet açıldı; adı kaydedilemedi: \(error.localizedDescription)"
+            }
+            let copiedRuntime = ThreadRuntimeOverrides(model: sourceModel ?? fork.runtime.model,
+                                                       effort: sourceEffort ?? fork.runtime.effort)
+            if let data = try? JSONEncoder().encode(copiedRuntime) {
+                defaults.set(data, forKey: overridesKey(target.id))
+            }
+            if standalone {
+                standaloneIDs.insert(target.id)
+                defaults.set(Array(standaloneIDs), forKey: "chat.standalone-ids")
+            }
+            // Unlike empty drafts, a server fork already has history. Retain
+            // its metadata until thread/list indexes this new persistent ID.
+            unlistedCreatedThreads[target.id] = target
+            allThreads.removeAll { $0.id == target.id }
+            allThreads.insert(target, at: 0)
+            if case .chats(let project) = leftRoute,
+               ProjectCatalog.canonicalPath(project.path) == ProjectCatalog.canonicalPath(target.cwd), !standalone {
+                projectChats.removeAll { $0.id == target.id }
+                projectChats.insert(target, at: 0)
+            }
+            updateChatCatalogs()
+            // Existing window hooks freeze the source snapshot and create a
+            // second native window. Its composer is intentionally closed and
+            // no turn is submitted until the user writes and sends a prompt.
+            open(target)
+            onSideChatOpened?(source, target)
+            return target
+        } catch {
+            sideChatErrors[source.id] = "Yan sohbet açılamadı: \(error.localizedDescription)"
+            return nil
+        }
     }
 
     func clearCurrentDetail(threadID: String) {
@@ -1699,6 +1849,7 @@ final class OverlayStore: ObservableObject {
     }
 
     func submitMessage() {
+        guard !offlineSubmitting else { return }
         guard !composerImporting else {
             composerError = "Files are still being prepared. Send your message when they are ready."
             return
@@ -1723,6 +1874,31 @@ final class OverlayStore: ObservableObject {
         let overrides = activeOverrides
         let attachments = composerAttachments
         let mode = composerMode
+        if let offlineAI, offlineAI.shouldAutomaticallyRoute {
+            guard attachments.isEmpty, mode == .default, composerGoal?.status != "active" else {
+                composerError = "Yerel devir bu sürümde metin ve salt okunur dosya analizi içindir. Ekler, Plan/Goal otomatik taşınmadı; taslağın korundu."
+                return
+            }
+            let messages = visibleDetailItems
+            offlineSubmitting = true
+            Task {
+                defer { offlineSubmitting = false }
+                do {
+                    _ = try await offlineAI.enqueue(text: text, threadID: thread.id, cwd: thread.cwd, messages: messages)
+                    // The user may have switched windows during persistence.
+                    // Clear the accepted source draft by compare-and-swap, not
+                    // by whichever conversation happens to be visible now.
+                    if savedDraft(for: thread.id) == text, composerAttachments(for: thread.id).isEmpty {
+                        persistDraft("", for: thread.id)
+                    }
+                    if detailThread?.id == thread.id, composerText == text, composerAttachments.isEmpty {
+                        composerText = ""; composerVisible = false
+                        closeComposerTools(restoreFocus: false)
+                    }
+                } catch { composerError = error.localizedDescription }
+            }
+            return
+        }
         setComposerAttachments([], for: thread.id)
         composerText = ""
         persistDraft("", for: thread.id)
@@ -1769,6 +1945,10 @@ final class OverlayStore: ObservableObject {
         attachments: [ComposerAttachment] = [],
         mode: CodexCollaborationMode = .default
     ) {
+        let checkpointMessages = detailThread?.id == thread.id ? visibleDetailItems : []
+        // Never silently turn an attachment, Plan or active Goal into a plain
+        // text local task. Such work stays with its original provider.
+        let localCheckpointEligible = attachments.isEmpty && mode == .default && composerGoal?.status != "active"
         let localID = "bavbav-user-\(UUID().uuidString)"
         let threadID = thread.id
         let displayText = ComposerInput.displayText(text: text, attachments: attachments)
@@ -1794,6 +1974,8 @@ final class OverlayStore: ObservableObject {
         Task {
             var destinationThread = thread
             do {
+                let cloudCheckpoint = localCheckpointEligible ? try await offlineAI?.checkpointCloud(id: "cloud-intent-" + localID,
+                    text: text, threadID: threadID, cwd: thread.cwd, messages: checkpointMessages) : nil
                 let turn: CodexTurnStart
                 do {
                     turn = try await client.startTurn(
@@ -1828,6 +2010,9 @@ final class OverlayStore: ObservableObject {
                     if let index = optimisticUserMessages.firstIndex(where: { $0.localID == localID }) {
                         optimisticUserMessages[index].threadID = fork.thread.id
                     }
+                    // Persist the fork identity BEFORE it can accept work.
+                    // A lost start acknowledgment must hold this exact fork.
+                    try await offlineAI?.retargetCloudCheckpoint(id: cloudCheckpoint, threadID: fork.thread.id, cwd: fork.thread.cwd)
                     turn = try await client.startTurn(
                         threadID: fork.thread.id,
                         text: text,
@@ -1841,6 +2026,10 @@ final class OverlayStore: ObservableObject {
                     )
                 }
                 let destinationID = destinationThread.id
+                await offlineAI?.bindCloudCheckpoint(id: cloudCheckpoint, threadID: destinationID, turnID: turn.id)
+                if ["completed", "failed", "interrupted"].contains(turn.status) {
+                    offlineAI?.observeCloudCompletion(threadID: destinationID, turnID: turn.id, status: turn.status)
+                }
                 if detailThread?.id == destinationID {
                     inheritedRuntime = ThreadRuntimeOverrides(
                         model: overrides.model ?? inheritedRuntime.model,
@@ -2048,7 +2237,8 @@ final class OverlayStore: ObservableObject {
     }
 
     private func updateRunningChatCount() {
-        let running = sendingThreadIDs.union(activeTurnIDsByThreadID.keys)
+        let local = Set((offlineAI?.jobs ?? []).filter { $0.phase == .running }.map { $0.request.sourceThreadID })
+        let running = sendingThreadIDs.union(activeTurnIDsByThreadID.keys).union(local)
         let waiting = Set(pendingInteractions.map(\.threadID))
         let count = running.intersection(userFacingThreadIDs).subtracting(waiting).count
         if runningChatCount != count { runningChatCount = count }
@@ -2327,6 +2517,7 @@ final class OverlayStore: ObservableObject {
         case .itemCompleted(let threadID, let turnID, let message) where message.kind.isConversation:
             observeJournal(threadID: threadID, turnID: turnID, message: message)
         case .turnCompleted(let threadID, let turnID, let status, _):
+            offlineAI?.observeCloudCompletion(threadID: threadID, turnID: turnID, status: status)
             journal.finish(threadID: threadID, turnID: turnID, succeeded: status == "completed")
         default: break
         }
