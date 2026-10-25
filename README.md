@@ -9,7 +9,7 @@
 <p align="center">macOS 14+ · SwiftUI + AppKit</p>
 
 <p align="center">
-  <a href="https://github.com/denizybd/bavbav/releases">Downloads</a> ·
+  <a href="https://github.com/denizybd/bavbav/releases/tag/v0.12.0-preview.1">Download 0.12 preview</a> ·
   <a href="#build-from-source">Build</a> ·
   <a href="docs/GUIDE.md">User guide</a> ·
   <a href="docs/WORKSPACE.md">Workspace</a>
@@ -46,6 +46,8 @@ The private module is maintained separately. Its engine, runtime, pairing data, 
 
 ## Build from source
 
+The downloadable [0.12.0 preview](https://github.com/denizybd/bavbav/releases/tag/v0.12.0-preview.1) predates the native web window and Local AI extension described in this README. Build the current source to use those features. The public download also excludes the private Workspace module.
+
 Requires **macOS 14+**, a **Swift 6 toolchain**, Git, and an installed, authenticated Codex runtime. Swift dependencies are downloaded during the first build.
 
 ```sh
@@ -68,7 +70,7 @@ Public preview downloads are local development builds, **not Apple-notarized rel
 
 ## Local AI extension
 
-The 0.16.0 (74) unified release candidate combines the conversation-account window with the Local AI extension and the current private Workspace runtime. The native extension has its own version, 0.1.0; publication of this feature branch is not evidence that a running installation has been updated. [Thunderbolt setup and verification boundaries](docs/THUNDERBOLT.md) describe the offline cable route.
+The 0.16.0 (74) source tree combines the conversation-account window with the Local AI extension and supports the current private Workspace runtime in authorized builds. The native extension has its own version, 0.1.0. Updating source code does not update an already installed app; build and install a validated candidate separately. [Thunderbolt setup and verification boundaries](docs/THUNDERBOLT.md) describe the offline cable route.
 
 The native extension uses `huihui_ai/qwen3-abliterated:14b-v2` exactly. Its verified runtime and model files live physically in ignored `Runtime/LocalAI` inside the checkout; tracked integrity locks and the installer provide automatic setup without committing multi-gigabyte weights. Version 0.1.0 is read-only: it can inspect allowed files and propose changes, not execute shell commands or apply edits. Unknown cloud outcomes are held for exact-turn reconciliation rather than replayed. Reports return to the original composer only after explicit acceptance.
 
