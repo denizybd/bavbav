@@ -1,4 +1,5 @@
 .build/
+.build-local/
 dist/
 .DS_Store
 # Local AI weights, runtime binaries, generated receipts and logs stay inside

@@ -9,7 +9,7 @@ enum BavbavMain {
         let delegate = BavbavAppDelegate()
         app.delegate = delegate
         let environment = ProcessInfo.processInfo.environment
-        let noUI = ["BAVBAV_APP_ICON_CHECK", "BAVBAV_COMPANION_PREFLIGHT_CHECK", "BAVBAV_COMPANION_WEB_CHECK", "BAVBAV_COMPANION_WINDOW_CHECK", "BAVBAV_BROWSER_CHECK", "BAVBAV_SIDE_CHAT_CHECK", "BAVBAV_OFFLINE_CHECK", "BAVBAV_SHARED_LOCAL_CHECK", "BAVBAV_WORKSPACE_RESOURCE_CHECK"]
+        let noUI = ["BAVBAV_APP_ICON_CHECK", "BAVBAV_COMPANION_PREFLIGHT_CHECK", "BAVBAV_COMPANION_WEB_CHECK", "BAVBAV_COMPANION_WINDOW_CHECK", "BAVBAV_BROWSER_CHECK", "BAVBAV_SIDE_CHAT_CHECK", "BAVBAV_OFFLINE_CHECK", "BAVBAV_SHARED_LOCAL_CHECK", "BAVBAV_SHARED_ACCOUNT_CHECK", "BAVBAV_SHARED_ACCOUNT_LIVE_CHECK", "BAVBAV_WORKSPACE_RESOURCE_CHECK"]
             .contains { environment[$0] == "1" }
         app.setActivationPolicy(noUI ? .prohibited : .regular)
         app.run()
@@ -52,6 +52,38 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
             || CommandLine.arguments.contains("--workspace-ui-check")
         if environment["BAVBAV_WORKSPACE_RESOURCE_CHECK"] == "1" {
             Foundation.exit(WorkspaceRuntimeCheck.run() ? 0 : 1)
+        }
+        if environment["BAVBAV_SHARED_ACCOUNT_CHECK"] == "1" || environment["BAVBAV_SHARED_ACCOUNT_LIVE_CHECK"] == "1" {
+            let live = environment["BAVBAV_SHARED_ACCOUNT_LIVE_CHECK"] == "1"
+            let fileManager = FileManager.default
+            guard !(live && environment["BAVBAV_SHARED_ACCOUNT_CHECK"] == "1"),
+                  let node = environment["BAVBAV_SHARED_ACCOUNT_NODE"], (node as NSString).isAbsolutePath,
+                  fileManager.isExecutableFile(atPath: node),
+                  let fixture = environment["BAVBAV_SHARED_ACCOUNT_FIXTURE"], (fixture as NSString).isAbsolutePath,
+                  fileManager.isReadableFile(atPath: fixture)
+            else {
+                fputs("BAVBAV SHARED ACCOUNT CHECK FAILED: select one check mode and explicit absolute NODE and FIXTURE paths.\n", stderr)
+                Foundation.exit(1)
+            }
+            let codex = environment["BAVBAV_CODEX_BIN"] ?? ""
+            guard live ? !codex.hasSuffix("/account-codex-fixture.mjs")
+                       : (codex as NSString).isAbsolutePath && codex.hasSuffix("/account-codex-fixture.mjs") && fileManager.isExecutableFile(atPath: codex)
+            else {
+                fputs("BAVBAV SHARED ACCOUNT CHECK FAILED: fixture mode requires the explicit account-codex-fixture.mjs; live mode must not use it.\n", stderr)
+                Foundation.exit(1)
+            }
+            let output = environment["BAVBAV_SHARED_ACCOUNT_OUTPUT"]
+                ?? fileManager.temporaryDirectory.appendingPathComponent("bavbav-shared-account-\(UUID().uuidString)").path
+            guard (output as NSString).isAbsolutePath else {
+                fputs("BAVBAV SHARED ACCOUNT CHECK FAILED: OUTPUT must be an absolute path.\n", stderr)
+                Foundation.exit(1)
+            }
+            Task {
+                let passed = await SharedAccountCheck.run(node: node, fixture: fixture, output: URL(fileURLWithPath: output), live: live)
+                print("BAVBAV SHARED ACCOUNT CHECK ARTIFACTS: \(output)")
+                Foundation.exit(passed ? 0 : 1)
+            }
+            return
         }
         if environment["BAVBAV_SHARED_LOCAL_CHECK"] == "1" {
             Task { Foundation.exit(await SharedAccountLocalCheck.run() ? 0 : 1) }

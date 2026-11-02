@@ -17,6 +17,14 @@ struct AccountChatMessage: Identifiable {
     var phase: String
 }
 
+/// A shutdown RPC is best-effort. Its checked continuation may ignore Task
+/// cancellation, so a task group would still wait for the transport timeout.
+@MainActor private final class AccountShutdownCompletion {
+    private var continuation: CheckedContinuation<Void, Never>?
+    init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+    func finish() { let value = continuation; continuation = nil; value?.resume() }
+}
+
 /// Account credentials stay inside the owner's Codex process. This service
 /// polls only the narrowly typed conversation channel in the pinned engine.
 @MainActor final class SharedAccountChat: ObservableObject {
@@ -65,6 +73,7 @@ struct AccountChatMessage: Identifiable {
     private var threads: [String: String] = [:]
     private var task: Task<Void, Never>?
     private var hostWrites: Task<Void, Never>?
+    private var stopping = false
     private var lastConnection = Date.distantPast
     private var authenticated = false
     private var loadedPreference = false
@@ -233,13 +242,14 @@ struct AccountChatMessage: Identifiable {
         }
     }
     func start() {
-        guard task == nil else { return }
+        guard task == nil, !stopping else { return }
         task = Task { [weak self] in
             guard let self else { return }
             await self.worker.setEventHandler { [weak self] event in Task { @MainActor in self?.handle(event) } }
             while !Task.isCancelled {
                 do { try await self.tick() }
                 catch {
+                    if Task.isCancelled || self.stopping { break }
                     self.localReady = false; self.peerAvailable = false; self.accountError = error.localizedDescription
                     if self.owner != "local" { self.error = error.localizedDescription }
                     if let id = self.running?.id { await self.stopHost(id) }
@@ -255,8 +265,14 @@ struct AccountChatMessage: Identifiable {
             }
         }
     }
+    private func requireActive() throws {
+        guard !stopping else { throw CancellationError() }
+        try Task.checkCancellation()
+    }
     func tick() async throws {
+        try requireActive()
         let state = try await rpc("accountState", [:])
+        try requireActive()
         guard let role = state["role"] as? String, ["deniz", "emir"].contains(role) else { throw CodexClientError.invalidResponse("Önce Workspace içinde Deniz ve Emir cihazlarını eşleştirin.") }
         if self.role == nil {
             self.role = role
@@ -271,18 +287,23 @@ struct AccountChatMessage: Identifiable {
             lastConnection = Date()
             do {
                 let health = try await worker.connect()
+                try requireActive()
                 authenticated = health.authenticated && health.modelAvailable && health.accountType == "chatgpt"
                 if !authenticated {
                     accountError = "Bu Mac'te kullanılabilir bir ChatGPT/Codex hesabıyla giriş yapılmalı."
-                    if owner != "local" { error = accountError }
+                    if owner == role { error = accountError }
                 }
-            } catch { accountError = error.localizedDescription; if owner != "local" { self.error = error.localizedDescription } }
+            } catch { accountError = error.localizedDescription; if owner == role { self.error = error.localizedDescription } }
         }
+        try requireActive()
         let status = try await rpc("accountHeartbeat", ["clientId": clientID, "enabled": sharing, "available": authenticated])
+        try requireActive()
         localReady = status["localReady"] as? Bool == true; peerAvailable = status["peerAvailable"] as? Bool == true
         hostingRequester = (status["active"] as? [String: Any])?["requester"] as? String
         for cancelled in status["cancellations"] as? [String] ?? [] where running?.id == cancelled { await stopHost(cancelled) }
+        try requireActive()
         let updates = try await rpc("accountPoll", ["after": cursor])
+        try requireActive()
         cursor = updates["cursor"] as? Int ?? cursor
         if updates["truncated"] as? Bool == true {
             accountError = "Yanıt akışının bir kısmı alınamadı. İstek tekrar gönderilmedi."
@@ -291,10 +312,12 @@ struct AccountChatMessage: Identifiable {
         for event in updates["events"] as? [[String: Any]] ?? [] { consume(event) }
         if running == nil, authenticated {
             let result = try await rpc("accountTake", ["clientId": clientID])
+            try requireActive()
             if let request = result["request"] as? [String: Any] { beginHost(request) }
         }
     }
     func send() {
+        guard !stopping else { return }
         if owner == "local" { sendLocal(); return }
         guard !submitting, activeID == nil else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -344,7 +367,7 @@ struct AccountChatMessage: Identifiable {
         if ["completed", "failed", "interrupted"].contains(phase), activeID == id { activeID = nil }
     }
     private func beginHost(_ request: [String: Any]) {
-        guard let id = request["id"] as? String, let conversation = request["conversation"] as? String,
+        guard !stopping, let id = request["id"] as? String, let conversation = request["conversation"] as? String,
               let requester = request["requester"] as? String, let text = request["text"] as? String else { return }
         running = Running(id: id)
         Task {
@@ -360,7 +383,10 @@ struct AccountChatMessage: Identifiable {
                 guard running?.id == id, running?.cancelled == false else { return }
                 running?.threadID = threadID
                 let turn = try await worker.startSharedAccountTurn(threadID: threadID, text: text)
-                guard running?.id == id else { try? await worker.interruptSharedAccountTurn(threadID: threadID, turnID: turn.id); return }
+                guard running?.id == id else {
+                    if !stopping { try? await worker.interruptSharedAccountTurn(threadID: threadID, turnID: turn.id) }
+                    return
+                }
                 running?.turnID = turn.id
                 if running?.cancelled == true { await stopHost(id) }
                 else { queueReply(id: id, phase: "running") }
@@ -395,6 +421,7 @@ struct AccountChatMessage: Identifiable {
         }
     }
     private func queueReply(id: String, phase: String, text: String? = nil) {
+        guard !stopping else { return }
         let previous = hostWrites
         hostWrites = Task { [weak self] in
             await previous?.value
@@ -417,10 +444,31 @@ struct AccountChatMessage: Identifiable {
         running = nil
     }
     func shutdown() async {
+        guard !stopping else { return }
+        stopping = true
         task?.cancel(); task = nil
-        if let id = running?.id { await stopHost(id) }
-        _ = try? await rpc("accountHeartbeat", ["clientId": clientID, "enabled": false, "available": false])
+        hostWrites?.cancel(); hostWrites = nil
+        running = nil; hostingRequester = nil
+        localReady = false; peerAvailable = false; authenticated = false
+        // Stop the owned inference process before any network cleanup. An
+        // awaited interrupt or heartbeat can otherwise hold macOS quit for the
+        // Workspace transport's 60-second timeout (installer grace: 90 s).
+        await worker.setEventHandler(nil)
         await worker.shutdown()
+        let revoke = rpc, departingClient = clientID
+        await withCheckedContinuation { continuation in
+            let completion = AccountShutdownCompletion(continuation)
+            Task {
+                _ = try? await revoke("accountHeartbeat", ["clientId": departingClient, "enabled": false, "available": false])
+                completion.finish()
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                completion.finish()
+            }
+        }
+        // If IPC is unavailable, the engine's existing 12-second host lease
+        // expires independently. Never block exit waiting for that lease/RPC.
         if let directory { try? FileManager.default.removeItem(at: directory) }; directory = nil
     }
 }

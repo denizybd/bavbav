@@ -70,7 +70,9 @@ Public preview downloads are local development builds, **not Apple-notarized rel
 
 ## Local AI extension
 
-The 0.16.0 (74) source tree combines the conversation-account window with the Local AI extension and supports the current private Workspace runtime in authorized builds. The native extension has its own version, 0.1.0. Updating source code does not update an already installed app; build and install a validated candidate separately. [Thunderbolt setup and verification boundaries](docs/THUNDERBOLT.md) describe the offline cable route.
+The 0.16.1 (75) source tree combines the conversation-account window with the Local AI extension and supports the current private Workspace runtime in authorized builds. It adds canonical account-routing regression checks and bounded account-worker shutdown. The native extension has its own version, 0.1.0. Updating source code does not update an already installed app; build and install a validated candidate separately. [Thunderbolt setup and verification boundaries](docs/THUNDERBOLT.md) describe the offline cable route.
+
+For a friend who cannot use Codex to install an update, `zsh scripts/package-drag-installer.sh --app /absolute/Bavbav.app --output /absolute/new-output-directory` produces a verified drag-install disk image without a Python or Codex dependency. Installation does not consume AI quota. Read [the account-selection and installation guide](docs/FRIEND-INSTALL.md): Deniz/Emir sharing currently provides a separate restricted conversation, not project-chat credential substitution.
 
 The native extension uses `huihui_ai/qwen3-abliterated:14b-v2` exactly. Its verified runtime and model files live physically in ignored `Runtime/LocalAI` inside the checkout; tracked integrity locks and the installer provide automatic setup without committing multi-gigabyte weights. Version 0.1.0 is read-only: it can inspect allowed files and propose changes, not execute shell commands or apply edits. Unknown cloud outcomes are held for exact-turn reconciliation rather than replayed. Reports return to the original composer only after explicit acceptance.
 

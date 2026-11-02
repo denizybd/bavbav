@@ -54,12 +54,52 @@ import SwiftUI
         let deadline = Date().addingTimeInterval(seconds)
         while !check() { if Date() > deadline { throw CodexClientError.timeout(label) }; try await Task.sleep(nanoseconds: 40_000_000) }
     }
+    private static func checkBoundedShutdown(defaults: UserDefaults) async throws {
+        var heldRevocation: CheckedContinuation<[String: Any], Error>?
+        var calls: [String] = []
+        let stalled = SharedAccountChat(defaults: defaults) { method, args in
+            calls.append(method)
+            if method == "accountHeartbeat", args["available"] as? Bool == false {
+                return try await withCheckedThrowingContinuation { heldRevocation = $0 }
+            }
+            return [:]
+        }
+        let started = Date()
+        await stalled.shutdown()
+        let elapsed = Date().timeIntervalSince(started)
+        // Release the deliberately non-cancellable RPC even if an assertion
+        // fails; no fixture continuation is left pending after this check.
+        heldRevocation?.resume(returning: [:]); heldRevocation = nil
+        try require(elapsed < 2.5 && calls == ["accountHeartbeat"], "Shutdown waited for an unresponsive availability heartbeat")
+        let afterShutdown = calls.count
+        stalled.start(); stalled.draft = "Must not send after shutdown"; stalled.send()
+        do { try await stalled.tick(); throw CodexClientError.invalidResponse("Stopped account service accepted another tick") }
+        catch is CancellationError { }
+        await stalled.shutdown()
+        try require(calls.count == afterShutdown, "A stopped account service restarted transport or sent a request")
+
+        var heldState: CheckedContinuation<[String: Any], Error>?
+        var lateCalls: [String] = []
+        let late = SharedAccountChat(defaults: defaults) { method, _ in
+            lateCalls.append(method)
+            if method == "accountState" { return try await withCheckedThrowingContinuation { heldState = $0 } }
+            return [:]
+        }
+        let tick = Task { try await late.tick() }
+        try await wait("in-flight accountState fixture") { heldState != nil }
+        await late.shutdown()
+        heldState?.resume(returning: ["role": "deniz"]); heldState = nil
+        do { try await tick.value; throw CodexClientError.invalidResponse("Late state reply restarted a stopped account worker") }
+        catch is CancellationError { }
+        try require(late.role == nil && lateCalls == ["accountState", "accountHeartbeat"], "A stale accountState reply advanced after shutdown")
+    }
     static func run(node: String, fixture: String, output: URL, live: Bool = false, interactive: Bool = false) async -> Bool {
         let suite = "Bavbav.AccountCheck.\(UUID().uuidString)", defaults = UserDefaults(suiteName: suite)!
         var rpc: AccountFixtureRPC?, a: SharedAccountChat?, b: SharedAccountChat?
         var report: [String: Any] = ["success": false, "productionDataUsed": live, "productionAppUpdated": false, "realSecondMac": false, "liveInference": live]
         do {
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            if !live { try await checkBoundedShutdown(defaults: defaults); report["boundedShutdown"] = true }
             let wire = try AccountFixtureRPC(node: node, fixture: fixture); rpc = wire
             try await wait("paired localhost broker startup") { wire.ready }
             let first = SharedAccountChat(defaults: defaults) { method, args in try await wire.call("deniz", method, args) }; a = first; first.start()
@@ -86,7 +126,8 @@ import SwiftUI
                 try await wait("both local fixture accounts ready") { first.localReady && second.localReady && second.peerAvailable }
                 try require(first.sharing && !second.sharing, "Emir's account was shared without opting in")
                 second.owner = "deniz"; second.draft = "Emir Deniz hesabıyla konuşuyor"
-                let window = SharedAccountWindow(service: second); window.show()
+                let window = SharedAccountWindow(service: second)
+                _ = window.prepare(); if interactive { window.show() }
                 try await Task.sleep(nanoseconds: 350_000_000)
                 try render(output.appendingPathComponent("account-chat-ready.png"))
                 if interactive { try await wait("external send button click", seconds: 240) { !second.messages.isEmpty } }

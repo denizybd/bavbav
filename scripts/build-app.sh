@@ -3,7 +3,14 @@ set -euo pipefail
 
 project_dir="${0:A:h:h}"
 app_dir="$project_dir/dist/Bavbav.app"
-binary="$project_dir/.build/release/Bavbav"
+build_dir="${BAVBAV_BUILD_DIR:-$project_dir/.build}"
+if [[ -z "${BAVBAV_BUILD_DIR:-}" && -L "$build_dir" && ! -d "$build_dir" ]]; then
+    # An unplugged development SSD must not require changing its user's link.
+    build_dir="$project_dir/.build-local"
+    print -r -- "External build cache is unavailable; preserving its link and using: $build_dir"
+fi
+[[ "$build_dir" == /* ]] || { print -u2 -- "BAVBAV_BUILD_DIR must be an absolute path."; exit 1; }
+binary="$build_dir/release/Bavbav"
 workspace_resources_dir="$project_dir/Vendor/IkiWorkspace/Resources"
 if [[ -n "${IKI_WORKSPACE_APP:-}" ]]; then
     workspace_resources_dir="${IKI_WORKSPACE_APP:A}/Contents/Resources"
@@ -50,17 +57,19 @@ if [[ "$signing_identity" != - ]]; then
 fi
 
 cd "$project_dir"
-sdk_fallback="/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk"
-if [[ -z "${SDKROOT:-}" && -d "$sdk_fallback" ]]; then
-    export SDKROOT="$sdk_fallback"
+if [[ -z "${SDKROOT:-}" ]]; then
+    # Keep the SDK paired with the selected compiler. A hard-coded old CLT
+    # SDK stops working after Xcode updates (for example Swift 6.4 vs 6.1).
+    export SDKROOT="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
 fi
-export CLANG_MODULE_CACHE_PATH="$project_dir/.build/clang-module-cache"
-export SWIFTPM_MODULECACHE_OVERRIDE="$project_dir/.build/swiftpm-module-cache"
+export CLANG_MODULE_CACHE_PATH="$build_dir/clang-module-cache"
+export SWIFTPM_MODULECACHE_OVERRIDE="$build_dir/swiftpm-module-cache"
+mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_MODULECACHE_OVERRIDE"
 zsh "$project_dir/scripts/build-icons.sh"
 release_source_sha256="$(/usr/bin/python3 "$project_dir/scripts/release-source-hash.py" "$project_dir" --prepare)"
 # Keep the SDKROOT and bundle layout this packaging script uses. Swift 6.3
 # changed the default engine to swiftbuild, which chooses a different SDK/layout.
-swift build --build-system native --disable-sandbox -c release
+swift build --scratch-path "$build_dir" --build-system native --disable-sandbox -c release
 
 # Always build/sign/check a separate candidate. The installed bundle is left
 # untouched until install-app.sh verifies it and proves the GUI is stopped.
@@ -73,7 +82,7 @@ cp "$project_dir/AppResources/Info.plist" "$staged_app_dir/Contents/Info.plist"
 cp "$project_dir/AppResources/Bavbav-v3.icns" "$staged_app_dir/Contents/Resources/Bavbav-v3.icns"
 cp "$project_dir/AppResources/BavbavIcon-v3-light.png" "$staged_app_dir/Contents/Resources/BavbavIcon-v3-light.png"
 cp "$project_dir/AppResources/BavbavIcon-v3-dark.png" "$staged_app_dir/Contents/Resources/BavbavIcon-v3-dark.png"
-cp -R "$project_dir/.build/release/SwiftMath_SwiftMath.bundle" "$staged_app_dir/Contents/Resources/SwiftMath_SwiftMath.bundle"
+cp -R "$build_dir/release/SwiftMath_SwiftMath.bundle" "$staged_app_dir/Contents/Resources/SwiftMath_SwiftMath.bundle"
 # Bundle the small native extension descriptor, integrity lock and installer
 # only. The ignored Runtime/LocalAI model/runtime remains in the source checkout;
 # never recursively copy that 9 GB store into the app, release or public Git.
@@ -107,44 +116,54 @@ if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
 fi
 mkdir -p "$staged_app_dir/Contents/Resources/Licenses"
 cp "$project_dir/Vendor/SwiftMath/LICENSE" "$staged_app_dir/Contents/Resources/Licenses/SwiftMath.txt"
-cp "$project_dir/.build/checkouts/swift-markdown/LICENSE.txt" "$staged_app_dir/Contents/Resources/Licenses/swift-markdown.txt"
-cp "$project_dir/.build/checkouts/swift-cmark/COPYING" "$staged_app_dir/Contents/Resources/Licenses/swift-cmark.txt"
+cp "$build_dir/checkouts/swift-markdown/LICENSE.txt" "$staged_app_dir/Contents/Resources/Licenses/swift-markdown.txt"
+cp "$build_dir/checkouts/swift-cmark/COPYING" "$staged_app_dir/Contents/Resources/Licenses/swift-cmark.txt"
 chmod +x "$staged_app_dir/Contents/MacOS/Bavbav"
 zsh "$project_dir/scripts/sign-app.sh" "$staged_app_dir"
 zsh "$project_dir/scripts/check-signing-requirements.sh" "$staged_app_dir"
 BAVBAV_WORKSPACE_RESOURCE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_COMPANION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavCompanionChecks"
+BAVBAV_COMPANION_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$build_dir/release/BavbavCompanionChecks"
 BAVBAV_COMPANION_WEB_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_COMPANION_WINDOW_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
     BAVBAV_WORKSPACE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
+    account_check_node="$staged_app_dir/Contents/Resources/IkiWorkspace/runtime/node"
+    account_check_fixtures="$project_dir/Tests/BavbavSharedAccountFixtures"
+    PATH="${account_check_node:h}:$PATH" \
+        BAVBAV_SHARED_ACCOUNT_CHECK=1 BAVBAV_SHARED_ACCOUNT_LIVE_CHECK=0 \
+        BAVBAV_SHARED_ACCOUNT_NODE="$account_check_node" \
+        BAVBAV_SHARED_ACCOUNT_FIXTURE="$account_check_fixtures/account-chat-fixture.mjs" \
+        BAVBAV_SHARED_ACCOUNT_ENGINE="$staged_app_dir/Contents/Resources/IkiWorkspace/engine" \
+        BAVBAV_SHARED_ACCOUNT_OUTPUT="$staging_dir/shared-account-checks" \
+        BAVBAV_CODEX_BIN="$account_check_fixtures/account-codex-fixture.mjs" \
+        "$staged_app_dir/Contents/MacOS/Bavbav"
 fi
-BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$project_dir/.build/release/BavbavChecks" --protocol-fixture
-BAVBAV_CONNECTION_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_HEADLESS_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$build_dir/release/BavbavChecks" --protocol-fixture
+BAVBAV_CONNECTION_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_HEADLESS_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_APP_ICON_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_APP_SWITCH_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_STATUS_COUNT_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_RICH_MESSAGE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_LINK_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_BROWSER_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_SIDE_CHAT_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-"$project_dir/.build/release/BavbavOfflineChecks"
+BAVBAV_SIDE_CHAT_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+"$build_dir/release/BavbavOfflineChecks"
 /usr/bin/python3 "$local_ai_bundle_dir/local-ai-setup.py" --repo "$project_dir" check
-BAVBAV_OFFLINE_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_SHARED_LOCAL_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_IMAGE_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_OFFLINE_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_SHARED_LOCAL_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_IMAGE_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_PREFERENCES_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_RESIZE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_SCROLL_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_PERFORMANCE_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_RENAME_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_PERFORMANCE_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_RENAME_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 BAVBAV_ATTACHMENT_INTAKE_CHECK=1 "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_COMPOSER_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_SHORTCUT_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_JOURNAL_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_COMMANDS_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
-BAVBAV_STANDALONE_CHECK=1 BAVBAV_CODEX_BIN="$project_dir/.build/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_COMPOSER_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_SHORTCUT_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_JOURNAL_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_COMMANDS_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
+BAVBAV_STANDALONE_CHECK=1 BAVBAV_CODEX_BIN="$build_dir/release/BavbavFakeCodex" "$staged_app_dir/Contents/MacOS/Bavbav"
 
 # The installer accepts only this exact tested, signed candidate. A receipt is
 # written after every check succeeds, not after compilation/signing alone.

@@ -1,0 +1,74 @@
+BAVBAV — CODEX GEREKTİRMEYEN MAC KURULUMU
+
+Bu paketin kurulması için Codex'e mesaj göndermen, API anahtarı girmen,
+Python veya geliştirici araçları kurman gerekmez. Kurulum AI kotası harcamaz.
+Apple Silicon (M serisi) Mac ve macOS 14 veya üzeri gerekir.
+
+1. ÖNCE ESKİ BAVBAV'DAKİ İŞLERİ BİTİR
+
+Çalışan sohbet ve dosya işlemlerinin tamamlanmasını bekle. Sonra Bavbav'ı
+Command + Q ile kapat. Yalnız Q tuşu sohbet penceresini kapatır; uygulamadan
+çıkmak değildir. Çalışan bir işi zorla sonlandırma.
+
+2. UYGULAMAYI KOPYALA
+
+DMG dosyasını çift tıklayarak aç.
+
+Mevcut Bavbav Uygulamalar (Applications) klasöründeyse bu penceredeki
+Bavbav.app simgesini Applications kısayoluna sürükle. Eski sürümü değiştirme
+istemini onayla. Açmadan önce eski uygulamanın kapalı olduğundan emin ol.
+
+Mevcut Bavbav başka bir yerdeyse (örneğin kullanıcı Applications klasörü veya
+bir proje klasörü), Finder'da O KOPYANIN bulunduğu klasörü aç. Önce eski
+Bavbav.app'i aynı klasörde Bavbav-eski.app gibi başka bir adla yedekle.
+Bu diskteki yeni Bavbav.app'i eski kopyanın bulunduğu klasöre kopyala.
+İki farklı yerde etkin Bavbav kopyaları oluşturma. Yeni kopya doğrulandıktan
+sonra eski yedeği kaldırıp kaldırmamaya kendin karar verebilirsin.
+
+3. YENİ KOPYAYI AÇ
+
+Kopyaladığın Bavbav.app'i aç; uygulamayı doğrudan bu disk görüntüsünün
+içinden çalıştırma. Yeni sürümü uygulamanın sürüm ekranından kontrol et.
+Sonra kurulum diskini Finder'dan çıkarabilirsin.
+
+Bu disk salt okunurdur. İçindeki uygulamanın kod imzası, sürümü ve dosya
+özeti paket hazırlanırken bağlanmış disk üzerinden ayrıca doğrulanmıştır.
+Bu, Apple noter onayı veya arkadaşının Mac'inde kabul testi yapıldığı
+anlamına gelmez. macOS güvenlik uyarısı verirse dur ve uyarıyı paylaş.
+Gatekeeper'ı kapatma; güvenlik veya erişim izinlerini topluca devre dışı
+bırakma. Gerekli Mac izinlerini yalnızca ilgili özelliği kullanırken ve
+neye izin verdiğini görerek kendin ver.
+
+MEVCUT SOHBET VE EŞLEŞTİRMEYİ KORU
+
+Kurulum için Library/Application Support altındaki Bavbav veya IkiWorkspace
+klasörlerini silme. Keychain kayıtlarını silme, auth dosyası veya tarayıcı
+çerezi kopyalama. Mevcut Deniz/Emir Workspace'ini yeniden oluşturma ve eski
+eşleştirmeyi sıfırlama. Uygulama dosyasını değiştirmek bu kayıtları taşıman
+veya silmen gerektiği anlamına gelmez.
+
+Command + 7 ile Workspace'i aç. Önceden eşleştirilmiş iki Mac bağlanınca
+bağlı durumunu ve karşı cihazın sürümünü kontrol et. Bağlantı henüz yoksa
+aynı düğmeye sürekli basma; biraz bekleyip bir kez yeniden dene.
+
+KİMİN HESABI KULLANILACAK?
+
+“Kimin hesabı?” penceresinde Deniz, Emir veya Yerel AI seçilebilir.
+Deniz hesabını kullanmak için Deniz'in Mac'i ve Bavbav'ı açık, iki cihaz
+bağlı, Deniz'in hesabı kullanılabilir ve hesap paylaşımı açık olmalıdır.
+Emir hesabında da aynı koşullar Emir'in Mac'i için geçerlidir.
+
+Bu seçim mevcut ayrı HESAP SOHBETİ kanalına aittir. Normal proje sohbetlerini
+ve kod çalıştırma araçlarını başka hesaba taşıdığı anlamına gelmez. Hesap
+sohbeti sınırlı bir metin kanalıdır; seçilen hesabın kendi kota sınırları
+geçerlidir. Kullanılamayan bir hesaptan başka hesaba otomatik geçilmez.
+Kurulumun tamamlanması tek başına hesap paylaşımının canlı çalıştığını
+kanıtlamaz; iki cihaz bağlandıktan sonra kısa bir mesajla ayrıca doğrula.
+
+YEREL AI
+
+Yerel AI bulut hesaplarının kotasını kullanmaz; fakat yaklaşık 9 GB model
+ve yerel runtime bu küçük uygulama paketine dahil değildir. Yerel modelin
+ayrı kurulumu ve doğrulaması gerekir; ilk indirme için internet gerekebilir.
+Bu ilk yerel eklenti okuma/arama/rapor ve değişiklik önerileri içindir;
+shell komutu çalıştırmaz veya kaynak dosyalarını otomatik değiştirmez.
