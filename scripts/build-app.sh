@@ -27,7 +27,7 @@ if [[ "$BAVBAV_WITH_WORKSPACE" == 1 ]]; then
         print -u2 -- "Workspace was explicitly enabled but its private native sources are missing. Restore Sources/IkiWorkspaceKit or use BAVBAV_WITH_WORKSPACE=0 for the public-source build."
         exit 1
     }
-    for resource in runtime/node engine/package.json engine/src/native-bridge.mjs engine/src/ui-client.mjs engine/src/engine-service.mjs engine/src/thunderbolt.mjs app-version.json; do
+    for resource in runtime/node engine/package.json engine/src/native-bridge.mjs engine/src/ui-client.mjs engine/src/engine-service.mjs engine/src/startup-diagnostics.mjs engine/src/thunderbolt.mjs app-version.json; do
         [[ -f "$workspace_resources_dir/$resource" ]] || {
             print -u2 -- "Workspace resource missing: $workspace_resources_dir/$resource. Restore Vendor/IkiWorkspace/Resources from this release, or set IKI_WORKSPACE_APP to its matching prepared Workspace app bundle. Private builds must explicitly provide their matching Workspace resources."
             exit 1

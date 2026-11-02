@@ -51,6 +51,13 @@ Command + 7 ile Workspace'i aç. Önceden eşleştirilmiş iki Mac bağlanınca
 bağlı durumunu ve karşı cihazın sürümünü kontrol et. Bağlantı henüz yoksa
 aynı düğmeye sürekli basma; biraz bekleyip bir kez yeniden dene.
 
+Workspace açılış hatası verirse “Tamam” ile uyarıyı kapat. Pencere içindeki
+“Hata kodunu kopyala” düğmesi yalnızca sürüm ve WS_ ile başlayan destek
+kodunu kopyalar; bunu paylaş. Bu işlem sohbetleri, dosyaları, anahtarları
+veya ham günlükleri kopyalamaz. Eşleştirmeyi silme, bilgisayarı tekrar tekrar
+yeniden başlatma. Önceki uygulamanın adı Bavbav 2.app ise yeni sürümle
+birlikte o eski kopyayı da çalıştırma.
+
 KİMİN HESABI KULLANILACAK?
 
 “Kimin hesabı?” penceresinde Deniz, Emir veya Yerel AI seçilebilir.

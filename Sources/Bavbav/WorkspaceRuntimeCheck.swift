@@ -30,7 +30,7 @@ enum WorkspaceRuntimeCheck {
         func json(_ value: [String: Any], _ url: URL) throws {
             try write(JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), url)
         }
-        func fixture(_ name: String, engineVersion: String = "0.7.4") throws -> URL {
+        func fixture(_ name: String, engineVersion: String = "0.7.5") throws -> URL {
             let root = directory.appendingPathComponent(name, isDirectory: true)
             for relative in WorkspaceRuntimeContract.requiredRelativePaths {
                 try write(Data("// Synthetic package-shape fixture; never executed.\n".utf8), root.appendingPathComponent(relative))
@@ -53,12 +53,12 @@ enum WorkspaceRuntimeCheck {
             try manager.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             let valid = try fixture("minimum-version")
             let result = try WorkspaceRuntimeContract.validate(resourcesURL: valid, expectedHostVersion: "0.16.0", expectedHostBuild: 72)
-            try check(result.engineVersion == "0.7.4" && result.hostVersion == "0.16.0" && result.hostBuild == 72,
+            try check(result.engineVersion == "0.7.5" && result.hostVersion == "0.16.0" && result.hostBuild == 72,
                       "minimum supported version and matching host accepted")
             let future = try fixture("newer-version", engineVersion: "0.8.0")
             let futureResult = try WorkspaceRuntimeContract.validate(resourcesURL: future)
             try check(futureResult.engineVersion == "0.8.0", "newer stable engine accepted")
-            for version in ["0.7.0", "0.7.2", "0.7.3", "0.7.4-beta.1", "garbage"] {
+            for version in ["0.7.0", "0.7.2", "0.7.3", "0.7.4", "0.7.5-beta.1", "garbage"] {
                 try reject(try fixture("version-\(version)", engineVersion: version), "old or malformed engine rejected: \(version)")
             }
             let badJSON = try fixture("bad-json")

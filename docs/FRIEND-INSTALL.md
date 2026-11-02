@@ -22,6 +22,25 @@ build is needed for Deniz/Emir Workspace sharing; the public preview omits it.
 The application supports Apple Silicon and macOS 14 or later. Local AI weights
 are a separate initial setup/download, not part of the small application DMG.
 
+## Workspace startup recovery in 0.16.2 (77)
+
+The private engine is 0.7.5. When the copied background executable cannot
+start, it retries once with the exact Node executable already running the
+approved app, while keeping the staged engine sources and dependencies.
+This does not change macOS security settings, code signatures or pairing.
+Live writer locks, missing modules and native-addon failures do not trigger
+that executable retry.
+
+Startup failures now show a specific `WS_…` code instead of assuming an old
+standalone app is open. After dismissing the alert, **Hata kodunu kopyala**
+copies only the version, readiness and support code; no raw logs, paths,
+conversation contents or account credentials are copied.
+
+Install the new app in the existing location, including if the previous copy
+was renamed **Bavbav 2.app**. Keep only the intended copy running. A successful
+local blocked-executable fixture is not proof of launch on the recipient's
+Mac; first verify Command-7 opens there, then test the paired connection.
+
 ## Whose allowance is used?
 
 Open **Bavbav → Konuşma kaynağı · Deniz / Emir / Yerel AI…** and select the

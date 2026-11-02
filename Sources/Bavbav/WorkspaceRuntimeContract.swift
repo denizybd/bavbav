@@ -4,12 +4,13 @@ import Foundation
 /// This validates package shape/version, not pairing, network reachability, TCC,
 /// code signatures or a physical Thunderbolt connection. It never starts Node.
 enum WorkspaceRuntimeContract {
-    static let minimumEngineVersion = "0.7.4"
+    static let minimumEngineVersion = "0.7.5"
     static let requiredRelativePaths = [
         "runtime/node",
         "engine/package.json",
         "engine/src/ui-client.mjs",
         "engine/src/engine-service.mjs",
+        "engine/src/startup-diagnostics.mjs",
         "engine/src/engine-version.mjs",
         "engine/src/native-bridge.mjs",
         "engine/src/thunderbolt.mjs",
