@@ -1,6 +1,6 @@
 # Offline Thunderbolt connection
 
-The full private Workspace build of Bavbav 0.16.3 (78) integrates the cable
+The full private Workspace build of Bavbav 0.16.4 (79) integrates the cable
 transport into the same application. A public-source build intentionally does
 not contain the separately distributed private Workspace component.
 
@@ -30,7 +30,7 @@ See Apple's [IP over Thunderbolt instructions](https://support.apple.com/guide/m
 
 ## Preventing an old engine from shipping in a new host
 
-The full-build resource contract requires Workspace engine 0.7.6 or later,
+The full-build resource contract requires Workspace engine 0.7.7 or later,
 the Thunderbolt and persistent-service modules, and embedded application
 metadata that matches the host version/build. Missing, symlinked, malformed or
 stale resources cannot pass the native package check. Publishing source code
