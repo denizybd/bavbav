@@ -59,6 +59,29 @@ private final class TerminalEvidence: @unchecked Sendable {
     var events: [String] { lock.lock(); defer { lock.unlock() }; return values }
 }
 
+private final class TransportBufferEvidence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var byteCount = 0
+    private var validPayload = true
+    private var completed = false
+    private var closeReason: String?
+    func record(_ event: CodexServerEvent) {
+        lock.lock(); defer { lock.unlock() }
+        switch event {
+        case .agentMessageDelta(_, _, _, let delta):
+            byteCount += delta.utf8.count
+            validPayload = validPayload && delta.utf8.allSatisfy { $0 == 120 }
+        case .turnCompleted: completed = true
+        case .transportClosed(let reason): closeReason = reason
+        default: break
+        }
+    }
+    var result: (bytes: Int, valid: Bool, completed: Bool, reason: String?) {
+        lock.lock(); defer { lock.unlock() }
+        return (byteCount, validPayload, completed, closeReason)
+    }
+}
+
 private actor TurnProbe {
     private var completed: [String: TurnOutcome] = [:]
     private var waiters: [String: CheckedContinuation<TurnOutcome?, Never>] = [:]
@@ -203,6 +226,14 @@ enum RolloutConversationChecks {
 struct BavbavChecks {
     static func main() async {
         do {
+            if CommandLine.arguments.contains("--transport-buffer-fixture") {
+                try require(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true,
+                            "--transport-buffer-fixture requires BavbavFakeCodex; no real turns will be sent")
+                try await checkTransportBufferBound()
+                try await checkTerminalOutputDrain()
+                print("TRANSPORT BUFFER CHECKS PASSED")
+                return
+            }
             if CommandLine.arguments.contains("--bounded-history-fixture") {
                 try require(ProcessInfo.processInfo.environment["BAVBAV_CODEX_BIN"]?.hasSuffix("BavbavFakeCodex") == true,
                             "--bounded-history-fixture requires BAVBAV_CODEX_BIN pointing to BavbavFakeCodex")
@@ -246,6 +277,8 @@ struct BavbavChecks {
                 print("✓ bounded activity output: exact limits, Unicode tails, large logs, cancelled page response")
                 try await checkTerminalOutputDrain()
                 print("✓ ordered final frame + child exit, live-child stdout EOF")
+                try await checkTransportBufferBound()
+                print("✓ incomplete frame bound + buffer release + large valid frame after reconnect")
                 try await checkConnectionRecovery()
                 print("✓ reconnect + concurrent handshake + streamed completion")
                 try await checkProtocolInteractions()
@@ -372,6 +405,43 @@ struct BavbavChecks {
         try require(probed == [brew, "/usr/local/bin/codex", "/safe/bin/codex"], "Relative/empty PATH entries must not launch project executables")
         checks += 1
         print("✓ executable discovery: \(checks) checks (new/legacy bundles, Finder, PATH, strict override)")
+    }
+
+    private static func checkTransportBufferBound() async throws {
+        let client = CodexAppServer()
+        do {
+            for oversized in [true, false] {
+                let evidence = TransportBufferEvidence()
+                _ = try await client.connect()
+                await client.setEventHandler { evidence.record($0) }
+                let thread = try await client.startThread(cwd: "/tmp/fixture", ephemeral: true,
+                    sandbox: "read-only", approvalPolicy: "never")
+                _ = try await client.startTurn(threadID: thread.id,
+                    text: oversized ? "TRANSPORT_OVERSIZED_NO_LF" : "TRANSPORT_LARGE_VALID",
+                    clientUserMessageID: UUID().uuidString, cwd: "/tmp/fixture", executionMode: .readOnly)
+                let deadline = ProcessInfo.processInfo.systemUptime + 15
+                while evidence.result.reason == nil && !evidence.result.completed,
+                      ProcessInfo.processInfo.systemUptime < deadline {
+                    try await Task.sleep(nanoseconds: 2_000_000)
+                }
+                let result = evidence.result
+                let diagnostics = await client.transportDiagnostics()
+                try require(diagnostics["bufferedBytes"] == 0, "Completed or rejected frame retained its input buffer")
+                let limit = diagnostics["incomingFrameLimitBytes"] ?? 0
+                try require(limit == 96 * 1_024 * 1_024 && (diagnostics["peakBufferedBytes"] ?? Int.max) <= limit + 65_536,
+                            "Actual pipe reader exceeded its per-frame memory bound")
+                if oversized {
+                    try require(result.reason?.contains("96 MiB") == true && !result.completed && result.bytes == 0,
+                                "Unterminated notification escaped the size bound or was truncated into an event")
+                    try require(diagnostics["oversizedFrameFailures"] == 1,
+                                "Oversized stream was stopped by an unrelated timeout/EOF")
+                } else {
+                    try require(result.reason == nil && result.completed && result.valid && result.bytes == 16 * 1_024 * 1_024,
+                                "Reconnect or a normal large valid notification lost content")
+                }
+            }
+            await client.shutdown()
+        } catch { await client.shutdown(); throw error }
     }
 
     private static func checkTerminalOutputDrain() async throws {

@@ -33,31 +33,41 @@ public actor RolloutConversationReader {
             try file.seek(toOffset: entry.offset)
             while entry.offset < size {
                 try Task.checkCancellation()
-                let chunk = try file.read(upToCount: Int(min(262_144, size - entry.offset))) ?? Data()
-                guard !chunk.isEmpty else { break }
-                entry.offset += UInt64(chunk.count)
-                for part in chunk.split(separator: 10, omittingEmptySubsequences: false).enumerated() {
-                    if part.offset > 0 {
-                        if !entry.discarding, let message = Self.parse(entry.pending, threadID: threadID) {
-                            if let old = entry.messages.firstIndex(where: { $0.id == message.id }) {
-                                entry.bytes -= entry.messages[old].text.utf8.count
-                                entry.messages[old] = message
-                            } else { entry.messages.append(message) }
-                            entry.bytes += message.text.utf8.count
-                            while entry.messages.count > 2_000 || entry.bytes > 8 * 1_024 * 1_024 {
-                                entry.bytes -= entry.messages.removeFirst().text.utf8.count
+                // Actor execution does not establish a per-iteration Cocoa
+                // autorelease pool. Large synchronous scans must release file
+                // buffers and Foundation JSON containers as they are consumed.
+                let didRead = try autoreleasepool { () throws -> Bool in
+                    let chunk = try file.read(upToCount: Int(min(262_144, size - entry.offset))) ?? Data()
+                    guard !chunk.isEmpty else { return false }
+                    entry.offset += UInt64(chunk.count)
+                    for part in chunk.split(separator: 10, omittingEmptySubsequences: false).enumerated() {
+                        if part.offset > 0 {
+                            let message = entry.discarding ? nil : autoreleasepool {
+                                Self.parse(entry.pending, threadID: threadID)
                             }
-                        }
-                        entry.pending.removeAll(keepingCapacity: false)
-                        entry.discarding = false
-                    }
-                    if !entry.discarding {
-                        if entry.pending.count + part.element.count > 8 * 1_024 * 1_024 {
+                            if let message {
+                                if let old = entry.messages.firstIndex(where: { $0.id == message.id }) {
+                                    entry.bytes -= entry.messages[old].text.utf8.count
+                                    entry.messages[old] = message
+                                } else { entry.messages.append(message) }
+                                entry.bytes += message.text.utf8.count
+                                while entry.messages.count > 2_000 || entry.bytes > 8 * 1_024 * 1_024 {
+                                    entry.bytes -= entry.messages.removeFirst().text.utf8.count
+                                }
+                            }
                             entry.pending.removeAll(keepingCapacity: false)
-                            entry.discarding = true
-                        } else { entry.pending.append(contentsOf: part.element) }
+                            entry.discarding = false
+                        }
+                        if !entry.discarding {
+                            if entry.pending.count + part.element.count > 8 * 1_024 * 1_024 {
+                                entry.pending.removeAll(keepingCapacity: false)
+                                entry.discarding = true
+                            } else { entry.pending.append(contentsOf: part.element) }
+                        }
                     }
+                    return true
                 }
+                if !didRead { break }
             }
         }
         entry.modified = modified

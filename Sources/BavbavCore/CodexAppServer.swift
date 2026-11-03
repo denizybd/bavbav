@@ -6,6 +6,9 @@ public actor CodexAppServer {
     /// conversations created by Bavbav remain visible as writing support lands.
     public static let userFacingSources = ["cli", "vscode", "appServer"]
     private static let rpcTraceEnabled = ProcessInfo.processInfo.environment["BAVBAV_RPC_TRACE"] == "1"
+    // Bound one JSON-RPC frame, including an incomplete notification received
+    // after its turn/start RPC already completed and no request timeout exists.
+    private static let maximumIncomingFrameBytes = 96 * 1_024 * 1_024
 
     private typealias RPCContinuation = CheckedContinuation<[String: Any], Error>
     private typealias ConnectionContinuation = CheckedContinuation<CodexHealth, Error>
@@ -38,6 +41,8 @@ public actor CodexAppServer {
     private var stderrReader: CodexOutputReader?
     private var receiveBuffer = Data()
     private var receiveSearchOffset = 0
+    private var peakReceiveBufferBytes = 0
+    private var oversizedFrameFailures = 0
     private var pendingReceiveChunks: [Int: Data] = [:]
     private var nextReceiveSequence = 0
     private var nextRequestID = 1
@@ -278,6 +283,14 @@ public actor CodexAppServer {
 
     public func setEventHandler(_ handler: (@Sendable (CodexServerEvent) -> Void)?) {
         eventHandler = handler
+    }
+
+    /// Content-free diagnostics for investigating a stalled or oversized
+    /// transport without logging prompts, tool output or account information.
+    public func transportDiagnostics() -> [String: Int] {
+        ["incomingFrameLimitBytes": Self.maximumIncomingFrameBytes,
+         "bufferedBytes": receiveBuffer.count, "peakBufferedBytes": peakReceiveBufferBytes,
+         "oversizedFrameFailures": oversizedFrameFailures]
     }
 
     public func resolveInteraction(
@@ -1007,7 +1020,10 @@ public actor CodexAppServer {
         messageLimit: Int?
     ) async throws -> [CodexMessage] {
         let maximumPages = 256
-        var newestFirstTurns: [[String: Any]] = []
+        // Keep only the compact display rows between requests. A full turn can
+        // carry large tool results and encoded attachments that must not stay
+        // alive merely because an older history page is still being fetched.
+        var newestFirstTurns: [[CodexMessage]] = []
         var visibleMessageCount = 0
         var cursor: String?
         var seenCursors = Set<String>()
@@ -1027,16 +1043,17 @@ public actor CodexAppServer {
                 params: params,
                 timeout: 12
             )
+            try Task.checkCancellation()
             guard let turns = result["data"] as? [[String: Any]] else {
                 throw CodexClientError.invalidResponse("thread/turns/list response is missing data")
             }
 
-            newestFirstTurns.append(contentsOf: turns)
-            visibleMessageCount += turns.reduce(into: 0) { count, turn in
+            for turn in turns {
+                try Task.checkCancellation()
                 let items = turn["items"] as? [[String: Any]] ?? []
-                count += items.reduce(into: 0) { itemCount, item in
-                    if Self.parseMessage(item) != nil { itemCount += 1 }
-                }
+                let messages = items.compactMap(Self.parseMessage)
+                newestFirstTurns.append(messages)
+                visibleMessageCount += messages.count
             }
             if let messageLimit, visibleMessageCount >= messageLimit { break }
 
@@ -1052,18 +1069,17 @@ public actor CodexAppServer {
             cursor = nextCursor
         }
 
-        var chronological: [CodexMessage] = []
-        for turn in newestFirstTurns.reversed() {
-            let items = turn["items"] as? [[String: Any]] ?? []
-            chronological.append(contentsOf: items.compactMap(Self.parseMessage))
-        }
+        let chronological = newestFirstTurns.reversed().flatMap { $0 }
         if let messageLimit { return Array(chronological.suffix(messageLimit)) }
         return chronological
     }
 
     private func readMessagesByFullTurn(threadID: String) async throws -> [CodexMessage] {
         let maximumPages = 512
-        var newestFirstTurns: [[String: Any]] = []
+        // Discard each raw response before requesting the next page. Retaining
+        // raw turns until the end multiplied long-chat peak memory by keeping
+        // complete command logs alongside their much smaller display rows.
+        var newestFirstTurns: [[CodexMessage]] = []
         var cursor: String?
         var seenCursors = Set<String>()
 
@@ -1081,10 +1097,14 @@ public actor CodexAppServer {
                 params: params,
                 timeout: 30
             )
+            try Task.checkCancellation()
             guard let turns = result["data"] as? [[String: Any]] else {
                 throw CodexClientError.invalidResponse("thread/turns/list response is missing data")
             }
-            newestFirstTurns.append(contentsOf: turns)
+            for turn in turns {
+                try Task.checkCancellation()
+                newestFirstTurns.append((turn["items"] as? [[String: Any]] ?? []).compactMap(Self.parseMessage))
+            }
 
             guard
                 !turns.isEmpty,
@@ -1098,9 +1118,7 @@ public actor CodexAppServer {
             cursor = nextCursor
         }
 
-        return newestFirstTurns.reversed().flatMap { turn in
-            (turn["items"] as? [[String: Any]] ?? []).compactMap(Self.parseMessage)
-        }
+        return newestFirstTurns.reversed().flatMap { $0 }
     }
 
     private func readMessagesByLegacyThread(
@@ -1771,7 +1789,9 @@ public actor CodexAppServer {
 
     private func ingestOrdered(_ data: Data, sequence: Int) {
         trace("recv seq=\(sequence) bytes=\(data.count) buffered=\(receiveBuffer.count)")
+        let generation = processGeneration
         receiveBuffer.append(data)
+        peakReceiveBufferBytes = max(peakReceiveBufferBytes, receiveBuffer.count)
         while receiveSearchOffset < receiveBuffer.count {
             let searchStart = receiveBuffer.index(
                 receiveBuffer.startIndex,
@@ -1782,12 +1802,36 @@ public actor CodexAppServer {
                 break
             }
 
+            // Check before copying/parsing a complete line as well as below for
+            // incomplete lines. Several small frames in one read remain valid.
+            guard receiveBuffer.distance(from: receiveBuffer.startIndex, to: newlineIndex)
+                    <= Self.maximumIncomingFrameBytes else {
+                oversizedIncomingFrame(); return
+            }
             let line = receiveBuffer.subdata(in: receiveBuffer.startIndex..<newlineIndex)
             receiveBuffer.removeSubrange(receiveBuffer.startIndex...newlineIndex)
             receiveSearchOffset = 0
             guard !line.isEmpty else { continue }
-            handleLine(line)
+            autoreleasepool { handleLine(line) }
+            // A tool/permission notification may close this generation. Never
+            // interpret its following bytes as part of a newly reset session.
+            guard generation == processGeneration else { return }
         }
+        guard receiveBuffer.count <= Self.maximumIncomingFrameBytes else {
+            oversizedIncomingFrame(); return
+        }
+        if receiveBuffer.isEmpty {
+            receiveBuffer = Data() // Do not retain a large completed frame's allocation.
+        }
+    }
+
+    private func oversizedIncomingFrame() {
+        oversizedFrameFailures += 1
+        let error = CodexClientError.invalidResponse("Codex yanıtı 96 MiB boyut sınırını aştı. Bağlantı yeniden kurulabilir.")
+        // Release the oversized allocation before a possibly backpressured UI
+        // callback; fail pending requests rather than truncating a JSON frame.
+        resetTransport(terminate: true, pendingError: error)
+        eventHandler?(.transportClosed(message: error.localizedDescription))
     }
 
     private func handleLine(_ line: Data) {
@@ -2358,11 +2402,12 @@ public actor CodexAppServer {
         guard generation == processGeneration else { return }
         // This runs after every chunk's actor handoff completed. A complete
         // final JSON object without LF is accepted only once, at actual EOF.
-        if !receiveBuffer.isEmpty,
-           (try? JSONSerialization.jsonObject(with: receiveBuffer)) is [String: Any] {
+        if !receiveBuffer.isEmpty {
             let final = receiveBuffer
-            receiveBuffer.removeAll(keepingCapacity: false); receiveSearchOffset = 0
-            handleLine(final)
+            receiveBuffer = Data(); receiveSearchOffset = 0
+            // Parse once at EOF. Malformed/truncated data is ignored by the
+            // same decoder; a valid final JSON object does not require LF.
+            autoreleasepool { handleLine(final) }
         }
         guard generation == processGeneration else { return }
         if let status = status ?? (process?.isRunning == false ? process?.terminationStatus : nil) {

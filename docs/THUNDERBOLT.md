@@ -1,6 +1,6 @@
 # Offline Thunderbolt connection
 
-The full private Workspace build of Bavbav 0.16.4 (79) integrates the cable
+The full private Workspace build of Bavbav 0.16.5 (80) integrates the cable
 transport into the same application. A public-source build intentionally does
 not contain the separately distributed private Workspace component.
 

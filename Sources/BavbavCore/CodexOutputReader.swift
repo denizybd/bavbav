@@ -92,7 +92,10 @@ final class CodexOutputReader: @unchecked Sendable {
                         if errno == EINTR { continue }
                         reason = "Child output read failed"; return
                     }
-                    consume(Data(buffer.prefix(count)), sequence)
+                    // This dispatch block lives for the entire child process.
+                    // Drain Foundation temporaries once per chunk, not only
+                    // when a long-running conversation eventually closes.
+                    autoreleasepool { consume(Data(buffer.prefix(count)), sequence) }
                     sequence += 1
                 }
             }

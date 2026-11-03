@@ -116,6 +116,29 @@ private func send(_ object: [String: Any], newline: Bool = true) {
     try? FileHandle.standardOutput.write(contentsOf: data)
 }
 
+// Exercise the actual pipe/reader/parser without building a giant fixture
+// object in this process. The failing case leaves its JSON string unfinished
+// and keeps the child alive: only the parent's frame bound can stop it.
+private func sendTransportPayload(threadID: String, turnID: String, oversized: Bool) {
+    let marker = "BAVBAV_TRANSPORT_PAYLOAD"
+    guard let envelope = try? JSONSerialization.data(withJSONObject: [
+        "method": "item/agentMessage/delta", "params": ["threadId": threadID,
+        "turnId": turnID, "itemId": "bounded-agent", "delta": marker]
+    ]), let range = envelope.range(of: Data(marker.utf8)) else { Foundation.exit(2) }
+    let chunk = Data(repeating: 120, count: 65_536)
+    outputLock.lock(); defer { outputLock.unlock() }
+    do {
+        try FileHandle.standardOutput.write(contentsOf: envelope[..<range.lowerBound])
+        for _ in 0..<(oversized ? 1_600 : 256) {
+            try FileHandle.standardOutput.write(contentsOf: chunk)
+        }
+        if !oversized {
+            try FileHandle.standardOutput.write(contentsOf: envelope[range.upperBound...])
+            try FileHandle.standardOutput.write(contentsOf: Data([10]))
+        }
+    } catch { Foundation.exit(0) }
+}
+
 private func modelRow() -> [String: Any] {
     [
         "id": "fake-model",
@@ -557,6 +580,19 @@ while let line = readLine() {
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             let input = params["input"] as? [[String: Any]] ?? []
             let scenario = input.first?["text"] as? String ?? "COMMAND"
+            if scenario == "TRANSPORT_OVERSIZED_NO_LF" || scenario == "TRANSPORT_LARGE_VALID" {
+                // Acknowledge first; an outstanding request timeout must not be
+                // mistaken for protection against a later partial notification.
+                send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                sendTransportPayload(threadID: threadID, turnID: turnID,
+                    oversized: scenario == "TRANSPORT_OVERSIZED_NO_LF")
+                if scenario == "TRANSPORT_OVERSIZED_NO_LF" {
+                    Thread.sleep(forTimeInterval: 30); Foundation.exit(0)
+                }
+                send(["method": "turn/completed", "params": ["threadId": threadID,
+                    "turn": ["id": turnID, "status": "completed"]]])
+                continue
+            }
             if scenario == "TRANSPORT_EXIT_FINAL" || scenario == "TRANSPORT_STDOUT_EOF" {
                 send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
                 send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
