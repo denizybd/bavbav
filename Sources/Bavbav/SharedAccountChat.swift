@@ -29,6 +29,7 @@ struct AccountChatMessage: Identifiable {
 /// polls only the narrowly typed conversation channel in the pinned engine.
 @MainActor final class SharedAccountChat: ObservableObject {
     typealias RPC = (String, [String: Any]) async throws -> [String: Any]
+    typealias AuthenticationProbe = () async throws -> Bool
     @Published private(set) var role: String?
     @Published var owner = "deniz" {
         didSet {
@@ -58,6 +59,7 @@ struct AccountChatMessage: Identifiable {
     private let rpc: RPC
     private let defaults: UserDefaults
     private let worker: CodexAppServer
+    private let authenticationProbe: AuthenticationProbe?
     private let offlineAI: OfflineAIService?
     private let localWorkspace: URL
     let localSourceID: String
@@ -73,10 +75,16 @@ struct AccountChatMessage: Identifiable {
     private var threads: [String: String] = [:]
     private var task: Task<Void, Never>?
     private var hostWrites: Task<Void, Never>?
+    private var authenticationTask: Task<Void, Never>?
     private var stopping = false
-    private var lastConnection = Date.distantPast
+    private var lastConnectionUptime = -Double.infinity
     private var authenticated = false
+    private var quotaExhausted = false
     private var loadedPreference = false
+    private var providerSelected = false
+    private var sessionVersion = 1
+    private var ownsHostSession = false
+    private var requiresHostReconciliation = false
     private var cursor = 0
     private var directory: URL?
     private struct Running {
@@ -104,8 +112,10 @@ struct AccountChatMessage: Identifiable {
     }
 
     init(defaults: UserDefaults = .standard, worker: CodexAppServer = CodexAppServer(sharedAccountWorker: true),
-         offlineAI: OfflineAIService? = nil, localWorkspace: URL? = nil, rpc: @escaping RPC) {
+         offlineAI: OfflineAIService? = nil, localWorkspace: URL? = nil,
+         authenticate: AuthenticationProbe? = nil, rpc: @escaping RPC) {
         self.rpc = rpc; self.defaults = defaults; self.worker = worker
+        self.authenticationProbe = authenticate
         self.offlineAI = offlineAI
         self.localWorkspace = localWorkspace ?? URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support/Bavbav/LocalAccountChats", isDirectory: true)
@@ -126,6 +136,7 @@ struct AccountChatMessage: Identifiable {
 
     func selectProvider(_ provider: String) {
         guard ["deniz", "emir", "local"].contains(provider) else { return }
+        providerSelected = true
         owner = provider
     }
 
@@ -252,7 +263,7 @@ struct AccountChatMessage: Identifiable {
                     if Task.isCancelled || self.stopping { break }
                     self.localReady = false; self.peerAvailable = false; self.accountError = error.localizedDescription
                     if self.owner != "local" { self.error = error.localizedDescription }
-                    if let id = self.running?.id { await self.stopHost(id) }
+                    if let id = self.running?.id { await self.reconcileFailedHost(id) }
                     if let id = self.activeID {
                         _ = try? await self.rpc("accountCancel", ["id": id])
                         self.consume(["id": id, "phase": "failed", "text": "Hesap bağlantısı kesildi. Mesaj otomatik tekrar gönderilmedi."])
@@ -271,38 +282,55 @@ struct AccountChatMessage: Identifiable {
     }
     func tick() async throws {
         try requireActive()
-        let state = try await rpc("accountState", [:])
-        try requireActive()
-        guard let role = state["role"] as? String, ["deniz", "emir"].contains(role) else { throw CodexClientError.invalidResponse("Önce Workspace içinde Deniz ve Emir cihazlarını eşleştirin.") }
         if self.role == nil {
+            let state = try await rpc("accountState", [:])
+            try requireActive()
+            guard let role = state["role"] as? String, ["deniz", "emir"].contains(role) else { throw CodexClientError.invalidResponse("Önce Workspace içinde Deniz ve Emir cihazlarını eşleştirin.") }
             self.role = role
-            if owner != "local" { owner = role }
+            sessionVersion = state["accountSessionVersion"] as? Int ?? 1
+            if owner != "local", !providerSelected { owner = role }
             // Deniz explicitly requested sharing his quota. Emir independently
             // opts in on his device before anybody can spend his quota.
             let key = "account-chat.sharing." + role
             sharing = defaults.object(forKey: key) == nil ? role == "deniz" : defaults.bool(forKey: key)
             loadedPreference = true
         }
-        if !authenticated && Date().timeIntervalSince(lastConnection) > 15 {
-            lastConnection = Date()
-            do {
-                let health = try await worker.connect()
-                try requireActive()
-                authenticated = health.authenticated && health.modelAvailable && health.accountType == "chatgpt"
-                if !authenticated {
-                    accountError = "Bu Mac'te kullanılabilir bir ChatGPT/Codex hesabıyla giriş yapılmalı."
-                    if owner == role { error = accountError }
-                }
-            } catch { accountError = error.localizedDescription; if owner == role { self.error = error.localizedDescription } }
+        try requireActive()
+        let reconcilingHost = requiresHostReconciliation
+        var args: [String: Any] = ["clientId": clientID, "enabled": sharing, "available": authenticated && !reconcilingHost]
+        if sessionVersion >= 2 { args["after"] = cursor; args["take"] = authenticated && !quotaExhausted && !reconcilingHost && running == nil }
+        let status = try await rpc("accountHeartbeat", args)
+        try requireActive()
+        if let returnedRole = status["role"] as? String, returnedRole != role {
+            throw CodexClientError.invalidResponse("Workspace cihaz rolü değişti. Hesap isteği otomatik yeniden gönderilmedi.")
         }
-        try requireActive()
-        let status = try await rpc("accountHeartbeat", ["clientId": clientID, "enabled": sharing, "available": authenticated])
-        try requireActive()
-        localReady = status["localReady"] as? Bool == true; peerAvailable = status["peerAvailable"] as? Bool == true
-        hostingRequester = (status["active"] as? [String: Any])?["requester"] as? String
+        ownsHostSession = status["session"] as? String != "foreign"
+        localReady = ownsHostSession && !quotaExhausted && status["localReady"] as? Bool == true
+        peerAvailable = status["peerAvailable"] as? Bool == true
+        hostingRequester = ownsHostSession ? (status["active"] as? [String: Any])?["requester"] as? String : nil
+        if !ownsHostSession {
+            accountError = "Bu Mac'teki hesap başka bir Bavbav kopyasında açık. Karşı cihazın hazır hesabıyla konuşmaya devam edebilirsin. [ACCOUNT_HOST_FOREIGN]"
+            if owner == role { error = accountError }
+            if let id = running?.id { await stopHost(id) }
+        }
         for cancelled in status["cancellations"] as? [String] ?? [] where running?.id == cancelled { await stopHost(cancelled) }
         try requireActive()
-        let updates = try await rpc("accountPoll", ["after": cursor])
+        // An unavailable owned heartbeat terminates a claimed request whose
+        // worker/last reply failed. A foreign observer cannot revoke another
+        // host and must never treat its response as reconciliation proof.
+        if reconcilingHost, ownsHostSession, status["active"] is NSNull { requiresHostReconciliation = false }
+        let updates: [String: Any]
+        if sessionVersion >= 2 { updates = status }
+        else {
+            // Older engines have no atomic heartbeat/poll/take operation. Claim
+            // only actual pending work, immediately after its fresh heartbeat.
+            if running == nil, authenticated, localReady, hostingRequester != nil {
+                let result = try await rpc("accountTake", ["clientId": clientID])
+                try requireActive()
+                if let request = result["request"] as? [String: Any] { beginHost(request) }
+            }
+            updates = try await rpc("accountPoll", ["after": cursor])
+        }
         try requireActive()
         cursor = updates["cursor"] as? Int ?? cursor
         if updates["truncated"] as? Bool == true {
@@ -310,10 +338,47 @@ struct AccountChatMessage: Identifiable {
             if owner != "local" { error = accountError }
         }
         for event in updates["events"] as? [[String: Any]] ?? [] { consume(event) }
-        if running == nil, authenticated {
-            let result = try await rpc("accountTake", ["clientId": clientID])
-            try requireActive()
-            if let request = result["request"] as? [String: Any] { beginHost(request) }
+        if sessionVersion >= 2, ownsHostSession, running == nil, authenticated,
+           let request = status["request"] as? [String: Any] { beginHost(request) }
+        refreshAuthentication()
+    }
+    private func refreshAuthentication() {
+        guard !stopping, ownsHostSession, authenticationTask == nil,
+              !authenticated, sharing || owner == role,
+              ProcessInfo.processInfo.systemUptime - lastConnectionUptime > 15 else { return }
+        lastConnectionUptime = ProcessInfo.processInfo.systemUptime
+        // Local login/model/history discovery can take tens of seconds. It
+        // must never block lease renewal, remote replies or a remote provider.
+        authenticationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.authenticationTask = nil }
+            do {
+                var ready: Bool
+                if let probe = self.authenticationProbe { ready = try await probe() }
+                else {
+                    let health = try await self.worker.connect()
+                    try self.requireActive()
+                    ready = health.authenticated && health.modelAvailable && health.accountType == "chatgpt"
+                    if ready, let limits = try? await self.worker.readRateLimits() {
+                        try self.requireActive()
+                        self.quotaExhausted = limits.primary?.usedPercent == 100 || limits.secondary?.usedPercent == 100
+                        if self.quotaExhausted {
+                            ready = false
+                            self.accountError = "Bu Mac'teki hesabın kullanım limiti dolmuş. Hazır olan diğer hesabı seçebilirsin."
+                        }
+                    }
+                }
+                try self.requireActive()
+                ready = ready && !self.quotaExhausted
+                self.authenticated = ready
+                if ready { self.accountError = nil }
+                else if self.accountError == nil { self.accountError = "Bu Mac'te kullanılabilir bir ChatGPT/Codex hesabıyla giriş yapılmalı." }
+                if self.owner == self.role { self.error = self.accountError }
+            } catch {
+                guard !self.stopping else { return }
+                self.authenticated = false; self.accountError = error.localizedDescription
+                if self.owner == self.role { self.error = error.localizedDescription }
+            }
         }
     }
     func send() {
@@ -399,6 +464,17 @@ struct AccountChatMessage: Identifiable {
             if let id = running?.id { queueReply(id: id, phase: "failed", text: reason) }
             return
         }
+        if case .rateLimitsUpdated(let limits) = event {
+            quotaExhausted = limits.primary?.usedPercent == 100 || limits.secondary?.usedPercent == 100
+            if quotaExhausted {
+                // A turn which consumed the last allowance may still finish.
+                // Stop advertising new local work without revoking that turn.
+                if running == nil { authenticated = false }
+                localReady = false
+                accountError = "Bu Mac'teki hesabın kullanım limiti dolmuş. Hazır olan diğer hesabı seçebilirsin."
+                if owner == role { error = accountError }
+            }
+        }
         guard let current = running else { return }
         switch event {
         case .turnStarted(let thread, let turn) where thread == current.threadID && !finishedTurns.contains(turn): running?.turnID = turn
@@ -432,9 +508,12 @@ struct AccountChatMessage: Identifiable {
             catch {
                 self.accountError = error.localizedDescription
                 if self.owner != "local" { self.error = error.localizedDescription }
-                await self.stopHost(id)
+                await self.reconcileFailedHost(id)
             }
-            if ["completed", "failed", "interrupted"].contains(phase), self.running?.id == id { self.running = nil }
+            if ["completed", "failed", "interrupted"].contains(phase), self.running?.id == id {
+                self.running = nil
+                if self.quotaExhausted { self.authenticated = false }
+            }
         }
     }
     private func stopHost(_ id: String) async {
@@ -443,10 +522,17 @@ struct AccountChatMessage: Identifiable {
         if let thread = running?.threadID, let turn = running?.turnID { try? await worker.interruptSharedAccountTurn(threadID: thread, turnID: turn) }
         running = nil
     }
+    private func reconcileFailedHost(_ id: String) async {
+        // Set this before awaiting interrupt: the independent tick can revoke
+        // its exact GUI lease even if the owned worker is slow to stop.
+        requiresHostReconciliation = true; localReady = false
+        await stopHost(id)
+    }
     func shutdown() async {
         guard !stopping else { return }
         stopping = true
         task?.cancel(); task = nil
+        authenticationTask?.cancel(); authenticationTask = nil
         hostWrites?.cancel(); hostWrites = nil
         running = nil; hostingRequester = nil
         localReady = false; peerAvailable = false; authenticated = false

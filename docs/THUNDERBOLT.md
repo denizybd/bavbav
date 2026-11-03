@@ -1,6 +1,6 @@
 # Offline Thunderbolt connection
 
-The full private Workspace build of Bavbav 0.16.2 (77) integrates the cable
+The full private Workspace build of Bavbav 0.16.3 (78) integrates the cable
 transport into the same application. A public-source build intentionally does
 not contain the separately distributed private Workspace component.
 
@@ -12,6 +12,9 @@ not contain the separately distributed private Workspace component.
 - An active macOS Thunderbolt Bridge with an IPv4 address on each Mac.
 - Local Network permission for the actual installed Bavbav application when
   macOS requests it. The app cannot grant this permission to itself.
+- Correct date and time on both Macs. Signed discovery and synchronization
+  receipts enforce time bounds; a substantially wrong clock can prevent
+  discovery or reject a connection even when the cable or relay is reachable.
 
 Open Workspace with Command-7 and select **Thunderbolt ile bağlan** on both
 Macs. This explicit choice is saved across relaunches. Cable discovery starts
@@ -27,7 +30,7 @@ See Apple's [IP over Thunderbolt instructions](https://support.apple.com/guide/m
 
 ## Preventing an old engine from shipping in a new host
 
-The full-build resource contract requires Workspace engine 0.7.5 or later,
+The full-build resource contract requires Workspace engine 0.7.6 or later,
 the Thunderbolt and persistent-service modules, and embedded application
 metadata that matches the host version/build. Missing, symlinked, malformed or
 stale resources cannot pass the native package check. Publishing source code

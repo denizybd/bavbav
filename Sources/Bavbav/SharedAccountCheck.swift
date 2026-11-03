@@ -51,8 +51,8 @@ import SwiftUI
 @MainActor enum SharedAccountCheck {
     static func require(_ condition: @autoclosure () -> Bool, _ detail: String) throws { if !condition() { throw CodexClientError.invalidResponse(detail) } }
     static func wait(_ label: String, seconds: Double = 20, _ check: () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while !check() { if Date() > deadline { throw CodexClientError.timeout(label) }; try await Task.sleep(nanoseconds: 40_000_000) }
+        let deadline = ProcessInfo.processInfo.systemUptime + seconds
+        while !check() { if ProcessInfo.processInfo.systemUptime > deadline { throw CodexClientError.timeout(label) }; try await Task.sleep(nanoseconds: 40_000_000) }
     }
     private static func checkBoundedShutdown(defaults: UserDefaults) async throws {
         var heldRevocation: CheckedContinuation<[String: Any], Error>?
@@ -64,9 +64,9 @@ import SwiftUI
             }
             return [:]
         }
-        let started = Date()
+        let started = ProcessInfo.processInfo.systemUptime
         await stalled.shutdown()
-        let elapsed = Date().timeIntervalSince(started)
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
         // Release the deliberately non-cancellable RPC even if an assertion
         // fails; no fixture continuation is left pending after this check.
         heldRevocation?.resume(returning: [:]); heldRevocation = nil
@@ -93,16 +93,64 @@ import SwiftUI
         catch is CancellationError { }
         try require(late.role == nil && lateCalls == ["accountState", "accountHeartbeat"], "A stale accountState reply advanced after shutdown")
     }
+    private static func checkAtomicSessions(defaults: UserDefaults) async throws {
+        var heldAuthentication: CheckedContinuation<Bool, Error>?
+        defer { heldAuthentication?.resume(returning: false) }
+        var calls: [String] = []
+        let slowLogin = SharedAccountChat(defaults: defaults, authenticate: {
+            try await withCheckedThrowingContinuation { heldAuthentication = $0 }
+        }) { method, args in
+            calls.append(method)
+            if method == "accountState" { return ["role": "deniz", "accountSessionVersion": 2] }
+            if method == "accountHeartbeat" {
+                return ["role": "deniz", "accountSessionVersion": 2, "session": "owned", "localReady": false,
+                        "peerAvailable": true, "cursor": 0, "events": [], "cancellations": []]
+            }
+            throw CodexClientError.invalidResponse("An atomic session attempted an extra state/poll/take RPC")
+        }
+        slowLogin.selectProvider("emir")
+        try await slowLogin.tick()
+        try await wait("held local login") { heldAuthentication != nil }
+        try await slowLogin.tick(); try await slowLogin.tick()
+        try require(slowLogin.selectedReady && slowLogin.owner == "emir" && !slowLogin.localReady,
+                    "Slow local account discovery blocked the explicitly selected remote provider")
+        try require(calls.filter { $0 == "accountState" }.count == 1 && calls.filter { $0 == "accountHeartbeat" }.count == 3,
+                    "Atomic account ticks still performed a full state/poll/take chain")
+        heldAuthentication?.resume(returning: false); heldAuthentication = nil
+        await slowLogin.shutdown()
+
+        var probes = 0
+        let observer = SharedAccountChat(defaults: defaults, authenticate: { probes += 1; return true }) { method, _ in
+            if method == "accountState" { return ["role": "emir", "accountSessionVersion": 2] }
+            return ["role": "emir", "accountSessionVersion": 2, "session": "foreign", "localReady": true,
+                    "peerAvailable": true, "cursor": 0, "events": [], "cancellations": []]
+        }
+        observer.selectProvider("deniz")
+        try await observer.tick(); try await observer.tick()
+        try require(observer.owner == "deniz" && observer.selectedReady && !observer.localReady && observer.error == nil && probes == 0,
+                    "A foreign local host lease hijacked ownership or disabled a ready remote account")
+        await observer.shutdown()
+    }
     static func run(node: String, fixture: String, output: URL, live: Bool = false, interactive: Bool = false) async -> Bool {
         let suite = "Bavbav.AccountCheck.\(UUID().uuidString)", defaults = UserDefaults(suiteName: suite)!
         var rpc: AccountFixtureRPC?, a: SharedAccountChat?, b: SharedAccountChat?
         var report: [String: Any] = ["success": false, "productionDataUsed": live, "productionAppUpdated": false, "realSecondMac": false, "liveInference": live]
         do {
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-            if !live { try await checkBoundedShutdown(defaults: defaults); report["boundedShutdown"] = true }
+            if !live {
+                try await checkBoundedShutdown(defaults: defaults); report["boundedShutdown"] = true
+                try await checkAtomicSessions(defaults: defaults); report["atomicAccountSessions"] = true
+            }
             let wire = try AccountFixtureRPC(node: node, fixture: fixture); rpc = wire
             try await wait("paired localhost broker startup") { wire.ready }
-            let first = SharedAccountChat(defaults: defaults) { method, args in try await wire.call("deniz", method, args) }; a = first; first.start()
+            var failNextHostReply = false
+            var hostClaims: [String] = []
+            let first = SharedAccountChat(defaults: defaults) { method, args in
+                if method == "accountReply", failNextHostReply { failNextHostReply = false; throw CodexClientError.disconnected }
+                let result = try await wire.call("deniz", method, args)
+                if let request = result["request"] as? [String: Any], let id = request["id"] as? String { hostClaims.append(id) }
+                return result
+            }; a = first; first.start()
             if live {
                 try await wait("existing ChatGPT account ready", seconds: 40) { first.localReady }
                 try await wait("Noise connection ready") { first.peerAvailable == false && first.role == "deniz" }
@@ -120,7 +168,9 @@ import SwiftUI
             } else {
                 var failNextPoll = false
                 let second = SharedAccountChat(defaults: defaults) { method, args in
-                    if method == "accountPoll", failNextPoll { failNextPoll = false; throw CodexClientError.disconnected }
+                    if (method == "accountPoll" || (method == "accountHeartbeat" && args["after"] != nil)), failNextPoll {
+                        failNextPoll = false; throw CodexClientError.disconnected
+                    }
                     return try await wire.call("emir", method, args)
                 }; b = second; second.start()
                 try await wait("both local fixture accounts ready") { first.localReady && second.localReady && second.peerAvailable }
@@ -155,6 +205,21 @@ import SwiftUI
                 try require(second.messages.last?.phase == "interrupted", "Stop did not retire the remote request")
                 report["stopAndRevocation"] = true
                 try await Task.sleep(nanoseconds: 1000_000_000)
+                failNextHostReply = true
+                let claimsBeforeFailure = hostClaims.count
+                second.draft = "ACCOUNT_HOLD"; second.send()
+                try await wait("failed owner reply retires the broker claim") {
+                    !failNextHostReply && second.activeID == nil && second.messages.last?.phase == "failed" && first.hostingRequester == nil
+                }
+                let reconciled = try await wire.call("deniz", "accountState", [:])
+                try require(reconciled["active"] is NSNull && hostClaims.count == claimsBeforeFailure + 1,
+                            "An owner reply failure orphaned or automatically reclaimed an already spent request")
+                try await wait("owner readiness after failed claim reconciliation") { first.localReady && second.peerAvailable }
+                second.draft = "Yanıt hatasından sonra açık yeni mesaj"; second.send()
+                try await wait("explicit new message after orphan reconciliation") { second.messages.last?.phase == "completed" }
+                try require(second.messages.last?.text == "YANIT: Yanıt hatasından sonra açık yeni mesaj",
+                            "A reconciled claim blocked the next explicit request")
+                report["hostFailureReconciliation"] = true
                 second.draft = "ACCOUNT_HOLD"; second.send()
                 try await wait("held request before IPC failure") { first.hostingRequester == "emir" && second.activeID != nil }
                 failNextPoll = true
