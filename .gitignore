@@ -10,3 +10,6 @@ Runtime/LocalAI/
 # explicitly from the prepared staging directories for PRIVATE builds only.
 Sources/IkiWorkspaceKit/
 Vendor/IkiWorkspace/Resources/
+# Private development sources and their retained history are local-only.
+Vendor/IkiWorkspace/Source/
+Vendor/IkiWorkspace/History/
