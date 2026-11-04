@@ -112,7 +112,9 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
 
     func fittingSize(width: CGFloat) -> CGSize {
         let layoutWidth = max(80, floor(width))
-        updateRendering(width: layoutWidth)
+        // SwiftUI is measuring this representable. Scheduling another intrinsic
+        // invalidation here feeds its lazy-layout phase back into itself.
+        updateRendering(width: layoutWidth, invalidateLayout: false)
         if let measuredHeight, measuredHeight.width == layoutWidth {
             return NSSize(width: width, height: measuredHeight.height)
         }
@@ -128,7 +130,7 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         return NSSize(width: width, height: height)
     }
 
-    private func updateRendering(width: CGFloat, ignoreSelection: Bool = false) {
+    private func updateRendering(width: CGFloat, ignoreSelection: Bool = false, invalidateLayout: Bool = true) {
         guard !applying else { return }
         // Keep a selection stable while delimiters arrive during streaming.
         // Coalesce to the latest source, then flush when selection is cleared.
@@ -147,8 +149,10 @@ final class RichMessageTextView: NSTextView, NSTextViewDelegate {
         let location = min(selection.location, next.text.length)
         setSelectedRange(NSRange(location: location, length: min(selection.length, next.text.length - location)))
         rebuildCopyButtons()
-        invalidateIntrinsicContentSize()
-        needsLayout = true
+        if invalidateLayout {
+            invalidateIntrinsicContentSize()
+            needsLayout = true
+        }
         needsDisplay = true
     }
 

@@ -9,7 +9,7 @@ enum BavbavMain {
         let delegate = BavbavAppDelegate()
         app.delegate = delegate
         let environment = ProcessInfo.processInfo.environment
-        let noUI = ["BAVBAV_APP_ICON_CHECK", "BAVBAV_COMPANION_PREFLIGHT_CHECK", "BAVBAV_COMPANION_WEB_CHECK", "BAVBAV_COMPANION_WINDOW_CHECK", "BAVBAV_BROWSER_CHECK", "BAVBAV_SIDE_CHAT_CHECK", "BAVBAV_OFFLINE_CHECK", "BAVBAV_SHARED_LOCAL_CHECK", "BAVBAV_SHARED_ACCOUNT_CHECK", "BAVBAV_SHARED_ACCOUNT_LIVE_CHECK", "BAVBAV_WORKSPACE_RESOURCE_CHECK"]
+        let noUI = ["BAVBAV_CODEX_DELIVERY_CHECK", "BAVBAV_APP_ICON_CHECK", "BAVBAV_COMPANION_PREFLIGHT_CHECK", "BAVBAV_COMPANION_WEB_CHECK", "BAVBAV_COMPANION_WINDOW_CHECK", "BAVBAV_BROWSER_CHECK", "BAVBAV_SIDE_CHAT_CHECK", "BAVBAV_OFFLINE_CHECK", "BAVBAV_SHARED_LOCAL_CHECK", "BAVBAV_SHARED_ACCOUNT_CHECK", "BAVBAV_SHARED_ACCOUNT_LIVE_CHECK", "BAVBAV_WORKSPACE_RESOURCE_CHECK"]
             .contains { environment[$0] == "1" }
         app.setActivationPolicy(noUI ? .prohibited : .regular)
         app.run()
@@ -50,6 +50,10 @@ final class BavbavAppDelegate: NSObject, NSApplicationDelegate {
         let environment = ProcessInfo.processInfo.environment
         diagnosticRun = environment.keys.contains { $0.hasPrefix("BAVBAV_") && $0.contains("CHECK") }
             || CommandLine.arguments.contains("--workspace-ui-check")
+        if environment["BAVBAV_CODEX_DELIVERY_CHECK"] == "1" {
+            Task { Foundation.exit(await CodexDeliveryCheck.run() ? 0 : 1) }
+            return
+        }
         if environment["BAVBAV_WORKSPACE_RESOURCE_CHECK"] == "1" {
             Foundation.exit(WorkspaceRuntimeCheck.run() ? 0 : 1)
         }

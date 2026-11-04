@@ -99,7 +99,7 @@ private func boundedHistoryItems() -> [[String: Any]] {
     }
 }
 
-private func send(_ object: [String: Any]) {
+private func send(_ object: [String: Any], newline: Bool = true) {
     if object["method"] as? String == "item/completed",
        let params = object["params"] as? [String: Any],
        let threadID = params["threadId"] as? String,
@@ -110,7 +110,7 @@ private func send(_ object: [String: Any]) {
         recordedItems[threadID] = items
     }
     guard var data = try? JSONSerialization.data(withJSONObject: object) else { return }
-    data.append(0x0A)
+    if newline { data.append(0x0A) }
     outputLock.lock()
     defer { outputLock.unlock() }
     try? FileHandle.standardOutput.write(contentsOf: data)
@@ -557,6 +557,19 @@ while let line = readLine() {
             let threadID = params["threadId"] as? String ?? "fixture-thread"
             let input = params["input"] as? [[String: Any]] ?? []
             let scenario = input.first?["text"] as? String ?? "COMMAND"
+            if scenario == "TRANSPORT_EXIT_FINAL" || scenario == "TRANSPORT_STDOUT_EOF" {
+                send(["id": id, "result": ["turn": ["id": turnID, "status": "inProgress"]]])
+                send(["method": "item/agentMessage/delta", "params": ["threadId": threadID, "turnId": turnID,
+                    "itemId": "terminal-agent", "delta": "FINAL_BEFORE_EXIT"]])
+                if scenario == "TRANSPORT_EXIT_FINAL" {
+                    send(["method": "turn/completed", "params": ["threadId": threadID,
+                        "turn": ["id": turnID, "status": "completed"]]], newline: false)
+                    Foundation.exit(0)
+                }
+                try? FileHandle.standardOutput.close()
+                Thread.sleep(forTimeInterval: 30)
+                Foundation.exit(0)
+            }
             if ProcessInfo.processInfo.environment["BAVBAV_COMPANION_CHECK"] == "1" {
                 guard (params["sandboxPolicy"] as? [String: Any])?["type"] as? String == "readOnly" else {
                     send(["id": id, "error": ["code": -32602, "message": "unsafe companion turn"]]); continue

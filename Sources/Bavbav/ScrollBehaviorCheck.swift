@@ -307,6 +307,32 @@ enum ScrollBehaviorCheck {
             await settle(realPanel.contentView)
             realController.jumpToBottom()
             await settle(realPanel.contentView)
+            func stableViewport() async -> Bool {
+                // LazyVStack can finish measuring a distant, variable-height
+                // history after the fixed display-turn pump. A 3pt movement
+                // cannot be assessed against a bottom edge which is still
+                // changing, so require quiet native geometry first.
+                let deadline = ProcessInfo.processInfo.systemUptime + 2
+                var previous: [CGFloat]?
+                var stableSince = ProcessInfo.processInfo.systemUptime
+                while ProcessInfo.processInfo.systemUptime < deadline {
+                    realPanel.contentView?.layoutSubtreeIfNeeded()
+                    let clip = realScroll.contentView
+                    let geometry = [clip.bounds.minY, clip.bounds.height,
+                                    clip.documentRect.minY, clip.documentRect.maxY]
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if let previous, zip(previous, geometry).allSatisfy({ abs($0.0 - $0.1) <= 0.05 }) {
+                        if now - stableSince >= 0.12 { return true }
+                    } else {
+                        previous = geometry
+                        stableSince = now
+                    }
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+                return false
+            }
+            let stableBeforeGesture = await stableViewport()
+            try check(stableBeforeGesture, "tiny-gesture fixture reaches stable lazy document geometry")
             func pixelWheel(_ delta: Int32, phase: CGScrollPhase) {
                 let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
                                  wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0)!
@@ -321,10 +347,14 @@ enum ScrollBehaviorCheck {
             pixelWheel(0, phase: .began)
             await settle(realPanel.contentView) // Fingers still down at the bottom.
             try check(!realController.followingBottom, "real transcript keeps ownership during bottom pause")
+            let stableDuringPause = await stableViewport()
+            try check(stableDuringPause, "bottom pause settles before the tiny native movement")
+            let beforeTinyGesture = realScroll.contentView.bounds.minY
+            let bottomBeforeTinyGesture = realController.bottomOffset
             pixelWheel(3, phase: .changed)
             await settle(realPanel.contentView)
             try check(!realController.followingBottom && !realController.isAtBottom,
-                      "tiny native upward gesture escapes bottom after pause")
+                      "tiny native upward gesture escapes bottom after pause; offset \(beforeTinyGesture) → \(realScroll.contentView.bounds.minY), bottom \(bottomBeforeTinyGesture) → \(realController.bottomOffset)")
             for step in 0..<40 {
                 pixelWheel(step % 2 == 0 ? -2 : 9, phase: .changed)
                 realController.contentChanged()

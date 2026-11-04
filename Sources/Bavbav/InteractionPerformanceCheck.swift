@@ -1,9 +1,21 @@
 import AppKit
 import BavbavCore
+import SwiftUI
 
 @MainActor
 enum InteractionPerformanceCheck {
     private struct Failure: Error { let message: String }
+    private final class TranscriptStressFixture: ObservableObject {
+        @Published var items: [CodexMessage] = []
+        @Published var focusedID: String?
+    }
+    private struct TranscriptStressView: View {
+        @ObservedObject var fixture: TranscriptStressFixture
+        let scroll: ChatScrollController
+        var body: some View {
+            ChatTranscriptView(items: fixture.items, scroll: scroll, focusedMessageID: fixture.focusedID)
+        }
+    }
 
     /// Real AppKit/SwiftUI view trees, hidden throughout. The account, live app,
     /// user defaults, clipboard and foreground/key-window ownership are untouched.
@@ -261,6 +273,66 @@ enum InteractionPerformanceCheck {
             }
             try check(store.visibleDetailItems.contains { $0.text == "BAVBAV_STEER_OK" },
                       "completed background reply survives close/reopen and cache invalidation")
+            // A real long-running conversation can contain thousands of
+            // thoughts and side-agent rows. LazyVStack still tracks every row
+            // passed to ForEach, even when native text documents are offscreen.
+            let history = (0..<5_000).map {
+                CodexMessage(id: "stress-\($0)", role: .agent, text: "Stress row \($0)\nA preserved historical response.")
+            }
+            let tail = TranscriptPage.range(in: history, startID: nil)
+            try check(tail.count == TranscriptPage.limit && tail.upperBound == history.count,
+                      "five thousand history rows produce a bounded latest presentation")
+            var start = tail.lowerBound
+            var covered = Set(tail)
+            while start > 0 {
+                start = max(0, start - TranscriptPage.step)
+                let page = TranscriptPage.range(in: history, startID: history[start].id)
+                try check(page.count <= TranscriptPage.limit, "every historical page remains bounded")
+                covered.formUnion(page)
+            }
+            try check(covered.count == history.count, "overlapping history pages retain access to every row")
+            let searchStart = TranscriptPage.start(in: history, containing: "stress-7")
+            try check(history[TranscriptPage.range(in: history, startID: searchStart)].contains { $0.id == "stress-7" },
+                      "search can navigate outside the latest presentation")
+            let stress = TranscriptStressFixture(); stress.items = history
+            let stressScroll = ChatScrollController()
+            let stressRoot = NSHostingView(rootView: TranscriptStressView(fixture: stress, scroll: stressScroll))
+            let stressWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
+                                        styleMask: [.borderless], backing: .buffered, defer: false)
+            stressWindow.isReleasedWhenClosed = false
+            stressWindow.contentView = stressRoot
+            await settle(stressRoot)
+            let documents = descendants(stressRoot).compactMap { $0 as? RichMessageTextView }
+            try check(!documents.isEmpty && documents.count <= TranscriptPage.limit,
+                      "real long-history host keeps native text documents bounded")
+            try check(stress.items.count == 5_000 && stressScroll.isAtBottom,
+                      "bounded presentation preserves full history and opens at latest")
+            stress.focusedID = "stress-7"
+            await settle(stressRoot)
+            try check(descendants(stressRoot).compactMap { $0 as? RichMessageTextView }.contains { $0.string.contains("Stress row 7\n") },
+                      "real native search materializes an older historical message")
+            stress.focusedID = nil
+            stressScroll.jumpToBottom()
+            await settle(stressRoot)
+            try check(descendants(stressRoot).compactMap { $0 as? RichMessageTextView }.contains { $0.string.contains("Stress row 4999\n") },
+                      "jump to latest returns from an older history page")
+            stressScroll.userWillScroll()
+            guard let stressNativeScroll = descendants(stressRoot).compactMap({ $0 as? NSScrollView }).first else {
+                throw Failure(message: "long-history native scroll missing")
+            }
+            stressNativeScroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, stressScroll.bottomOffset - 200)))
+            stressScroll.userDidScroll()
+            await settle(stressRoot)
+            let heldOffset = stressNativeScroll.contentView.bounds.minY
+            stress.items.append(contentsOf: (5_000..<5_050).map {
+                CodexMessage(id: "stress-\($0)", role: .agent, text: "New streamed row \($0)")
+            })
+            await settle(stressRoot)
+            try check(!stressScroll.followingBottom && abs(stressNativeScroll.contentView.bounds.minY - heldOffset) < 2,
+                      "streaming retains the stable historical reading page")
+            try check(stress.items.count == 5_050 && descendants(stressRoot).compactMap { $0 as? RichMessageTextView }.count <= TranscriptPage.limit,
+                      "streaming keeps all history while bounding native presentation")
+            stressWindow.close()
             try check(NSApp.windows.filter { !initialWindows.contains(ObjectIdentifier($0)) }.allSatisfy { !$0.isVisible },
                       "all test windows remained hidden")
             await store.shutdown()

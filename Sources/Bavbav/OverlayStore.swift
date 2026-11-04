@@ -249,6 +249,7 @@ final class OverlayStore: ObservableObject {
     private var refreshing = false
     private var consecutiveRefreshFailures = 0
     private var eventHandlerInstalled = false
+    private var eventInbox: CodexEventInbox?
     private var activeTurnIDsByThreadID: [String: String] = [:]
     private var settingsRefreshing = false
     private var lastFreshModelCatalogAt: Date?
@@ -380,13 +381,10 @@ final class OverlayStore: ObservableObject {
     private func installEventHandlerIfNeeded() async {
         guard !eventHandlerInstalled else { return }
         eventHandlerInstalled = true
-        await client.setEventHandler { [weak self] event in
-            // CodexAppServer invokes this closure in wire order. The main queue
-            // keeps streaming deltas in that same order for the observable UI.
-            DispatchQueue.main.async { [weak self] in
-                self?.handleServerEvent(event)
-            }
-        }
+        eventInbox?.close()
+        let inbox = CodexEventInbox { [weak self] event in self?.handleServerEvent(event) }
+        eventInbox = inbox
+        await client.setEventHandler { event in inbox.submit(event) }
     }
 
     func refresh() async {
@@ -681,6 +679,7 @@ final class OverlayStore: ObservableObject {
     }
 
     func shutdown() async {
+        eventInbox?.close(); eventInbox = nil; eventHandlerInstalled = false
         await journal.stop()
         await client.setEventHandler(nil)
         await client.shutdown()

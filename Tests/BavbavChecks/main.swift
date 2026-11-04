@@ -44,6 +44,21 @@ private final class EventEvidence: @unchecked Sendable {
     }
 }
 
+private final class TerminalEvidence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+    func record(_ event: CodexServerEvent) {
+        lock.lock(); defer { lock.unlock() }
+        switch event {
+        case .agentMessageDelta(_, _, _, let text): values.append(text)
+        case .turnCompleted: values.append("completed")
+        case .transportClosed: values.append("closed")
+        default: break
+        }
+    }
+    var events: [String] { lock.lock(); defer { lock.unlock() }; return values }
+}
+
 private actor TurnProbe {
     private var completed: [String: TurnOutcome] = [:]
     private var waiters: [String: CheckedContinuation<TurnOutcome?, Never>] = [:]
@@ -229,6 +244,8 @@ struct BavbavChecks {
                             "--protocol-fixture requires BAVBAV_CODEX_BIN pointing to BavbavFakeCodex; no real turns will be sent")
                 try await checkBoundedActivityHistory()
                 print("✓ bounded activity output: exact limits, Unicode tails, large logs, cancelled page response")
+                try await checkTerminalOutputDrain()
+                print("✓ ordered final frame + child exit, live-child stdout EOF")
                 try await checkConnectionRecovery()
                 print("✓ reconnect + concurrent handshake + streamed completion")
                 try await checkProtocolInteractions()
@@ -355,6 +372,32 @@ struct BavbavChecks {
         try require(probed == [brew, "/usr/local/bin/codex", "/safe/bin/codex"], "Relative/empty PATH entries must not launch project executables")
         checks += 1
         print("✓ executable discovery: \(checks) checks (new/legacy bundles, Finder, PATH, strict override)")
+    }
+
+    private static func checkTerminalOutputDrain() async throws {
+        for scenario in Array(repeating: "TRANSPORT_EXIT_FINAL", count: 4) + ["TRANSPORT_STDOUT_EOF"] {
+            let client = CodexAppServer(), evidence = TerminalEvidence()
+            do {
+                _ = try await client.connect()
+                await client.setEventHandler { evidence.record($0) }
+                let thread = try await client.startThread(cwd: "/tmp/fixture", ephemeral: true,
+                    sandbox: "read-only", approvalPolicy: "never")
+                _ = try await client.startTurn(threadID: thread.id, text: scenario,
+                    clientUserMessageID: UUID().uuidString, cwd: "/tmp/fixture", executionMode: .readOnly)
+                let deadline = ProcessInfo.processInfo.systemUptime + 5
+                while !evidence.events.contains("closed"), ProcessInfo.processInfo.systemUptime < deadline {
+                    try await Task.sleep(nanoseconds: 2_000_000)
+                }
+                let values = evidence.events
+                try require(values.first == "FINAL_BEFORE_EXIT" && values.last == "closed", "Child output EOF lost a streamed event or left a dead transport open")
+                if scenario == "TRANSPORT_EXIT_FINAL" {
+                    try require(values == ["FINAL_BEFORE_EXIT", "completed", "closed"], "Final JSON frame without LF was lost or overtaken by process exit")
+                } else {
+                    try require(!values.contains("completed"), "A child closing stdout invented a completed turn")
+                }
+                await client.shutdown()
+            } catch { await client.shutdown(); throw error }
+        }
     }
 
     private static func checkConnectionRecovery() async throws {

@@ -1,22 +1,5 @@
 import Foundation
 
-/// FileHandle may invoke its readability callback again before the Task created
-/// by the previous callback reaches the actor. Serializing the actual reads and
-/// numbering chunks lets the actor restore wire order deterministically.
-private final class OrderedChunkReader: @unchecked Sendable {
-    private let lock = NSLock()
-    private var nextSequence = 0
-
-    func read(from handle: FileHandle) -> (sequence: Int, data: Data) {
-        lock.lock()
-        defer { lock.unlock() }
-        let data = handle.availableData
-        let sequence = nextSequence
-        nextSequence += 1
-        return (sequence, data)
-    }
-}
-
 public actor CodexAppServer {
     /// User-owned conversations shown by the Bavbav UI. Codex defaults an
     /// omitted source filter to `cli` and `vscode`; `appServer` is included so
@@ -51,6 +34,8 @@ public actor CodexAppServer {
     private var input: FileHandle?
     private var output: FileHandle?
     private var errorOutput: FileHandle?
+    private var stdoutReader: CodexOutputReader?
+    private var stderrReader: CodexOutputReader?
     private var receiveBuffer = Data()
     private var receiveSearchOffset = 0
     private var pendingReceiveChunks: [Int: Data] = [:]
@@ -228,6 +213,8 @@ public actor CodexAppServer {
     }
 
     deinit {
+        stdoutReader?.cancel()
+        stderrReader?.cancel()
         process?.terminate()
     }
 
@@ -1634,36 +1621,17 @@ public actor CodexAppServer {
 
         let stdout = stdoutPipe.fileHandleForReading
         let stderr = stderrPipe.fileHandleForReading
-        let stdoutReader = OrderedChunkReader()
-        stdout.readabilityHandler = { [weak self] handle in
-            let chunk = stdoutReader.read(from: handle)
-            let data = chunk.data
-            guard !data.isEmpty else { return }
-            Task {
-                await self?.ingest(
-                    data,
-                    generation: generation,
-                    sequence: chunk.sequence
-                )
-            }
-        }
-        stderr.readabilityHandler = { [weak self] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            Task { await self?.rememberError(data, generation: generation) }
-        }
-        process.terminationHandler = { [weak self] task in
-            Task {
-                await self?.processEnded(
-                    status: task.terminationStatus,
-                    generation: generation
-                )
-            }
+        let stdoutReader = try CodexOutputReader(handle: stdout)
+        let stderrReader = try CodexOutputReader(handle: stderr)
+        process.terminationHandler = { task in
+            stdoutReader.processExited(task.terminationStatus)
+            stderrReader.processExited(task.terminationStatus)
         }
 
         do {
             try process.run()
         } catch {
+            process.terminationHandler = nil
             stdout.readabilityHandler = nil
             stderr.readabilityHandler = nil
             throw CodexClientError.processFailed(error.localizedDescription)
@@ -1673,6 +1641,26 @@ public actor CodexAppServer {
         self.input = stdinPipe.fileHandleForWriting
         self.output = stdout
         self.errorOutput = stderr
+        self.stdoutReader = stdoutReader
+        self.stderrReader = stderrReader
+        stdoutReader.start(label: "dev.bavbav.codex.stdout.\(generation)", consume: { [weak self] data, chunkSequence in
+            let delivered = DispatchSemaphore(value: 0)
+            Task {
+                await self?.ingest(data, generation: generation, sequence: chunkSequence)
+                delivered.signal()
+            }
+            delivered.wait()
+        }, ended: { [weak self] status, reason in
+            Task { await self?.stdoutEnded(status: status, reason: reason, generation: generation) }
+        })
+        stderrReader.start(label: "dev.bavbav.codex.stderr.\(generation)", consume: { [weak self] data, _ in
+            let delivered = DispatchSemaphore(value: 0)
+            Task {
+                await self?.rememberError(data, generation: generation)
+                delivered.signal()
+            }
+            delivered.wait()
+        }, ended: { _, _ in })
     }
 
     private static func resolveCodexExecutable() throws -> URL {
@@ -1699,6 +1687,8 @@ public actor CodexAppServer {
 
         let oldProcess = process
         oldProcess?.terminationHandler = nil
+        stdoutReader?.cancel(); stdoutReader = nil
+        stderrReader?.cancel(); stderrReader = nil
         output?.readabilityHandler = nil
         errorOutput?.readabilityHandler = nil
 
@@ -1789,17 +1779,6 @@ public actor CodexAppServer {
             )
             guard let newlineIndex = receiveBuffer[searchStart...].firstIndex(of: 0x0A) else {
                 receiveSearchOffset = receiveBuffer.count
-                // FileHandle can occasionally deliver the final JSON object
-                // without scheduling a separate callback for its trailing LF.
-                // Accept a syntactically complete object; a later lone LF is
-                // harmless and will be discarded as an empty line.
-                if data.count < 16_384,
-                   (try? JSONSerialization.jsonObject(with: receiveBuffer)) is [String: Any] {
-                    let completeLine = receiveBuffer
-                    receiveBuffer.removeAll(keepingCapacity: true)
-                    receiveSearchOffset = 0
-                    handleLine(completeLine)
-                }
                 break
             }
 
@@ -2373,6 +2352,26 @@ public actor CodexAppServer {
         guard generation == processGeneration else { return }
         guard let text = String(data: data, encoding: .utf8) else { return }
         lastErrorText = String((lastErrorText + text).suffix(4_000))
+    }
+
+    private func stdoutEnded(status: Int32?, reason: String?, generation: Int) {
+        guard generation == processGeneration else { return }
+        // This runs after every chunk's actor handoff completed. A complete
+        // final JSON object without LF is accepted only once, at actual EOF.
+        if !receiveBuffer.isEmpty,
+           (try? JSONSerialization.jsonObject(with: receiveBuffer)) is [String: Any] {
+            let final = receiveBuffer
+            receiveBuffer.removeAll(keepingCapacity: false); receiveSearchOffset = 0
+            handleLine(final)
+        }
+        guard generation == processGeneration else { return }
+        if let status = status ?? (process?.isRunning == false ? process?.terminationStatus : nil) {
+            processEnded(status: status, generation: generation)
+        } else {
+            let error = CodexClientError.processFailed(reason ?? "Child output closed")
+            eventHandler?(.transportClosed(message: error.localizedDescription))
+            resetTransport(terminate: true, pendingError: error)
+        }
     }
 
     private func processEnded(status: Int32, generation: Int) {

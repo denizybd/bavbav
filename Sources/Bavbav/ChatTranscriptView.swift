@@ -12,7 +12,8 @@ extension Notification.Name {
 @MainActor
 final class ChatScrollController: NSObject, ObservableObject {
     @Published private(set) var awayFromBottom = false
-    private(set) var followingBottom = true
+    @Published private(set) var followingBottom = true
+    @Published private(set) var latestJumpGeneration = 0
     private weak var scrollView: NSScrollView?
     private weak var observedDocument: NSView?
     private var correctionScheduled = false
@@ -118,13 +119,14 @@ final class ChatScrollController: NSObject, ObservableObject {
     }
 
     func jumpToBottom() {
+        latestJumpGeneration &+= 1
         interactionGeneration &+= 1
         liveScrolling = false
         touchScrolling = false
         momentumScrolling = false
         scrollEndWork?.cancel()
         scrollEndWork = nil
-        followingBottom = true
+        setFollowingBottom(true)
         restoringReadingPosition = false
         readingOffset = nil
         setAwayFromBottom(false)
@@ -171,6 +173,10 @@ final class ChatScrollController: NSObject, ObservableObject {
         if awayFromBottom != value { awayFromBottom = value }
     }
 
+    private func setFollowingBottom(_ value: Bool) {
+        if followingBottom != value { followingBottom = value }
+    }
+
     @objc private func layoutChanged() { if !adjusting { contentChanged() } }
     @objc private func boundsChanged() {
         guard !adjusting else { return }
@@ -181,14 +187,14 @@ final class ChatScrollController: NSObject, ObservableObject {
         interactionGeneration &+= 1
         scrollEndWork?.cancel()
         scrollEndWork = nil
-        followingBottom = false
+        setFollowingBottom(false)
         restoringReadingPosition = false
     }
     @objc func userDidScroll() {
         if let scrollView, !restoringReadingPosition {
             readingOffset = scrollView.contentView.bounds.minY
         }
-        if gestureActive { followingBottom = false }
+        if gestureActive { setFollowingBottom(false) }
         setAwayFromBottom(!followingBottom && !isAtBottom)
         scrollEndWork?.cancel()
         scrollEndWork = nil
@@ -201,7 +207,7 @@ final class ChatScrollController: NSObject, ObservableObject {
             self.scrollEndWork = nil
             // A gesture owns the viewport through its momentum phase. Do not
             // snap a small upward movement back just because it is within 24pt.
-            self.followingBottom = self.isAtBottom
+            self.setFollowingBottom(self.isAtBottom)
             self.setAwayFromBottom(!self.followingBottom)
         }
         scrollEndWork = work
@@ -274,12 +280,33 @@ private struct TranscriptScrollProbe: NSViewRepresentable {
     }
 }
 
+/// Keep native text documents and SwiftUI lazy-layout bookkeeping bounded even
+/// when a conversation contains years of commands, thoughts and agent events.
+/// Paging changes presentation only; the caller retains the complete history.
+enum TranscriptPage {
+    static let limit = 160
+    static let step = limit / 2
+
+    static func range(in items: [CodexMessage], startID: String?) -> Range<Int> {
+        let tail = max(0, items.count - limit)
+        let start = startID.flatMap { id in items.firstIndex { $0.id == id } }.map { min($0, tail) } ?? tail
+        return start..<min(items.count, start + limit)
+    }
+
+    static func start(in items: [CodexMessage], containing id: String) -> String? {
+        guard let index = items.firstIndex(where: { $0.id == id }), !items.isEmpty else { return nil }
+        let start = min(max(0, index - limit / 2), max(0, items.count - limit))
+        return items[start].id
+    }
+}
+
 struct ChatTranscriptView: View {
     @Environment(\.shortcutLabels) private var shortcuts
     let items: [CodexMessage]
     let focusedMessageID: String?
     let matchingMessageIDs: Set<String>
     @StateObject private var scroll: ChatScrollController
+    @State private var windowStartID: String?
 
     init(items: [CodexMessage], scroll: ChatScrollController? = nil,
          focusedMessageID: String? = nil, matchingMessageIDs: Set<String> = []) {
@@ -295,10 +322,24 @@ struct ChatTranscriptView: View {
     }
 
     var body: some View {
+        let page = TranscriptPage.range(in: items, startID: windowStartID)
         ScrollViewReader { proxy in
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(items) { message in
+                if page.lowerBound > 0 {
+                    Button {
+                        let anchor = items[page.lowerBound].id
+                        scroll.userWillScroll()
+                        windowStartID = items[max(0, page.lowerBound - TranscriptPage.step)].id
+                        DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .top) }
+                    } label: {
+                        Text("↑ EARLIER MESSAGES · \(page.lowerBound)")
+                            .font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.accent).readableForeground()
+                            .frame(maxWidth: .infinity, minHeight: 26)
+                    }.buttonStyle(.plain).focusable()
+                        .accessibilityLabel("Load earlier messages").help("Earlier messages · Tab, then Space")
+                }
+                ForEach(Array(items[page])) { message in
                     MessageBlock(message: message)
                         .overlay {
                             if matchingMessageIDs.contains(message.id) {
@@ -310,21 +351,54 @@ struct ChatTranscriptView: View {
                         }
                         .id(message.id)
                 }
+                if page.upperBound < items.count {
+                    Button {
+                        let anchor = items[page.upperBound - 1].id
+                        scroll.userWillScroll()
+                        let start = min(max(0, items.count - TranscriptPage.limit), page.lowerBound + TranscriptPage.step)
+                        windowStartID = items[start].id
+                        DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .bottom) }
+                    } label: {
+                        Text("↓ LATER MESSAGES · \(items.count - page.upperBound)")
+                            .font(BavbavTheme.mono(9)).foregroundStyle(BavbavTheme.accent).readableForeground()
+                            .frame(maxWidth: .infinity, minHeight: 26)
+                    }.buttonStyle(.plain).focusable()
+                        .accessibilityLabel("Load later messages").help("Later messages · Tab, then Space")
+                }
             }
             .padding(16)
             .background(TranscriptScrollProbe(controller: scroll))
         }
-        .onAppear { scroll.contentChanged() }
+        .onAppear {
+            if let id = focusedMessageID, !items[page].contains(where: { $0.id == id }) {
+                scroll.userWillScroll()
+                windowStartID = TranscriptPage.start(in: items, containing: id)
+                DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+            } else { scroll.contentChanged() }
+        }
         .onChange(of: Revision(count: items.count, last: items.last)) { _ in scroll.contentChanged() }
+        .onChange(of: scroll.followingBottom) { following in
+            // Freeze the current stable first row as soon as a reader takes
+            // control. Streaming must not remove rows above that viewport.
+            if following, page.upperBound == items.count { windowStartID = nil }
+            else if !following, windowStartID == nil, !page.isEmpty { windowStartID = items[page.lowerBound].id }
+        }
+        .onChange(of: scroll.latestJumpGeneration) { _ in
+            windowStartID = nil
+            scroll.contentChanged()
+        }
         .onChange(of: focusedMessageID) { id in
             guard let id else { return }
             // Search is an explicit navigation, not a reason to turn normal
             // streaming auto-follow back on or rebuild the transcript.
             scroll.userWillScroll()
-            proxy.scrollTo(id, anchor: .center)
+            if !items[page].contains(where: { $0.id == id }) {
+                windowStartID = TranscriptPage.start(in: items, containing: id)
+            }
+            DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
         }
         .overlay(alignment: .bottomTrailing) {
-            if scroll.awayFromBottom {
+            if scroll.awayFromBottom || page.upperBound < items.count {
                 Button { scroll.jumpToBottom() } label: {
                     Image(systemName: "arrow.down")
                         .font(.system(size: 12, weight: .semibold))

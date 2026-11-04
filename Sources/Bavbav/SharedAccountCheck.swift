@@ -143,10 +143,14 @@ import SwiftUI
             }
             let wire = try AccountFixtureRPC(node: node, fixture: fixture); rpc = wire
             try await wait("paired localhost broker startup") { wire.ready }
-            var failNextHostReply = false
+            var hostReplyFailureTarget: String?
+            var injectedHostReplyFailure: String?
             var hostClaims: [String] = []
             let first = SharedAccountChat(defaults: defaults) { method, args in
-                if method == "accountReply", failNextHostReply { failNextHostReply = false; throw CodexClientError.disconnected }
+                if method == "accountReply", let target = hostReplyFailureTarget, args["id"] as? String == target {
+                    hostReplyFailureTarget = nil; injectedHostReplyFailure = target
+                    throw CodexClientError.disconnected
+                }
                 let result = try await wire.call("deniz", method, args)
                 if let request = result["request"] as? [String: Any], let id = request["id"] as? String { hostClaims.append(id) }
                 return result
@@ -204,15 +208,20 @@ import SwiftUI
                 second.cancel(); try await wait("cancelled request") { second.activeID == nil }
                 try require(second.messages.last?.phase == "interrupted", "Stop did not retire the remote request")
                 report["stopAndRevocation"] = true
-                try await Task.sleep(nanoseconds: 1000_000_000)
-                failNextHostReply = true
-                let claimsBeforeFailure = hostClaims.count
+                try await wait("owner idle and available after cancellation") {
+                    first.hostingRequester == nil && first.localReady && second.peerAvailable
+                }
                 second.draft = "ACCOUNT_HOLD"; second.send()
+                guard let failedRequestID = second.activeID else { throw CodexClientError.invalidResponse("The owner-failure fixture did not submit a request") }
+                // Failure belongs to this exact new claim. An old cancelled
+                // worker's late reply must not consume the injected fault.
+                hostReplyFailureTarget = failedRequestID
                 try await wait("failed owner reply retires the broker claim") {
-                    !failNextHostReply && second.activeID == nil && second.messages.last?.phase == "failed" && first.hostingRequester == nil
+                    injectedHostReplyFailure == failedRequestID && second.activeID == nil
+                        && second.messages.last?.phase == "failed" && first.hostingRequester == nil
                 }
                 let reconciled = try await wire.call("deniz", "accountState", [:])
-                try require(reconciled["active"] is NSNull && hostClaims.count == claimsBeforeFailure + 1,
+                try require(reconciled["active"] is NSNull && hostClaims.filter { $0 == failedRequestID }.count == 1,
                             "An owner reply failure orphaned or automatically reclaimed an already spent request")
                 try await wait("owner readiness after failed claim reconciliation") { first.localReady && second.peerAvailable }
                 second.draft = "Yanıt hatasından sonra açık yeni mesaj"; second.send()
