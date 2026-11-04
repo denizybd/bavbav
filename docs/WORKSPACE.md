@@ -4,12 +4,13 @@ Workspace is a private collaboration module hosted by Bavbav. Its SwiftUI/AppKit
 
 ## Source ownership
 
-| Repository | Canonical responsibility |
+| Location | Canonical responsibility |
 | --- | --- |
 | `denizybd/bavbav` (public) | Main application, Workspace host adapter, menus, lifecycle, and public build. |
-| `denizybd/iki-workspace` (private) | Workspace views, signed snapshots, P2P engine, runtime staging, private installer, and integration verification. |
+| `Vendor/IkiWorkspace/Source/` (private, local-only) | Workspace views, signed snapshots, P2P engine, runtime staging, private installer, and integration verification. |
+| `Vendor/IkiWorkspace/History/` (private, local-only) | Retained Workspace Git history. |
 
-The private repository is still required. An integrated app bundle does not make its source repository redundant. Keep it active until every private component and its history has an explicitly chosen replacement.
+The standalone `denizybd/iki-workspace` repository has been retired. Its private development sources and Git history are retained inside the local Bavbav checkout at the paths above. These directories are ignored by Git and are not included in a public clone. Preserve both when backing up the integrated development environment.
 
 ## Public build
 
@@ -17,17 +18,18 @@ The default is `BAVBAV_WITH_WORKSPACE=0`. A fresh public clone builds without pr
 
 ## Authorized integrated build
 
-From an authorized clone of the private Workspace repository, prepare the native engine and stage its sources into a Bavbav checkout:
+With the private Workspace sources available locally, prepare the native engine and stage its sources into the Bavbav checkout:
 
 ```sh
+cd /absolute/path/to/bavbav/Vendor/IkiWorkspace/Source
 npm ci
 zsh scripts/build-native.zsh
 node scripts/stage-bavbav.mjs /absolute/path/to/bavbav
 cd /absolute/path/to/bavbav
-BAVBAV_WITH_WORKSPACE=1 BAVBAV_STAGE_ONLY=1 zsh scripts/build-app.sh
+BAVBAV_WITH_WORKSPACE=1 BAVBAV_STAGE_ONLY=1 BAVBAV_NOTIFY_RELEASE=0 zsh scripts/build-app.sh
 ```
 
-The private repository also supplies a pinned, end-to-end `scripts/build-bavbav.zsh` command. See that repository's README for the exact source revision.
+This prepares a candidate without installing it or notifying the release publisher.
 
 Staging writes ignored `Sources/IkiWorkspaceKit/` and `Vendor/IkiWorkspace/Resources/` directories. Set `BAVBAV_WITH_WORKSPACE=1` for direct Swift commands too. Packaged builds fail if a selected Workspace runtime is incomplete; `IKI_WORKSPACE_APP` can explicitly select a matching prepared engine bundle.
 
