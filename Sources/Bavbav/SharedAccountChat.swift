@@ -506,6 +506,9 @@ struct AccountChatMessage: Identifiable {
             if let text, !text.isEmpty { args["text"] = text }
             do { _ = try await self.rpc("accountReply", args) }
             catch {
+                // The cancelled request may have retired while its RPC was in
+                // flight. Its late rejection cannot revoke a newer host job.
+                guard self.running?.id == id else { return }
                 self.accountError = error.localizedDescription
                 if self.owner != "local" { self.error = error.localizedDescription }
                 await self.reconcileFailedHost(id)
@@ -520,9 +523,10 @@ struct AccountChatMessage: Identifiable {
         guard running?.id == id else { return }
         running?.cancelled = true
         if let thread = running?.threadID, let turn = running?.turnID { try? await worker.interruptSharedAccountTurn(threadID: thread, turnID: turn) }
-        running = nil
+        if running?.id == id { running = nil }
     }
     private func reconcileFailedHost(_ id: String) async {
+        guard running?.id == id else { return }
         // Set this before awaiting interrupt: the independent tick can revoke
         // its exact GUI lease even if the owned worker is slow to stop.
         requiresHostReconciliation = true; localReady = false

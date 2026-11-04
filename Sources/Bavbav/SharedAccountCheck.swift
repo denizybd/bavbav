@@ -145,13 +145,23 @@ import SwiftUI
             try await wait("paired localhost broker startup") { wire.ready }
             var hostReplyFailureTarget: String?
             var injectedHostReplyFailure: String?
+            var delayedReplyTarget: String?
+            var delayedReplyContinuation: CheckedContinuation<Void, Never>?
+            var ownerHeartbeats = 0
+            defer { delayedReplyContinuation?.resume() }
             var hostClaims: [String] = []
             let first = SharedAccountChat(defaults: defaults) { method, args in
+                if method == "accountReply", let target = delayedReplyTarget, args["id"] as? String == target {
+                    delayedReplyTarget = nil
+                    await withCheckedContinuation { delayedReplyContinuation = $0 }
+                    throw CodexClientError.disconnected
+                }
                 if method == "accountReply", let target = hostReplyFailureTarget, args["id"] as? String == target {
                     hostReplyFailureTarget = nil; injectedHostReplyFailure = target
                     throw CodexClientError.disconnected
                 }
                 let result = try await wire.call("deniz", method, args)
+                if method == "accountHeartbeat" { ownerHeartbeats += 1 }
                 if let request = result["request"] as? [String: Any], let id = request["id"] as? String { hostClaims.append(id) }
                 return result
             }; a = first; first.start()
@@ -204,10 +214,29 @@ import SwiftUI
                 try require(second.messages.count == count && second.draft == "Bu taslak korunmalı", "Unavailable owner consumed a draft or fell back to another account")
                 first.sharing = true; try await wait("sharing restored") { second.peerAvailable }
                 second.draft = "ACCOUNT_HOLD"; second.send()
-                try await wait("held request running") { first.hostingRequester == "emir" && second.activeID != nil }
+                guard let cancelledRequestID = second.activeID else { throw CodexClientError.invalidResponse("Cancellation fixture did not submit") }
+                delayedReplyTarget = cancelledRequestID
+                try await wait("held request running with an in-flight owner reply") {
+                    first.hostingRequester == "emir" && second.activeID != nil && delayedReplyContinuation != nil
+                }
                 second.cancel(); try await wait("cancelled request") { second.activeID == nil }
                 try require(second.messages.last?.phase == "interrupted", "Stop did not retire the remote request")
                 report["stopAndRevocation"] = true
+                try await wait("owner idle before stale-reply fixture") {
+                    first.hostingRequester == nil && first.localReady && second.peerAvailable
+                }
+                second.draft = "ACCOUNT_HOLD"; second.send()
+                guard let protectedRequestID = second.activeID else { throw CodexClientError.invalidResponse("Stale-reply fixture did not submit") }
+                try await wait("new claim while old owner reply remains in flight") { hostClaims.contains(protectedRequestID) }
+                let beforeLateFailure = ownerHeartbeats
+                let oldReply = delayedReplyContinuation; delayedReplyContinuation = nil; oldReply?.resume()
+                try await wait("owner heartbeat barriers after stale reply rejection") { ownerHeartbeats >= beforeLateFailure + 2 }
+                let protectedState = try await wire.call("deniz", "accountState", [:])
+                try require((protectedState["active"] as? [String: Any])?["id"] as? String == protectedRequestID
+                    && second.activeID == protectedRequestID && second.messages.last?.phase == "running",
+                    "A cancelled request's delayed rejection revoked a newer claim")
+                second.cancel(); try await wait("stale-reply fixture stopped") { second.activeID == nil }
+                report["staleHostReplyFenced"] = true
                 try await wait("owner idle and available after cancellation") {
                     first.hostingRequester == nil && first.localReady && second.peerAvailable
                 }
